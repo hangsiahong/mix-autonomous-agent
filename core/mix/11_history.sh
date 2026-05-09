@@ -33,8 +33,22 @@ load_history() {
 }
 
 compact_history() {
+    local chat_id="$1" # Need chat_id for metadata
     local count=$(echo "$HISTORY" | jq 'length')
     if [ "$count" -gt "$MAX_HIST_MSGS" ]; then
+        # Extract messages that will be removed
+        local remove_count=$((count - MAX_HIST_MSGS))
+        local removed=$(echo "$HISTORY" | jq -c "limit($remove_count; .)")
+        
+        # Save to long-term memory
+        echo "$removed" | jq -c '.[]' | while read -r msg; do
+            local role=$(echo "$msg" | jq -r '.role')
+            local content=$(echo "$msg" | jq -r '.content // ""')
+            if [[ -n "$content" && "$content" != "null" ]]; then
+                python3 "tools/memory_helper.py" save "[$role]: $content" "{\"chat_id\": \"$chat_id\", \"type\": \"history\"}" >/dev/null 2>&1
+            fi
+        done
+
         HISTORY=$(echo "$HISTORY" | jq -c "last($MAX_HIST_MSGS)")
     fi
 }

@@ -6,21 +6,19 @@
       "type": "object",
       "properties": {
         "directory": {
-          "type": "string",
-          "description": "The directory to list (default: .)"
+          "type": "string"
         }
       }
     }
   },
   {
     "name": "read_code",
-    "description": "Read the content of a file",
+    "description": "Read file content",
     "parameters": {
       "type": "object",
       "properties": {
         "path": {
-          "type": "string",
-          "description": "The path to the file"
+          "type": "string"
         }
       },
       "required": ["path"]
@@ -28,24 +26,39 @@
   },
   {
     "name": "edit_code",
-    "description": "Edit a file using search and replace",
+    "description": "Edit file with search/replace",
     "parameters": {
       "type": "object",
       "properties": {
-        "path": {
-          "type": "string",
-          "description": "The path to the file"
-        },
-        "old_text": {
-          "type": "string",
-          "description": "The exact text to find"
-        },
-        "new_text": {
-          "type": "string",
-          "description": "The replacement text"
-        }
+        "path": { "type": "string" },
+        "old_text": { "type": "string" },
+        "new_text": { "type": "string" }
       },
       "required": ["path", "old_text", "new_text"]
+    }
+  },
+  {
+    "name": "memory_recall",
+    "description": "Search long-term memory for relevant past conversations or knowledge",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": { "type": "string", "description": "Search query" },
+        "limit": { "type": "integer", "description": "Number of memories to return" }
+      },
+      "required": ["query"]
+    }
+  },
+  {
+    "name": "memory_remember",
+    "description": "Save an important fact, pattern, or lesson to long-term memory",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "text": { "type": "string", "description": "The fact or insight to remember" },
+        "metadata_json": { "type": "string", "description": "Optional JSON metadata" }
+      },
+      "required": ["text"]
     }
   }
 ]

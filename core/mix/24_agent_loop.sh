@@ -5,7 +5,7 @@ run_agent() {
     
     load_history "$chat_id"
     append_text "user" "$input"
-    compact_history
+    compact_history "$chat_id"
     
     local turn=0
     while [ "$turn" -lt "$MAX_TURNS" ]; do

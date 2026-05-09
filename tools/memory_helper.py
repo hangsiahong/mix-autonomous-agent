@@ -1,0 +1,64 @@
+import os
+import sys
+import lancedb
+import requests
+import json
+
+DB_PATH = os.path.expanduser("~/ama_memory")
+TABLE_NAME = "memories"
+
+def get_embedding(text):
+    api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_KEY")
+    if not api_key:
+        raise ValueError("GOOGLE_API_KEY or GEMINI_KEY not set")
+    
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={api_key}"
+    payload = {
+        "model": "models/text-embedding-004",
+        "content": {"parts": [{"text": text}]}
+    }
+    resp = requests.post(url, json=payload)
+    resp.raise_for_status()
+    return resp.json()["embedding"]["values"]
+
+def save_memory(text, metadata=None):
+    embedding = get_embedding(text)
+    db = lancedb.connect(DB_PATH)
+    
+    if TABLE_NAME not in db.table_names():
+        db.create_table(TABLE_NAME, data=[{
+            "vector": embedding,
+            "text": text,
+            "metadata": json.dumps(metadata or {})
+        }])
+    else:
+        table = db.open_table(TABLE_NAME)
+        table.add([{
+            "vector": embedding,
+            "text": text,
+            "metadata": json.dumps(metadata or {})
+        }])
+
+def search_memory(query, limit=5):
+    embedding = get_embedding(query)
+    db = lancedb.connect(DB_PATH)
+    
+    if TABLE_NAME not in db.table_names():
+        return []
+    
+    table = db.open_table(TABLE_NAME)
+    results = table.search(embedding).limit(limit).to_list()
+    return results
+
+if __name__ == "__main__":
+    mode = sys.argv[1]
+    if mode == "save":
+        text = sys.argv[2]
+        meta = json.loads(sys.argv[3]) if len(sys.argv) > 3 else {}
+        save_memory(text, meta)
+        print("Memory saved.")
+    elif mode == "search":
+        query = sys.argv[2]
+        limit = int(sys.argv[3]) if len(sys.argv) > 3 else 5
+        results = search_memory(query, limit)
+        print(json.dumps(results, indent=2))
