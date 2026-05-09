@@ -284,6 +284,69 @@ _google_login_vertex() {
   echo "  Project: $project_id | Region: $region"
 }
 
+_google_save_config() {
+  local mode="$1"
+  local project_id="${2:-}"
+  local region="${3:-us-central1}"
+  mkdir -p "$(dirname "$_GOOGLE_CONFIG_FILE")"
+  {
+    printf 'mode=%s\nproject_id=%s\nregion=%s\n' "$mode" "$project_id" "$region"
+    [ -n "${_GOOGLE_THINKING_LEVEL:-}" ] && printf 'thinking_level=%s\n' "$_GOOGLE_THINKING_LEVEL"
+  } > "$_GOOGLE_CONFIG_FILE"
+  chmod 600 "$_GOOGLE_CONFIG_FILE"
+}
+
+# ─── Get API key (called on every API request) ─────────────────────────────
+google_get_api_key() {
+  local mode
+  mode=$(grep '^mode=' "$_GOOGLE_CONFIG_FILE" 2>/dev/null | cut -d= -f2-) || true
+
+  if [ "$mode" = "studio" ]; then
+    local key="${GOOGLE_API_KEY:-}"
+    if [ -z "$key" ] && [ -f "$_GOOGLE_KEY_FILE" ]; then
+      key=$(cat "$_GOOGLE_KEY_FILE")
+    fi
+    echo "$key"
+  else
+    # Vertex: use gcloud access token
+    # Cache token for 10 mins to avoid CLI overhead
+    local now
+    now=$(date +%s)
+    local cache_ts=0
+    [ -f "${_GOOGLE_TOKEN_CACHE}.ts" ] && cache_ts=$(cat "${_GOOGLE_TOKEN_CACHE}.ts")
+    
+    if [ $((now - cache_ts)) -lt 600 ] && [ -f "$_GOOGLE_TOKEN_CACHE" ]; then
+      cat "$_GOOGLE_TOKEN_CACHE"
+    else
+      local token
+      token=$(gcloud auth print-access-token 2>/dev/null) || return 1
+      echo "$token" > "$_GOOGLE_TOKEN_CACHE"
+      echo "$now" > "${_GOOGLE_TOKEN_CACHE}.ts"
+      echo "$token"
+    fi
+  fi
+}
+
+# ─── Extra headers ──────────────────────────────────────────────────────────
+google_extra_headers_json() {
+  local mode
+  mode=$(grep '^mode=' "$_GOOGLE_CONFIG_FILE" 2>/dev/null | cut -d= -f2-) || true
+  
+  if [ "$mode" = "vertex" ]; then
+    # Vertex requires Project ID in headers if using global endpoint
+    # and often prefers x-goog-user-project
+    local project_id
+    project_id=$(grep '^project_id=' "$_GOOGLE_CONFIG_FILE" 2>/dev/null | cut -d= -f2-) || true
+    if [ -n "$project_id" ]; then
+      printf '{"x-goog-user-project": "%s"}' "$project_id"
+    else
+      echo "{}"
+    fi
+  else
+    echo "{}"
+  fi
+}
+
 # ─── Extra Payload: reasoning/thinking ──────────────────────────────────────
 google_extra_payload_json() {
   local model_lower="${MODEL:-}"
@@ -308,221 +371,14 @@ google_extra_payload_json() {
   # Default for others
   echo "{}"
 }
-  local mode="$1"
-  local project_id="${2:-}"
-  local region="${3:-us-central1}"
-  mkdir -p "$(dirname "$_GOOGLE_CONFIG_FILE")"
-  {
-    printf 'mode=%s\nproject_id=%s\nregion=%s\n' "$mode" "$project_id" "$region"
-    [ -n "${_GOOGLE_THINKING_LEVEL:-}" ] && printf 'thinking_level=%s\n' "$_GOOGLE_THINKING_LEVEL"
-  } > "$_GOOGLE_CONFIG_FILE"
-  chmod 600 "$_GOOGLE_CONFIG_FILE"
-}
 
-# ─── Get API key (called on every API request) ─────────────────────────────
-google_get_api_key() {
-  local mode
-  mode=$(grep '^mode=' "$_GOOGLE_CONFIG_FILE" 2>/dev/null | cut -d= -f2-) || true
-
-  if [ "$mode" = "studio" ]; then
-    # Studio: static API key
-    local key="${GOOGLE_API_KEY:-}"
-    if [ -z "$key" ] && [ -f "$_GOOGLE_KEY_FILE" ]; then
-      key=$(cat "$_GOOGLE_KEY_FILE")
-    fi
-    if [ -z "$key" ]; then
-      echo -e "  \033[1;33mNo Google API key. Run: /provider google login\033[0m" >&2
-      return 1
-    fi
-    printf '%s' "$key"
-    return 0
-  elif [ "$mode" = "vertex" ]; then
-    # Prefer API key; fall back to gcloud OAuth token
-    local key="${GOOGLE_API_KEY:-}"
-    if [ -z "$key" ] && [ -f "$_GOOGLE_KEY_FILE" ]; then
-      key=$(cat "$_GOOGLE_KEY_FILE")
-    fi
-    if [ -n "$key" ]; then
-      printf '%s' "$key"
-      return 0
-    fi
-    # gcloud fallback
-    _google_vertex_token
-    return $?
-  else
-    echo -e "  \033[1;33mGoogle provider not configured. Run: /provider google login\033[0m" >&2
-    return 1
-  fi
-}
-
-# ─── Vertex token: cached + auto-refresh ────────────────────────────────────
-_google_vertex_token() {
-  # Check cache (tokens valid ~1hr, refresh at 50min)
-  if [ -f "$_GOOGLE_TOKEN_CACHE" ]; then
-    local cached_ts
-    cached_ts=$(_mix_stat_mtime "$_GOOGLE_TOKEN_CACHE")
-    local now; now=$(date +%s)
-    local age=$(( now - cached_ts ))
-    if [ "$age" -lt 3000 ]; then  # 50 minutes
-      cat "$_GOOGLE_TOKEN_CACHE"
-      return 0
-    fi
-  fi
-
-  # Refresh via gcloud
-  if ! command -v gcloud >/dev/null 2>&1; then
-    echo -e "  \033[1;31mgcloud CLI not found.\033[0m" >&2
-    return 1
-  fi
-
-  local token
-  token=$(gcloud auth print-access-token 2>/dev/null) || {
-    echo -e "  \033[1;31mFailed to get gcloud access token.\033[0m" >&2
-    echo -e "  \033[0;90m(Try: gcloud auth login)\033[0m" >&2
-    return 1
-  }
-
-  printf '%s' "$token" > "$_GOOGLE_TOKEN_CACHE"
-  printf '%s' "$token"
-  return 0
-}
-
-# ─── Extra headers (none needed — OpenAI-compatible uses Bearer auth) ───────
-google_extra_headers_json() {
-  local mode
-  mode=$(grep '^mode=' "$_GOOGLE_CONFIG_FILE" 2>/dev/null | cut -d= -f2-) || true
-
-  if [ "$mode" = "vertex" ]; then
-    # Try API key first
-    local key="${GOOGLE_API_KEY:-}"
-    if [ -z "$key" ] && [ -f "$_GOOGLE_KEY_FILE" ]; then
-      key=$(cat "$_GOOGLE_KEY_FILE")
-    fi
-    if [ -n "$key" ]; then
-      # API key auth: use x-goog-api-key header, suppress Bearer Authorization
-      python3 -c "
-import json
-h = {
-    'x-goog-api-key': '''$key''',
-    'Authorization': None
-}
-print(json.dumps(h))
-"
-    else
-      # gcloud OAuth: use Bearer token, keep Authorization header
-      local token
-      token=$(_google_vertex_token 2>/dev/null) || { echo "{}"; return 1; }
-      python3 -c "
-import json
-print(json.dumps({'Authorization': 'Bearer $token'}))
-"
-    fi
-  else
-    # Studio: standard Bearer auth (default pipeline handles it)
-    echo "{}"
-  fi
-}
-
-# ─── Extra payload params (thinkingConfig for Gemini 3/2.5 models) ──────────
-google_extra_payload_json() {
-  local level="${_GOOGLE_THINKING_LEVEL:-}"
-  [ -z "$level" ] && { echo "{}"; return 0; }
-
-  # Gemini 2.5 uses thinkingBudget (0=off); Gemini 3 uses thinkingLevel
-  case "${MODEL:-}" in
-    gemini-2.5-*)
-      case "$level" in
-        off|none|0)   python3 -c 'import json;print(json.dumps({"thinkingConfig":{"thinkingBudget":0}}))' ;;
-        low)          python3 -c 'import json;print(json.dumps({"thinkingConfig":{"thinkingBudget":512}}))' ;;
-        medium)       python3 -c 'import json;print(json.dumps({"thinkingConfig":{"thinkingBudget":4096}}))' ;;
-        high|dynamic) python3 -c 'import json;print(json.dumps({"thinkingConfig":{"thinkingBudget":-1}}))' ;;
-        *)            python3 -c "import json;print(json.dumps({'thinkingConfig':{'thinkingBudget':$level}}))" 2>/dev/null || echo "{}" ;;
-      esac
-      ;;
-    gemini-3*|*)
-      case "$level" in
-        off|none|minimal) python3 -c 'import json;print(json.dumps({"thinkingConfig":{"thinkingLevel":"minimal"}}))' ;;
-        low)              python3 -c 'import json;print(json.dumps({"thinkingConfig":{"thinkingLevel":"low"}}))' ;;
-        medium)           python3 -c 'import json;print(json.dumps({"thinkingConfig":{"thinkingLevel":"medium"}}))' ;;
-        high|dynamic)     python3 -c 'import json;print(json.dumps({"thinkingConfig":{"thinkingLevel":"high"}}))' ;;
-        *)                python3 -c "import json;print(json.dumps({'thinkingConfig':{'thinkingLevel':'$level'}}))" 2>/dev/null || echo "{}" ;;
-      esac
-      ;;
-  esac
-}
-
-# ─── Set thinking level interactively or via command ────────────────────────
-google_set_thinking() {
-  local level="${1:-}"
-  if [ -z "$level" ]; then
-    local current="${_GOOGLE_THINKING_LEVEL:-default (model decides)}"
-    echo -e "  \033[1;37mGoogle Thinking Level\033[0m"
-    echo "  Current: $current"
-    echo ""
-    echo "  Gemini 3 models:  minimal | low | medium | high"
-    echo "  Gemini 2.5 models: off | low | medium | high | <budget number>"
-    echo "  (empty/default = model's dynamic default)"
-    echo ""
-    echo "  Usage: /provider google thinking <level>"
-    return 0
-  fi
-  case "$level" in
-    off|none|minimal|low|medium|high|dynamic|default|"")
-      ;;
-    [0-9]*)
-      ;;
-    *)
-      echo "  Unknown level '$level'. Use: off|minimal|low|medium|high|dynamic|default"
-      return 1
-      ;;
-  esac
-  [ "$level" = "default" ] && level=""
-  _GOOGLE_THINKING_LEVEL="$level"
-  # Persist
-  local _mode; _mode=$(grep '^mode=' "$_GOOGLE_CONFIG_FILE" 2>/dev/null | cut -d= -f2-) || true
-  local _pid; _pid=$(grep '^project_id=' "$_GOOGLE_CONFIG_FILE" 2>/dev/null | cut -d= -f2-) || true
-  local _reg; _reg=$(grep '^region=' "$_GOOGLE_CONFIG_FILE" 2>/dev/null | cut -d= -f2-) || true
-  _google_save_config "${_mode:-studio}" "${_pid:-}" "${_reg:-us-central1}"
-  if [ -z "$level" ]; then
-    echo -e "  \033[38;5;82m$I_OK\033[0m Thinking level → model default"
-  else
-    echo -e "  \033[38;5;82m$I_OK\033[0m Thinking level → $level"
-  fi
-}
-
-# ─── List models ────────────────────────────────────────────────────────────
-google_list_models() {
-  echo -e "  \033[1;37mGoogle Gemini Models\033[0m"
-  echo ""
-  for m in "${_GOOGLE_MODELS[@]}"; do
-    local marker=" "
-    [ "$m" = "$MODEL" ] && marker="*"
-    echo -e "  $marker $m"
-  done
-  echo ""
-  echo "  Set with: /model <name>"
-  echo "  Docs: https://ai.google.dev/gemini-api/docs/models"
-}
-
-# ─── Validate model ─────────────────────────────────────────────────────────
+# ─── Validate: check model availability ─────────────────────────────────────
 google_validate_model() {
   local model_id="$1"
   for m in "${_GOOGLE_MODELS[@]}"; do
-    if [ "$m" = "$model_id" ]; then
-      return 0
-    fi
+    [ "$m" = "$model_id" ] && return 0
   done
 
-  # Not in known list — check for prefix match (e.g. gemini-2.5-pro-preview-xxx)
-  case "$model_id" in
-    gemini-*)
-      # Allow unknown gemini models with a note
-      echo "(Model '$model_id' not in known list but matches gemini prefix — proceeding)"
-      return 0
-      ;;
-  esac
-
-  # Suggest closest match
   local needle="${model_id,,}"
   local suggestions=()
   for m in "${_GOOGLE_MODELS[@]}"; do
@@ -540,17 +396,10 @@ google_validate_model() {
 }
 
 # ─── Filter history: sanitize tool_calls missing thought_signature ───────────
-# Called before building API payload. Converts broken tool_calls to text so
-# Google doesn't reject the request with "thought_signature missing" errors.
 google_filter_history() {
   python3 -c '
 import json, sys
 history = json.load(sys.stdin)
-# Google Vertex AI strictly requires every tool_call in the history to have a 
-# "thought_signature" field under extra_content.google if using thinking models, 
-# otherwise it throws a 400 Bad Request. 
-# For missing signatures (e.g. standard tools or older turns), the official doc 
-# specifies using "skip_thought_signature_validator". 
 for msg in history:
     if msg.get("role") == "assistant" and msg.get("tool_calls"):
         for tc in msg["tool_calls"]:
@@ -558,18 +407,12 @@ for msg in history:
                 tc["extra_content"] = {}
             if "google" not in tc["extra_content"]:
                 tc["extra_content"]["google"] = {}
-            
-            # OpenAI compatible endpoint accepts it at the root OR under extra_content.google.
-            # If our streaming parser already saved it as `tc["thought_signature"]` from a previous run:
             sig = tc.pop("thought_signature", None)
             if not sig:
                 sig = tc["extra_content"]["google"].get("thought_signature", "")
-            
             if not sig:
                 sig = "skip_thought_signature_validator"
-                
             tc["extra_content"]["google"]["thought_signature"] = sig
-            
 print(json.dumps(history))
 '
 }

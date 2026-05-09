@@ -37,9 +37,9 @@ Build a self-improving, autonomous agent in Bash that communicates via Telegram.
 - [x] Integrate **LanceDB** for persistent episodic/semantic memory.
 - [x] Implement **Multi-session Isolation** (Telegram Forum Topics).
 - [x] Implement **Context Engineering** and **Skill Binding**.
-- [ ] Implement **Subdirectory Context Discovery** (Local README/Hint injection).
-- [ ] Implement **Permission Manager** (Allow Once/Always/Deny for tools).
-- [ ] Implement **Advanced Provider Adapters** (Gemini Thinking/Reasoning support).
+- [x] Implement **Subdirectory Context Discovery** (Local README/Hint injection).
+- [x] Implement **Permission Manager** (Allow Once/Always/Deny for tools).
+- [x] Implement **Advanced Provider Adapters** (Gemini Thinking/Reasoning support).
 - [ ] Implement **Audio/Video processing** via Gemini File API.
 
 ## §B Bugs

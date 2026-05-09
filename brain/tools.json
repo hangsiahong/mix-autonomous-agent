@@ -167,4 +167,35 @@
       "properties": {}
     }
   }
+    ,{
+        "name": "skill_manager",
+        "description": "Bind, unbind or list skills for specific Telegram forum topics. Skills can inject specialized prompts or tools.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["bind", "unbind", "list"],
+                    "description": "Action to perform."
+                },
+                "chat_id": {
+                    "type": "string",
+                    "description": "The Telegram chat ID."
+                },
+                "thread_id": {
+                    "type": "string",
+                    "description": "The Telegram message_thread_id (Topic ID)."
+                },
+                "skill": {
+                    "type": "string",
+                    "description": "The name of the skill to bind (e.g., 'coder', 'researcher')."
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Friendly name for the topic."
+                }
+            },
+            "required": ["action"]
+        }
+    }
 ]
