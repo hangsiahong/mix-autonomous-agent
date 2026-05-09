@@ -1,7 +1,9 @@
 #!/bin/bash
 # core/config.sh - Configuration management
 
-CONFIG_FILE="${DIR}/brain/config.json"
+_CONFIG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_ROOT_DIR="$(cd "$_CONFIG_DIR/.." && pwd)"
+CONFIG_FILE="${_ROOT_DIR}/brain/config.json"
 
 # Default config if not exists
 if [ ! -f "$CONFIG_FILE" ]; then

@@ -75,5 +75,17 @@
       },
       "required": ["action"]
     }
+  },
+  {
+    "name": "access_control",
+    "description": "Manage bot access whitelist and home chat setting.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["whitelist", "sethome"], "description": "Action to perform" },
+        "target_id": { "type": "string", "description": "The Telegram ID (user, group, or channel) to whitelist or set as home" }
+      },
+      "required": ["action", "target_id"]
+    }
   }
 ]

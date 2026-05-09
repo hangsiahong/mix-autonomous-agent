@@ -38,19 +38,7 @@ tg_handle_update() {
                 tg_send "$chat_id" "Conversation history reset."
                 ;;
             /status)
-                tg_send "$chat_id" "Provider: ${PROVIDER:-openai (default)}\nModel: ${MODEL:-gpt-4o-mini}"
-                ;;
-            /sethome)
-                set_home_chat "$chat_id"
-                tg_send "$chat_id" "🏠 Home chat set to this chat ($chat_id)."
-                ;;
-            /whitelist)
-                if [[ -n "$args" ]]; then
-                    add_to_whitelist "$args"
-                    tg_send "$chat_id" "✅ Whitelisted ID: $args"
-                else
-                    tg_send "$chat_id" "Usage: /whitelist <id>"
-                fi
+                tg_send "$chat_id" "Provider: ${PROVIDER:-openai (default)}\nModel: ${MODEL:-gpt-4o-mini}\nChat ID: $chat_id\nUser ID: $user_id"
                 ;;
             /login)
                 if [[ "${PROVIDER}" == "copilot" ]]; then
@@ -61,11 +49,11 @@ tg_handle_update() {
                 ;;
             *)
                 # Pass unknown commands to agent
-                run_agent "$chat_id" "$text"
+                run_agent "$chat_id" "$text" "$user_id"
                 ;;
         esac
     else
         # Normal text -> Run Agent
-        run_agent "$chat_id" "$text"
+        run_agent "$chat_id" "$text" "$user_id"
     fi
 }
