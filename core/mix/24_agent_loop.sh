@@ -18,7 +18,11 @@ run_agent() {
         # 1. Create a "thinking" message in Telegram
         local msg_id=$(tg_send "$chat_id" "Thinking...")
         
-        # 2. Call API (Streaming)
+        # Update title if it's the first turn
+        if [[ "$turn" -eq 1 ]]; then
+            # Generate title in background
+            ( generate_title "$chat_id" & )
+        fi
         local result=$(call_api_stream "$chat_id" "$msg_id" )
         
         local tool_calls=$(echo "$result" | grep "^TC:" | cut -c4-)

@@ -38,7 +38,11 @@ tg_handle_update() {
                 tg_send "$chat_id" "Conversation history reset."
                 ;;
             /status)
-                tg_send "$chat_id" "Provider: ${PROVIDER:-openai (default)}\nModel: ${MODEL:-gpt-4o-mini}\nChat ID: $chat_id\nUser ID: $user_id"
+                local title="Untitled"
+                if [ -f "brain/state/titles.json" ]; then
+                    title=$(jq -r --arg id "$chat_id" '.[$id] // "Untitled"' brain/state/titles.json)
+                fi
+                tg_send "$chat_id" "Title: $title\nProvider: ${PROVIDER:-openai (default)}\nModel: ${MODEL:-gpt-4o-mini}\nChat ID: $chat_id\nUser ID: $user_id"
                 ;;
             /login)
                 if [[ "${PROVIDER}" == "copilot" ]]; then

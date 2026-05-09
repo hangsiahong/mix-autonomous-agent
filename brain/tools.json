@@ -109,5 +109,13 @@
       },
       "required": ["url"]
     }
+  },
+  {
+    "name": "sys_info",
+    "description": "Get current system status (CPU, RAM, Disk, Time). Use this if you need to know the environment state.",
+    "parameters": {
+      "type": "object",
+      "properties": {}
+    }
   }
 ]

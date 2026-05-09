@@ -35,3 +35,8 @@
     - Implemented \`tools/fetch_url.sh\` using Jina Reader (Markdown extraction).
     - Registered research tools in \`brain/tools.json\`.
     - Updated system prompt to mandate proactive research for missing information.
+- **2023-10-27**: Contextual Intelligence & UX.
+    - Implemented background **Title Generation** (\`core/mix/28_summary.sh\`) to auto-label conversations.
+    - Added \`sys_info\` tool for environment awareness (CPU/RAM/Disk/Time).
+    - Refactored \`/status\` to display chat title and detailed ID info.
+    - Improved agent loop with background async task support.
