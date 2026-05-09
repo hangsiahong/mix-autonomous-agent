@@ -41,21 +41,54 @@ tg_extract_media() {
         fi
     fi
     
-    # 3. Handle Voice (Gemini supports audio)
-    local voice_id=$(echo "$update" | jq -r '.message.voice.file_id // empty')
+    # 3. Handle Voice/Audio
+    local voice_id=$(echo "$update" | jq -r '.message.voice.file_id // .message.audio.file_id // empty')
+    local voice_mime=$(echo "$update" | jq -r '.message.voice.mime_type // .message.audio.mime_type // "audio/ogg"')
     if [[ -n "$voice_id" ]]; then
         local file_info=$(tg_get_file "$voice_id")
         local file_path=$(echo "$file_info" | jq -r '.result.file_path')
         if [[ -n "$file_path" ]]; then
-             # Gemini/OpenAI vision usually doesn't support audio via image_url
-             # But Gemini API supports it. For OpenAI compatible API, 
-             # we might need to use a different format if supported, 
-             # or just mention we received a voice message.
-             # For now, lets just download it to a local 'uploads' dir and tell the agent.
-             mkdir -p uploads
-             local dest="uploads/voice_$(date +%s).ogg"
-             tg_download "$file_path" "$dest"
-             echo "MEDIA_FILE:$dest"
+            local tmp_file=$(mktemp --suffix=".ogg")
+            tg_download "$file_path" "$tmp_file"
+            
+            if [[ "$PROVIDER" == "google" ]]; then
+                local g_key; g_key=$(google_get_api_key)
+                if [[ -n "$g_key" ]]; then
+                    # Upload to Gemini File API
+                    local uri_line; uri_line=$(python3 tools/gemini_file_api.py "$tmp_file" "$g_key" | grep "FILE_URI:")
+                    if [[ -n "$uri_line" ]]; then
+                        local uri="${uri_line#FILE_URI:}"
+                        media_json=$(echo "$media_json" | jq --arg uri "$uri" --arg mime "$voice_mime" \
+                            '. + [{type: "file_data", file_data: {mime_type: $mime, file_uri: $uri}}]')
+                    fi
+                fi
+            fi
+            rm -f "$tmp_file"
+        fi
+    fi
+
+    # 4. Handle Video
+    local video_id=$(echo "$update" | jq -r '.message.video.file_id // empty')
+    local video_mime=$(echo "$update" | jq -r '.message.video.mime_type // "video/mp4"')
+    if [[ -n "$video_id" ]]; then
+        local file_info=$(tg_get_file "$video_id")
+        local file_path=$(echo "$file_info" | jq -r '.result.file_path')
+        if [[ -n "$file_path" ]]; then
+            local tmp_file=$(mktemp --suffix=".mp4")
+            tg_download "$file_path" "$tmp_file"
+            
+            if [[ "$PROVIDER" == "google" ]]; then
+                local g_key; g_key=$(google_get_api_key)
+                if [[ -n "$g_key" ]]; then
+                    local uri_line; uri_line=$(python3 tools/gemini_file_api.py "$tmp_file" "$g_key" | grep "FILE_URI:")
+                    if [[ -n "$uri_line" ]]; then
+                        local uri="${uri_line#FILE_URI:}"
+                        media_json=$(echo "$media_json" | jq --arg uri "$uri" --arg mime "$video_mime" \
+                            '. + [{type: "file_data", file_data: {mime_type: $mime, file_uri: $uri}}]')
+                    fi
+                fi
+            fi
+            rm -f "$tmp_file"
         fi
     fi
 

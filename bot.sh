@@ -22,6 +22,7 @@ OFFSET_FILE="${DIR}/brain/last_offset"
 echo "AMA Bot Starting..."
 
 while true; do
+    echo "Polling..."
     OFFSET=$(cat "$OFFSET_FILE")
     UPDATES=$(tg_poll "$OFFSET")
     
@@ -32,6 +33,7 @@ while true; do
 
     echo "$UPDATES" | jq -c '.result[]' | while read -r update; do
         UPDATE_ID=$(echo "$update" | jq -r '.update_id')
+        echo "Processing update $UPDATE_ID..."
         tg_handle_update "$update"
         echo $((UPDATE_ID + 1)) > "$OFFSET_FILE"
     done

@@ -4,7 +4,7 @@ WORKDIR="$(pwd)"
 
 # API Config
 PROVIDER="${PROVIDER:-default}"
-MODEL="${LLM_MODEL:-gemini-2.0-flash-exp}"
+MODEL="${MODEL:-${LLM_MODEL:-gemini-2.0-flash-exp}}"
 FALLBACK_MODEL="gemini-1.5-flash"
 # BASE_URL is handled by providers or default
 BASE_URL="${BASE_URL:-https://generativelanguage.googleapis.com/v1beta}"

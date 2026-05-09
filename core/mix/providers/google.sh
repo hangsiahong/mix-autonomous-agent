@@ -63,9 +63,9 @@ google_activate() {
 
   # Auto-detect: prefer Studio if key available, else Vertex if gcloud available
   if [ -z "$mode" ]; then
-    if [ -n "${GOOGLE_API_KEY:-}" ] || [ -f "$_GOOGLE_KEY_FILE" ]; then
+    if [ -n "${GOOGLE_API_KEY:-}" ] || [ -n "${GEMINI_KEY:-}" ] || [ -f "$_GOOGLE_KEY_FILE" ]; then
       mode="studio"
-    elif command -v gcloud >/dev/null 2>&1; then
+    elif [ -n "${GOOGLE_PROJECT:-}" ] || command -v gcloud >/dev/null 2>&1; then
       mode="vertex"
     else
       echo -e "  \033[1;33mGoogle provider: no credentials found.\033[0m"
@@ -79,6 +79,9 @@ google_activate() {
     local api_key="${GOOGLE_API_KEY:-}"
     if [ -z "$api_key" ] && [ -f "$_GOOGLE_KEY_FILE" ]; then
       api_key=$(cat "$_GOOGLE_KEY_FILE")
+    fi
+    if [ -z "$api_key" ]; then
+      api_key="${GEMINI_KEY:-${API_KEY:-}}"
     fi
     if [ -z "$api_key" ]; then
       echo -e "  \033[1;33mNo Google API key. Run: /provider google login\033[0m"
@@ -298,23 +301,18 @@ _google_save_config() {
 
 # ─── Get API key (called on every API request) ─────────────────────────────
 google_get_api_key() {
-  local mode
-  mode=$(grep '^mode=' "$_GOOGLE_CONFIG_FILE" 2>/dev/null | cut -d= -f2-) || true
+  local mode="${GOOGLE_MODE:-}"
+  if [ -z "$mode" ] && [ -f "$_GOOGLE_CONFIG_FILE" ]; then
+    mode=$(grep '^mode=' "$_GOOGLE_CONFIG_FILE" 2>/dev/null | cut -d= -f2-)
+  fi
 
-  if [ "$mode" = "studio" ]; then
-    local key="${GOOGLE_API_KEY:-}"
-    if [ -z "$key" ] && [ -f "$_GOOGLE_KEY_FILE" ]; then
-      key=$(cat "$_GOOGLE_KEY_FILE")
-    fi
-    echo "$key"
-  else
-    # Vertex: use gcloud access token
+  if [ "$mode" = "vertex" ]; then
     # Cache token for 10 mins to avoid CLI overhead
     local now
     now=$(date +%s)
     local cache_ts=0
     [ -f "${_GOOGLE_TOKEN_CACHE}.ts" ] && cache_ts=$(cat "${_GOOGLE_TOKEN_CACHE}.ts")
-    
+
     if [ $((now - cache_ts)) -lt 600 ] && [ -f "$_GOOGLE_TOKEN_CACHE" ]; then
       cat "$_GOOGLE_TOKEN_CACHE"
     else
@@ -324,6 +322,13 @@ google_get_api_key() {
       echo "$now" > "${_GOOGLE_TOKEN_CACHE}.ts"
       echo "$token"
     fi
+  else
+    # Studio: use key
+    local key="${GOOGLE_API_KEY:-${GEMINI_KEY:-$API_KEY}}"
+    if [ -z "$key" ] && [ -f "$_GOOGLE_KEY_FILE" ]; then
+      key=$(cat "$_GOOGLE_KEY_FILE")
+    fi
+    echo "$key"
   fi
 }
 
@@ -331,7 +336,7 @@ google_get_api_key() {
 google_extra_headers_json() {
   local mode
   mode=$(grep '^mode=' "$_GOOGLE_CONFIG_FILE" 2>/dev/null | cut -d= -f2-) || true
-  
+
   if [ "$mode" = "vertex" ]; then
     # Vertex requires Project ID in headers if using global endpoint
     # and often prefers x-goog-user-project
@@ -351,7 +356,7 @@ google_extra_headers_json() {
 google_extra_payload_json() {
   local model_lower="${MODEL:-}"
   model_lower="${model_lower,,}"
-  
+
   # Remove provider prefix if present
   model_lower="${model_lower#google/}"
 
@@ -370,6 +375,150 @@ google_extra_payload_json() {
 
   # Default for others
   echo "{}"
+}
+
+_google_get_vertex_token() {
+  if [ -f "$_GOOGLE_TOKEN_CACHE" ]; then
+    local mtime=$(stat -c %Y "$_GOOGLE_TOKEN_CACHE")
+    local now=$(date +%s)
+    if [ $((now - mtime)) -lt 3000 ]; then
+      cat "$_GOOGLE_TOKEN_CACHE"
+      return 0
+    fi
+  fi
+
+  local token
+  token=$(gcloud auth print-access-token 2>/dev/null) || return 1
+  echo -n "$token" > "$_GOOGLE_TOKEN_CACHE"
+  echo -n "$token"
+}
+
+google_get_api_key() {
+  local mode
+  mode=$(grep '^mode=' "$_GOOGLE_CONFIG_FILE" 2>/dev/null | cut -d= -f2-)
+  [ -z "$mode" ] && mode="${GOOGLE_MODE:-studio}"
+
+  if [ "$mode" = "vertex" ]; then
+    _google_get_vertex_token
+  else
+    local api_key="${GOOGLE_API_KEY:-${GEMINI_KEY:-${API_KEY:-}}}"
+    if [ -z "$api_key" ] && [ -f "$_GOOGLE_KEY_FILE" ]; then
+      api_key=$(cat "$_GOOGLE_KEY_FILE")
+    fi
+    echo -n "$api_key"
+  fi
+}
+
+google_call_api() {
+  local sys_prompt_override="$1"
+  local mode
+  mode=$(grep '^mode=' "$_GOOGLE_CONFIG_FILE" 2>/dev/null | cut -d= -f2-)
+  [ -z "$mode" ] && mode="${GOOGLE_MODE:-studio}"
+
+  local api_key; api_key=$(google_get_api_key)
+  if [ -z "$api_key" ]; then
+    echo "FAIL:no_api_key"
+    return 1
+  fi
+
+  local url
+  if [ "$mode" = "vertex" ]; then
+    local project_id="${GOOGLE_PROJECT:-}"
+    local region="${GOOGLE_REGION:-us-central1}"
+    if [[ "$MODEL" =~ $_GOOGLE_GLOBAL_MODELS_RE ]]; then region="global"; fi
+    url="https://aiplatform.googleapis.com/v1/projects/${project_id}/locations/${region}/publishers/google/models/${MODEL}:generateContent"
+  else
+    url="https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${api_key}"
+  fi
+
+  # Build Native Gemini Payload
+  local system_prompt
+  if [[ -n "$sys_prompt_override" ]]; then
+    system_prompt="$sys_prompt_override"
+  else
+    system_prompt=$(cat brain/system_prompt.txt)
+  fi
+
+  local tools_json=$(cat brain/tools.json)
+  
+  # Conversion script for History (OpenAI -> Gemini Native)
+  # This script handles multi-modal array content and tool calls.
+  local payload
+  payload=$(SYSTEM_PROMPT="$system_prompt" \
+            HISTORY_JSON="$HISTORY" \
+            TOOLS_JSON="$tools_json" \
+            python3 -c '
+import json, os
+s = os.environ.get("SYSTEM_PROMPT", "")
+h = json.loads(os.environ.get("HISTORY_JSON", "[]"))
+t = json.loads(os.environ.get("TOOLS_JSON", "[]"))
+
+contents = []
+for msg in h:
+    role = "user" if msg["role"] == "user" else "model"
+    parts = []
+    
+    if msg.get("content"):
+        if isinstance(msg["content"], str):
+            parts.append({"text": msg["content"]})
+        elif isinstance(msg["content"], list):
+            for p in msg["content"]:
+                if p["type"] == "text":
+                    parts.append({"text": p["text"]})
+                elif p["type"] == "image_url":
+                    # Extract base64
+                    b64_data = p["image_url"]["url"].split(",")[-1]
+                    mime = p["image_url"]["url"].split(";")[0].split(":")[-1]
+                    parts.append({"inline_data": {"mime_type": mime, "data": b64_data}})
+                elif p["type"] == "file_data":
+                    parts.append({"file_data": p["file_data"]})
+    
+    if msg.get("tool_calls"):
+        # For Gemini native, tool calls are parts of the content
+        for tc in msg["tool_calls"]:
+            parts.append({"function_call": {
+                "name": tc["function"]["name"],
+                "args": json.loads(tc["function"]["arguments"])
+            }})
+            
+    if msg.get("role") == "tool":
+        role = "user" # Gemini expects tool results in a "user" role content (functionResponse)
+        parts = [{"function_response": {
+            "name": msg["name"],
+            "response": {"content": msg["content"]}
+        }}]
+
+    if parts:
+        contents.append({"role": role, "parts": parts})
+
+# Gemini native payload
+body = {
+    "contents": contents,
+    "system_instruction": {"parts": [{"text": s}]},
+}
+if t:
+    body["tools"] = [{"function_declarations": [
+        {"name": tool["function"]["name"], "description": tool["function"]["description"], "parameters": tool["function"]["parameters"]}
+        for tool in t
+    ]}]
+
+print(json.dumps(body))
+')
+
+  local _curl_args=(-s -X POST "$url" -H "Content-Type: application/json")
+  if [ "$mode" = "vertex" ]; then
+    _curl_args+=(-H "Authorization: Bearer $api_key")
+  fi
+
+  local resp
+  resp=$(curl "${_curl_args[@]}" -d "$payload")
+  
+  if echo "$resp" | jq -e '.error' >/dev/null; then
+    echo "FAIL:google_error:$(echo "$resp" | jq -c '.error')"
+    return 1
+  fi
+
+  echo "$resp"
 }
 
 # ─── Validate: check model availability ─────────────────────────────────────

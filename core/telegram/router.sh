@@ -35,7 +35,8 @@ tg_handle_update() {
         if [[ "$user_id" == "${TG_ADMIN}" && "$text" == "/whitelist"* ]]; then
              : # Allow admin to use /whitelist even if not whitelisted (though admin should be)
         else
-            echo "Access denied for chat_id $chat_id / user_id $user_id"
+            echo "Access denied for chat_id $chat_id / user_id $user_id. User text: $text"
+            tg_send "$chat_id" "Access denied. Chat ID: $chat_id. User ID: $user_id" "$thread_id"
             return
         fi
     fi

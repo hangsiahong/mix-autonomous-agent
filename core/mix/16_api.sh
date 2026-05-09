@@ -98,6 +98,12 @@ print(json.dumps(body))
 
 call_api() {
   local sys_prompt_override="$1"
+
+  if [ "$PROVIDER" != "default" ] && type "${PROVIDER}_call_api" >/dev/null 2>&1; then
+    "${PROVIDER}_call_api" "$sys_prompt_override"
+    return $?
+  fi
+
   local payload
   payload=$(_api_build_payload "false" "$sys_prompt_override") || { echo "FAIL:payload"; return 1; }
 
