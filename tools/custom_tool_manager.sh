@@ -38,6 +38,19 @@ if [[ "$action" == "create" ]]; then
     echo "$UPDATED" > "$TOOLS_FILE"
     echo "Tool $name created and registered successfully."
 
+elif [[ "$action" == "delete" ]]; then
+    if [[ -f "${CUSTOM_DIR}/${name}.sh" ]]; then
+        rm "${CUSTOM_DIR}/${name}.sh"
+        
+        # Unregister from tools.json
+        EXISTING=$(cat "$TOOLS_FILE")
+        UPDATED=$(echo "$EXISTING" | jq --arg name "$name" 'map(select(.name != $name))')
+        echo "$UPDATED" > "$TOOLS_FILE"
+        echo "Tool $name deleted and unregistered."
+    else
+        echo "Error: Tool $name not found in custom tools."
+    fi
+
 elif [[ "$action" == "list" ]]; then
     ls "$CUSTOM_DIR"
 fi

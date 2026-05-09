@@ -122,9 +122,29 @@ for k,v in json.load(sys.stdin).items():
           mark_rate_limited "$PROVIDER" "$MODEL" 60
       fi
 
+      # Log error for reflection
+      local err_entry=$(jq -n \
+          --arg ts "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+          --arg provider "$PROVIDER" \
+          --arg model "$MODEL" \
+          --arg code "$code" \
+          --arg reason "$reason" \
+          --arg body "$body" \
+          '{ts: $ts, provider: $provider, model: $model, code: $code, reason: $reason, body: $body}')
+      echo "$err_entry" >> "brain/state/error_log.jsonl"
+
       if [[ "$retryable" == "true" && "$attempt" -lt "$max_attempts" ]]; then
           local delay=$((2 ** attempt + RANDOM % 5))
           echo "AMA: API Error $code, retrying in $delay s... ($attempt/$max_attempts)" >&2
+          
+          # If it's a rate limit or server error and we have a fallback, switch for next attempt
+          if [[ ("$reason" == "rate_limit" || "$reason" == "server_error") && -n "$FALLBACK_MODEL" && "$MODEL" != "$FALLBACK_MODEL" ]]; then
+              echo "AMA: Switching to fallback model $FALLBACK_MODEL" >&2
+              MODEL="$FALLBACK_MODEL"
+              # Re-build payload with new model
+              payload=$(_api_build_payload "false" "$sys_prompt_override")
+          fi
+
           sleep "$delay"
           attempt=$((attempt + 1))
           continue

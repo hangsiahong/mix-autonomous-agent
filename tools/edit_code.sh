@@ -3,6 +3,14 @@ path="${TOOL_path}"
 old_text="${TOOL_old_text}"
 new_text="${TOOL_new_text}"
 
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+RESOLVED_PATH="$(realpath -m "$path")"
+
+if [[ "$RESOLVED_PATH" != "$PROJECT_ROOT"* ]]; then
+    echo "Error: Access denied. You can only edit files within the project directory ($PROJECT_ROOT)."
+    exit 1
+fi
+
 if [[ ! -f "$path" ]]; then
     echo "Error: File $path not found."
     exit 1

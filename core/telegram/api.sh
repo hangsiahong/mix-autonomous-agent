@@ -32,3 +32,11 @@ tg_delete() {
     tg_api "deleteMessage" "$(jq -n --arg cid "$chat_id" --arg mid "$message_id" \
         '{chat_id: $cid, message_id: $mid}')"
 }
+
+tg_send_photo() {
+    local chat_id="$1"
+    local photo="$2"
+    local caption="$3"
+    tg_api "sendPhoto" "$(jq -n --arg cid "$chat_id" --arg ph "$photo" --arg cap "$caption" \
+        '{chat_id: $cid, photo: $ph, caption: $cap}')"
+}

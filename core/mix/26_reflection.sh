@@ -23,7 +23,8 @@ Possibilities:
 2. Update your SOUL.md or AGENT.md if you've learned something about your identity.
 3. Save an important fact to memory using 'memory_remember'.
 4. Fix a bug in your core logic using 'edit_code'.
-5. Propose a new feature to the user.
+5. Check 'read_error_log' if you suspect issues with API or tools.
+6. Propose a new feature to the user.
 
 If no action is needed, respond with 'NO_ACTION'.
 If you decide to take action, execute the tools and explain why in the thought.

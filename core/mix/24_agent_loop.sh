@@ -60,6 +60,7 @@ run_agent() {
     done
     
     save_history "$chat_id"
+    log_trajectory "$chat_id" "completed"
     
     # Run self-reflection in the background
     ( reflect_turn "$chat_id" & )

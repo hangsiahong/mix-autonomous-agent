@@ -135,5 +135,36 @@
       "type": "object",
       "properties": {}
     }
+  },
+  {
+    "name": "image_generate",
+    "description": "Generate an image from a text description (prompt).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "prompt": { "type": "string", "description": "Visual description of the image" },
+        "width": { "type": "integer", "description": "Image width in pixels (default 1024)" },
+        "height": { "type": "integer", "description": "Image height in pixels (default 1024)" }
+      },
+      "required": ["prompt"]
+    }
+  },
+  {
+    "name": "read_error_log",
+    "description": "Read the recent API errors logged by the system.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "limit": { "type": "integer", "description": "Number of recent errors to show (default 10)" }
+      }
+    }
+  },
+  {
+    "name": "check_health",
+    "description": "Check the health of the AMA system, including file existence, syntax, and recent error rates.",
+    "parameters": {
+      "type": "object",
+      "properties": {}
+    }
   }
 ]

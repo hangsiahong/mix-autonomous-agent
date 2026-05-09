@@ -2,31 +2,40 @@
 call_api_stream() {
     local chat_id="$1"
     local message_id="$2"
-    local payload=$(_api_build_payload "true")
+    local sys_prompt_override="$3"
+
+    local attempt=1
+    local max_attempts=3
     
-    # Resolve API key and headers from Mix logic
-    local _api_key="$API_KEY"
-    if [ "$PROVIDER" != "default" ] && type "${PROVIDER}_get_api_key" >/dev/null 2>&1; then
-      local _pkey; _pkey=$(${PROVIDER}_get_api_key 2>/dev/null) || true
-      [ -n "$_pkey" ] && _api_key="$_pkey"
-    fi
+    while [ "$attempt" -le "$max_attempts" ]; do
+        local payload=$(_api_build_payload "true" "$sys_prompt_override")
+        
+        # Resolve API key and headers from Mix logic
+        local _api_key="$API_KEY"
+        if [ "$PROVIDER" != "default" ] && type "${PROVIDER}_get_api_key" >/dev/null 2>&1; then
+          local _pkey; _pkey=$(${PROVIDER}_get_api_key 2>/dev/null) || true
+          [ -n "$_pkey" ] && _api_key="$_pkey"
+        fi
 
-    local _extra_headers="{}"
-    if [ "$PROVIDER" != "default" ] && type "${PROVIDER}_extra_headers_json" >/dev/null 2>&1; then
-      local _ph; _ph=$(${PROVIDER}_extra_headers_json 2>/dev/null) || true
-      [ -n "$_ph" ] && _extra_headers="$_ph"
-    fi
+        local _extra_headers="{}"
+        if [ "$PROVIDER" != "default" ] && type "${PROVIDER}_extra_headers_json" >/dev/null 2>&1; then
+          local _ph; _ph=$(${PROVIDER}_extra_headers_json 2>/dev/null) || true
+          [ -n "$_ph" ] && _extra_headers="$_ph"
+        fi
 
-    # Use python to handle the stream and Telegram updates
-    # We pass everything needed via environment
-    TG_TOKEN="$TG_TOKEN" \
-    BASE_URL="$BASE_URL" \
-    API_KEY="$_api_key" \
-    EXTRA_HEADERS="$_extra_headers" \
-    CHAT_ID="$chat_id" \
-    MESSAGE_ID="$message_id" \
-    python3 -u -c '
-import json, sys, time, os, requests
+        # We need to capture the output but also let it stream to TG
+        local tmp_out=$(mktemp)
+        local tmp_err=$(mktemp)
+
+        # Use python to handle the stream and Telegram updates
+        TG_TOKEN="$TG_TOKEN" \
+        BASE_URL="$BASE_URL" \
+        API_KEY="$_api_key" \
+        EXTRA_HEADERS="$_extra_headers" \
+        CHAT_ID="$chat_id" \
+        MESSAGE_ID="$message_id" \
+        python3 -u -c '
+import json, sys, time, os, requests, re
 
 tg_token = os.environ.get("TG_TOKEN")
 chat_id = os.environ.get("CHAT_ID")
@@ -117,7 +126,32 @@ print(f"TC:{json.dumps(tc_list)}")
 print(f"TEXT:{content}")
 if usage:
     print(f"USAGE:{json.dumps(usage)}")
-' <<EOF
+' <<EOF > "$tmp_out" 2> "$tmp_err"
 $payload
 EOF
+        local status=$?
+        local result=$(cat "$tmp_out")
+        local err_out=$(cat "$tmp_err")
+        rm -f "$tmp_out" "$tmp_err"
+
+        # Check for errors in err_out or status
+        if [[ $status -ne 0 || "$result" != *"TC:"* ]]; then
+             echo "AMA: Stream Error (Status $status). Err: $err_out" >&2
+             
+             # Try to classify error from err_out if possible, or just retry
+             if [[ "$attempt" -lt "$max_attempts" ]]; then
+                 if [[ -n "$FALLBACK_MODEL" && "$MODEL" != "$FALLBACK_MODEL" ]]; then
+                     echo "AMA: Switching to fallback model $FALLBACK_MODEL" >&2
+                     MODEL="$FALLBACK_MODEL"
+                 fi
+                 local delay=$((2 ** attempt))
+                 sleep "$delay"
+                 attempt=$((attempt + 1))
+                 continue
+             fi
+        fi
+
+        echo "$result"
+        return 0
+    done
 }
