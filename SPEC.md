@@ -1,4 +1,4 @@
-# SPEC - Autonomous Minimalist Agent (AMA)
+# SPEC - Autonomous Mix Agent (AMA)
 
 ## §G Goal
 Build a self-improving, autonomous agent in Bash that communicates via Telegram. Minimalist, extensible, and capable of modifying its own harness.

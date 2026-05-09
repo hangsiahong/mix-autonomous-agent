@@ -39,26 +39,27 @@ _api_build_payload() {
     _extra_payload=$(${PROVIDER}_extra_payload_json 2>/dev/null) || _extra_payload="{}"
   fi
 
-  printf '%s\n%s\n%s\n%s\n%s\n%s\n' \
-    "$(printf '%s' "$system_prompt" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')" \
-    "$tools" \
-    "$_hist_for_api" \
-    "$_model" \
-    "$_extra_payload" \
-    "$stream" \
-  | python3 -c '
-import json,sys
-s=json.loads(sys.stdin.readline())
-t=json.loads(sys.stdin.readline())
-h=json.loads(sys.stdin.readline())
-m=sys.stdin.readline().strip()
-ex=json.loads(sys.stdin.readline())
-stream=sys.stdin.readline().strip().lower()=="true"
-msg=[{"role":"system","content":s}]+h
-body={"model":m,"messages":msg,"tools":t,"tool_choice":"auto"}
+  # Use environment variables to pass data to python safely
+  SYSTEM_PROMPT="$system_prompt" \
+  TOOLS="$tools" \
+  HISTORY_JSON="$_hist_for_api" \
+  MODEL_NAME="$_model" \
+  EXTRA_PAYLOAD="$_extra_payload" \
+  STREAM_MODE="$stream" \
+  python3 -c '
+import json, os, sys
+s = os.environ.get("SYSTEM_PROMPT", "")
+t = json.loads(os.environ.get("TOOLS", "[]"))
+h = json.loads(os.environ.get("HISTORY_JSON", "[]"))
+m = os.environ.get("MODEL_NAME", "")
+ex = json.loads(os.environ.get("EXTRA_PAYLOAD", "{}"))
+stream = os.environ.get("STREAM_MODE", "false").lower() == "true"
+
+msg = [{"role": "system", "content": s}] + h
+body = {"model": m, "messages": msg, "tools": t, "tool_choice": "auto"}
 if stream:
-    body["stream"]=True
-    body["stream_options"]={"include_usage":True}
+    body["stream"] = True
+    body["stream_options"] = {"include_usage": True}
 body.update(ex)
 print(json.dumps(body))
 ' 2>/dev/null

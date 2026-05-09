@@ -47,7 +47,7 @@ tg_handle_update() {
         
         case "$cmd" in
             /start)
-                tg_send "$chat_id" "AMA (Autonomous Minimalist Agent) ready. Use /help for commands."
+                tg_send "$chat_id" "AMA (Autonomous Mix Agent) ready. Use /help for commands." "$thread_id"
                 ;;
             /help)
                 tg_send "$chat_id" "Commands: /start, /help, /reset, /status, /sethome, /whitelist <id>"

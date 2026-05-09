@@ -62,7 +62,13 @@
     - Fixed critical \`import re\` bug in streaming UX.
 - **2023-10-27**: Multi-modal Intelligence.
     - Implemented **Image Vision**: AMA can now see and process photos sent via Telegram.
-    - Created \`core/telegram/media.sh\` for media extraction and base64 conversion.
+    - Created `core/telegram/media.sh` for media extraction and base64 conversion.
     - Updated history engine to support multi-modal JSON arrays.
     - Enhanced system prompt with vision awareness.
-    - Added \`tg_get_file\` and \`tg_download\` to the Telegram API wrapper.
+    - Added `tg_get_file` and `tg_download` to the Telegram API wrapper.
+- **2023-10-27**: Autonomous Mix Agent (AMA) Re-branding & Verification.
+    - Formally renamed project to **Autonomous Mix Agent**.
+    - Finalized session isolation with robust composite IDs.
+    - Implemented Python-based environment variable passing in API layer to resolve JSON/Shell escaping issues.
+    - Created comprehensive test suite (`tests/`) for Session Isolation and Skill Binding.
+    - All tests passing; core loop stable with multi-topic support.
