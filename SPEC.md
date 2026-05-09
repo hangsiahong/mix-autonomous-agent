@@ -35,6 +35,9 @@ Build a self-improving, autonomous agent in Bash that communicates via Telegram.
 - [x] Implement **Reflection Core** for proactive self-awareness.
 - [x] Implement **Skill Manager** (`custom_tool_manager`) for autonomous tool creation.
 - [x] Integrate **LanceDB** for persistent episodic/semantic memory.
+- [x] Implement **Multi-session Isolation** (Telegram Forum Topics).
+- [x] Implement **Context Engineering** and **Skill Binding**.
+- [ ] Implement **Audio/Video processing** via Gemini File API.
 
 ## §B Bugs
 - N/A

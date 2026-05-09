@@ -2,6 +2,7 @@
 _api_build_payload() {
   local stream="${1:-false}"
   local sys_prompt_override="$2"
+  local skill="$3"
   local _model="$MODEL"
   [ -n "${_GOOGLE_VERTEX_MODEL_PREFIX:-}" ] && _model="${_GOOGLE_VERTEX_MODEL_PREFIX}${MODEL}"
   
@@ -11,8 +12,24 @@ _api_build_payload() {
   else
     system_prompt=$(cat brain/system_prompt.txt)
   fi
+
+  # Skill-specific prompt injection
+  if [[ -n "$skill" ]]; then
+    if [[ -f "brain/skills/${skill}/prompt.txt" ]]; then
+        local skill_prompt=$(cat "brain/skills/${skill}/prompt.txt")
+        system_prompt="${system_prompt}\n\n## ACTIVE SKILL: ${skill}\n${skill_prompt}"
+    fi
+  fi
   
   local tools=$(cat brain/tools.json)
+
+  # Skill-specific tool filtering/addition
+  if [[ -n "$skill" ]]; then
+    if [[ -f "brain/skills/${skill}/tools.json" ]]; then
+        local skill_tools=$(cat "brain/skills/${skill}/tools.json")
+        tools=$(echo "$tools" | jq --argjson st "$skill_tools" '. + $st')
+    fi
+  fi
   
   local _hist_for_api
   _hist_for_api=$(_apply_provider_history_filter "$HISTORY") || _hist_for_api="$HISTORY"

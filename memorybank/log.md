@@ -47,7 +47,12 @@
     - Created **Repo Mapping** (\`tools/repo_map.sh\`) for global project awareness.
     - Added **Insights Tool** (\`tools/insights.sh\`) for self-monitoring.
     - Verified all features are integrated into the main agent loop and background reflection.
-- **2023-10-27**: Resilience & Proactive Maintenance.
+- **2023-10-27**: Context Engineering & Multi-Session.
+    - Implemented **Multi-Session Isolation**: AMA now supports Telegram Forum Topics (threads). Conversations are isolated by `chat_id` and `thread_id`.
+    - Added **Context Injection**: Each user message now includes a "Current Session Context" block (inspired by Hermes-Agent) informing the LLM about the Platform, Chat, Topic, and User.
+    - Implemented **Topic-Bound Skills**: Added a mechanism to load specialized system prompts and tools based on the active topic.
+    - Created **Skill Manager Tool**: AMA can now bind/unbind skills to specific topics using the `skill_manager` tool.
+    - Updated Telegram API: `tg_send` now supports `message_thread_id`.
     - Implemented **Robust API Lifecycle** (Retries, Exponential Backoff, and Provider/Model Fallback) in both standard and streaming calls.
     - Added **Background Maintenance** (\`extensions/cron/\`) for log cleanup and system health monitoring.
     - Enhanced **Reflection Core** with error-log awareness and self-healing mandates.

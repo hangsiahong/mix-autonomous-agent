@@ -2,13 +2,14 @@
 call_api_stream() {
     local chat_id="$1"
     local message_id="$2"
-    local sys_prompt_override="$3"
+    local skill="$3"
+    local sys_prompt_override="$4"
 
     local attempt=1
     local max_attempts=3
     
     while [ "$attempt" -le "$max_attempts" ]; do
-        local payload=$(_api_build_payload "true" "$sys_prompt_override")
+        local payload=$(_api_build_payload "true" "$sys_prompt_override" "$skill")
         
         # Resolve API key and headers from Mix logic
         local _api_key="$API_KEY"

@@ -3,6 +3,8 @@
 
 reflect_turn() {
     local chat_id="$1"
+    local thread_id="$2"
+    local session_id="$3"
     
     # Only reflect if the user isn't just saying 'hi'
     local last_user_msg=$(echo "$HISTORY" | jq -r 'map(select(.role == "user")) | last | .content')
@@ -10,47 +12,12 @@ reflect_turn() {
         return
     fi
 
-    echo "AMA: Starting self-reflection..."
+    echo "AMA: Starting self-reflection for $session_id..."
     
-    # Create a hidden reflection prompt
-    local reflection_sys_prompt="You are the Reflection Core of AMA. 
-Review the conversation above.
-Is there anything you should proactively do to improve yourself or help the user better?
-You have full access to tools. 
-
-Possibilities:
-1. Create a new custom tool using 'custom_tool_manager' if the user is asking for something you can automate.
-2. Update your SOUL.md or AGENT.md if you've learned something about your identity.
-3. Save an important fact to memory using 'memory_remember'.
-4. Fix a bug in your core logic using 'edit_code'.
-5. Check 'read_error_log' if you suspect issues with API or tools.
-6. Propose a new feature to the user.
-
-If no action is needed, respond with 'NO_ACTION'.
-If you decide to take action, execute the tools and explain why in the thought.
-"
-
-    # Save current history
-    local temp_history="$HISTORY"
-
-    # Call API (Non-streaming for reflection)
-    local turn=0
-    while [ "$turn" -lt 5 ]; do
-        turn=$((turn + 1))
-        
-        # Call API with system prompt override
-        local response=$(call_api "$reflection_sys_prompt")
-        
-        local text=$(echo "$response" | jq -r '.choices[0].message.content // ""')
-        local tool_calls=$(echo "$response" | jq -c '.choices[0].message.tool_calls // []')
-        
-        if [[ "$text" == "NO_ACTION" ]]; then
-            break
-        fi
-
+    # ... (rest of function)
         # If it generated a message for the user, we should send it
         if [[ -n "$text" && "$text" != "null" && "$text" != "NO_ACTION" ]]; then
-            tg_send "$chat_id" "[Proactive] $text"
+            tg_send "$chat_id" "[Proactive] $text" "$thread_id"
         fi
 
         if [[ "$tool_calls" != "[]" && "$tool_calls" != "null" ]]; then
@@ -58,7 +25,7 @@ If you decide to take action, execute the tools and explain why in the thought.
                 local name=$(echo "$tc" | jq -r '.function.name')
                 local args=$(echo "$tc" | jq -r '.function.arguments')
                 echo "Reflection: Executing $name"
-                log_tool_usage "$chat_id" "$name"
+                log_tool_usage "$session_id" "$name"
                 local output=$(run_tool "$name" "$args")
                 
                 # Append to history so the next reflection turn knows what happened

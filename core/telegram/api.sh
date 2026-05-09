@@ -12,9 +12,14 @@ tg_api() {
 tg_send() {
     local chat_id="$1"
     local text="$2"
-    local parse_mode="${3:-Markdown}"
-    tg_api "sendMessage" "$(jq -n --arg cid "$chat_id" --arg txt "$text" --arg pm "$parse_mode" \
-        '{chat_id: $cid, text: $txt, parse_mode: $pm}')"
+    local thread_id="$3"
+    local parse_mode="${4:-Markdown}"
+    local payload=$(jq -n --arg cid "$chat_id" --arg txt "$text" --arg pm "$parse_mode" \
+        '{chat_id: $cid, text: $txt, parse_mode: $pm}')
+    if [[ -n "$thread_id" && "$thread_id" != "null" ]]; then
+        payload=$(echo "$payload" | jq --arg tid "$thread_id" '.message_thread_id = $tid')
+    fi
+    tg_api "sendMessage" "$payload" | jq -r '.result.message_id // empty'
 }
 
 tg_edit() {

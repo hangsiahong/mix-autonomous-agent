@@ -4,9 +4,19 @@
 tg_handle_update() {
     local update="$1"
     local chat_id=$(echo "$update" | jq -r '.message.chat.id // .callback_query.message.chat.id')
+    local thread_id=$(echo "$update" | jq -r '.message.message_thread_id // .callback_query.message.message_thread_id // empty')
+    local chat_type=$(echo "$update" | jq -r '.message.chat.type // .callback_query.message.chat.type // "private"')
+    local chat_title=$(echo "$update" | jq -r '.message.chat.title // .callback_query.message.chat.title // empty')
     local text=$(echo "$update" | jq -r '.message.text // .message.caption // .callback_query.data // empty')
     local user_id=$(echo "$update" | jq -r '.message.from.id // .callback_query.from.id')
+    local username=$(echo "$update" | jq -r '.message.from.username // .callback_query.from.username // empty')
     
+    # Build Session ID
+    local session_id="tg_${chat_id}"
+    if [[ -n "$thread_id" ]]; then
+        session_id="tg_${chat_id}_${thread_id}"
+    fi
+
     # Extract Media
     local media_out=$(tg_extract_media "$update")
     local media_json=$(echo "$media_out" | grep -v "MEDIA_FILE:" || echo "[]")
@@ -43,35 +53,35 @@ tg_handle_update() {
                 tg_send "$chat_id" "Commands: /start, /help, /reset, /status, /sethome, /whitelist <id>"
                 ;;
             /reset)
-                rm -f "${DIR}/brain/state/history_${chat_id}.json"
-                tg_send "$chat_id" "Conversation history reset."
+                rm -f "${DIR}/brain/state/history_${session_id}.json"
+                tg_send "$chat_id" "Conversation history reset." "$thread_id"
                 ;;
             /status)
                 local title="Untitled"
                 if [ -f "brain/state/titles.json" ]; then
-                    title=$(jq -r --arg id "$chat_id" '.[$id] // "Untitled"' brain/state/titles.json)
+                    title=$(jq -r --arg id "$session_id" '.[$id] // "Untitled"' brain/state/titles.json)
                 fi
                 local sysinfo=$(bash tools/sys_info.sh)
-                tg_send "$chat_id" "Title: $title\nProvider: ${PROVIDER:-openai (default)}\nModel: ${MODEL:-gpt-4o-mini}\nChat ID: $chat_id\nUser ID: $user_id\n\n$sysinfo"
+                tg_send "$chat_id" "Title: $title\nProvider: ${PROVIDER:-openai (default)}\nModel: ${MODEL:-gpt-4o-mini}\nSession: $session_id\nUser: ${username:-$user_id}\nType: $chat_type\n\n$sysinfo" "$thread_id"
                 ;;
             /insights)
                 local report=$(bash tools/insights.sh)
-                tg_send "$chat_id" "$report"
+                tg_send "$chat_id" "$report" "$thread_id"
                 ;;
             /login)
                 if [[ "${PROVIDER}" == "copilot" ]]; then
-                    copilot_login "$chat_id"
+                    copilot_login "$chat_id" # Copilot login usually happens in DM anyway
                 else
-                    tg_send "$chat_id" "Provider is not set to copilot."
+                    tg_send "$chat_id" "Provider is not set to copilot." "$thread_id"
                 fi
                 ;;
             *)
                 # Pass unknown commands to agent
-                run_agent "$chat_id" "$text" "$user_id" "$media_json"
+                run_agent "$chat_id" "$text" "$user_id" "$media_json" "$thread_id" "$session_id" "$chat_title" "$username"
                 ;;
         esac
     else
         # Normal text -> Run Agent
-        run_agent "$chat_id" "$text" "$user_id" "$media_json"
+        run_agent "$chat_id" "$text" "$user_id" "$media_json" "$thread_id" "$session_id" "$chat_title" "$username"
     fi
 }

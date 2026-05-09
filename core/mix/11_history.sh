@@ -28,24 +28,24 @@ append_tool_result() {
 }
 
 save_history() {
-    local chat_id="$1"
-    echo "$HISTORY" > "brain/state/history_${chat_id}.json"
+    local session_id="$1"
+    echo "$HISTORY" > "brain/state/history_${session_id}.json"
 }
 
 load_history() {
-    local chat_id="$1"
-    if [[ -f "brain/state/history_${chat_id}.json" ]]; then
-        HISTORY=$(cat "brain/state/history_${chat_id}.json")
+    local session_id="$1"
+    if [[ -f "brain/state/history_${session_id}.json" ]]; then
+        HISTORY=$(cat "brain/state/history_${session_id}.json")
     else
         HISTORY="[]"
     fi
 }
 
 compact_history() {
-    local chat_id="$1"
+    local session_id="$1"
     
     # First, try smart compression if history is long
-    compress_history "$chat_id"
+    compress_history "$session_id"
     
     # Fallback to hard truncation if still over max limit
     local count=$(echo "$HISTORY" | jq 'length')
@@ -61,7 +61,7 @@ compact_history() {
             local content=$(echo "$msg" | jq -r 'if .content | type == "array" then .content | map(.text // "") | join(" ") else .content // "" end')
             
             if [[ -n "$content" && "$content" != "null" ]]; then
-                python3 "${_root_dir}/tools/memory_helper.py" save "[$role]: $content" "{\"chat_id\": \"$chat_id\", \"type\": \"history\"}" >/dev/null 2>&1
+                python3 "${_root_dir}/tools/memory_helper.py" save "[$role]: $content" "{\"session_id\": \"$session_id\", \"type\": \"history\"}" >/dev/null 2>&1
             fi
         done
 
