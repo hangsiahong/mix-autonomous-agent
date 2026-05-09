@@ -3,7 +3,16 @@
 append_text() {
     local role="$1"
     local content="$2"
-    HISTORY=$(echo "$HISTORY" | jq -c --arg role "$role" --arg content "$content" '. + [{role: $role, content: $content}]')
+    local media_json="$3" # Optional JSON array for multi-modal [{type: "image_url", ...}]
+    
+    if [[ -n "$media_json" && "$media_json" != "null" ]]; then
+        # Multi-modal content
+        local combined_content=$(jq -n --arg text "$content" --argjson media "$media_json" \
+            '[{"type": "text", "text": $text}] + $media')
+        HISTORY=$(echo "$HISTORY" | jq -c --arg role "$role" --argjson content "$combined_content" '. + [{role: $role, content: $content}]')
+    else
+        HISTORY=$(echo "$HISTORY" | jq -c --arg role "$role" --arg content "$content" '. + [{role: $role, content: $content}]')
+    fi
 }
 
 append_tool_call() {
@@ -48,7 +57,9 @@ compact_history() {
         local _root_dir="$(cd "$_hist_dir/../.." && pwd)"
         echo "$removed" | jq -c '.[]' | while read -r msg; do
             local role=$(echo "$msg" | jq -r '.role')
-            local content=$(echo "$msg" | jq -r '.content // ""')
+            # Extract content text (handle both string and array)
+            local content=$(echo "$msg" | jq -r 'if .content | type == "array" then .content | map(.text // "") | join(" ") else .content // "" end')
+            
             if [[ -n "$content" && "$content" != "null" ]]; then
                 python3 "${_root_dir}/tools/memory_helper.py" save "[$role]: $content" "{\"chat_id\": \"$chat_id\", \"type\": \"history\"}" >/dev/null 2>&1
             fi

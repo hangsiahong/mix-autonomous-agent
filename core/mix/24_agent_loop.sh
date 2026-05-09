@@ -3,12 +3,13 @@ run_agent() {
     local chat_id="$1"
     local input="$2"
     local user_id="$3"
+    local media_json="$4"
     
     load_history "$chat_id"
     
     # Inject context hint about IDs
     local context_hint="[Context: chat_id=$chat_id, user_id=$user_id]"
-    append_text "user" "$context_hint $input"
+    append_text "user" "$context_hint $input" "$media_json"
     compact_history "$chat_id"
     
     local turn=0

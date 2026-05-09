@@ -40,3 +40,14 @@ tg_send_photo() {
     tg_api "sendPhoto" "$(jq -n --arg cid "$chat_id" --arg ph "$photo" --arg cap "$caption" \
         '{chat_id: $cid, photo: $ph, caption: $cap}')"
 }
+
+tg_get_file() {
+    local file_id="$1"
+    tg_api "getFile" "$(jq -n --arg fid "$file_id" '{file_id: $fid}')"
+}
+
+tg_download() {
+    local file_path="$1"
+    local local_dest="$2"
+    curl -s -o "$local_dest" "https://api.telegram.org/file/bot${TG_TOKEN}/${file_path}"
+}

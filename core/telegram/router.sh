@@ -4,11 +4,20 @@
 tg_handle_update() {
     local update="$1"
     local chat_id=$(echo "$update" | jq -r '.message.chat.id // .callback_query.message.chat.id')
-    local text=$(echo "$update" | jq -r '.message.text // .callback_query.data')
+    local text=$(echo "$update" | jq -r '.message.text // .message.caption // .callback_query.data // empty')
     local user_id=$(echo "$update" | jq -r '.message.from.id // .callback_query.from.id')
     
-    # Ignore empty messages
-    [[ "$text" == "null" ]] && return
+    # Extract Media
+    local media_out=$(tg_extract_media "$update")
+    local media_json=$(echo "$media_out" | grep -v "MEDIA_FILE:" || echo "[]")
+    local media_file=$(echo "$media_out" | grep "MEDIA_FILE:" | cut -d: -f2- || true)
+
+    if [[ -n "$media_file" ]]; then
+        text="$text [Attached File: $media_file]"
+    fi
+
+    # Ignore empty messages unless there is media
+    [[ "$text" == "null" || -z "$text" ]] && [[ "$media_json" == "[]" ]] && return
 
     # Whitelist Check
     if ! is_whitelisted "$chat_id" && ! is_whitelisted "$user_id"; then
@@ -58,11 +67,11 @@ tg_handle_update() {
                 ;;
             *)
                 # Pass unknown commands to agent
-                run_agent "$chat_id" "$text" "$user_id"
+                run_agent "$chat_id" "$text" "$user_id" "$media_json"
                 ;;
         esac
     else
         # Normal text -> Run Agent
-        run_agent "$chat_id" "$text" "$user_id"
+        run_agent "$chat_id" "$text" "$user_id" "$media_json"
     fi
 }

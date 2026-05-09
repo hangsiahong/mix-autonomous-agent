@@ -57,7 +57,7 @@ $middle_msgs"
     # 5. Archive the compressed part to long-term memory before replacing
     echo "$middle_msgs" | jq -c '.[]' | while read -r msg; do
         local role=$(echo "$msg" | jq -r '.role')
-        local content=$(echo "$msg" | jq -r '.content // ""')
+        local content=$(echo "$msg" | jq -r 'if .content | type == "array" then .content | map(.text // "") | join(" ") else .content // "" end')
         if [[ -n "$content" && "$content" != "null" ]]; then
              python3 "tools/memory_helper.py" save "[$role]: $content" "{\"chat_id\": \"$chat_id\", \"type\": \"archived_during_compression\"}" >/dev/null 2>&1
         fi
