@@ -51,6 +51,11 @@ run_agent() {
         fi
         local result=$(call_api_stream "$chat_id" "$msg_id" "$skill")
         
+        if [[ -z "$result" || "$result" == "FAIL:"* ]]; then
+            tg_edit "$chat_id" "$msg_id" "Error: Failed to get response from AI. Please try again later."
+            break
+        fi
+
         local tool_calls=$(echo "$result" | grep "^TC:" | cut -c4-)
         local text=$(echo "$result" | grep "^TEXT:" | cut -c6-)
         local usage=$(echo "$result" | grep "^USAGE:" | cut -c7-)

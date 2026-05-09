@@ -5,6 +5,11 @@ call_api_stream() {
     local skill="$3"
     local sys_prompt_override="$4"
 
+    if [ "$PROVIDER" != "default" ] && type "${PROVIDER}_call_api_stream" >/dev/null 2>&1; then
+      "${PROVIDER}_call_api_stream" "$chat_id" "$message_id" "$skill" "$sys_prompt_override"
+      return $?
+    fi
+
     local attempt=1
     local max_attempts=3
 

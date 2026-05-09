@@ -42,20 +42,21 @@ If you decide to take action, execute the tools and explain why in the thought.
         
         # Call API with system prompt override
         local response=$(call_api "$reflection_sys_prompt")
+        local parsed=$(parse_resp "$response")
         
-        local text=$(echo "$response" | jq -r '.choices[0].message.content // ""')
-        local tool_calls=$(echo "$response" | jq -c '.choices[0].message.tool_calls // []')
+        local text=$(echo "$parsed" | grep "^TEXT:" | cut -c6-)
+        local tool_calls=$(echo "$parsed" | grep "^TC:" | cut -c4-)
         
         if [[ "$text" == "NO_ACTION" ]]; then
             break
         fi
 
         # If it generated a message for the user, we should send it
-        if [[ -n "$text" && "$text" != "null" && "$text" != "NO_ACTION" ]]; then
+        if [[ -n "$text" && "$text" != "null" && "$text" != "" && "$text" != "NO_ACTION" ]]; then
             tg_send "$chat_id" "[Proactive] $text" "$thread_id"
         fi
 
-        if [[ "$tool_calls" != "[]" && "$tool_calls" != "null" ]]; then
+        if [[ "$tool_calls" != "[]" && "$tool_calls" != "null" && -n "$tool_calls" ]]; then
              echo "$tool_calls" | jq -c '.[]' | while read -r tc; do
                 local name=$(echo "$tc" | jq -r '.function.name')
                 local args=$(echo "$tc" | jq -r '.function.arguments')

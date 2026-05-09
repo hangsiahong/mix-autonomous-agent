@@ -8,10 +8,11 @@ generate_title() {
     local prompt="Based on the conversation above, generate a short (3-5 words) descriptive title for this chat. Respond ONLY with the title."
     
     # Use call_api with specific prompt
-    local title=$(call_api "$prompt")
-    title=$(echo "$title" | jq -r '.choices[0].message.content // empty' | tr -d '"')
+    local response=$(call_api "$prompt")
+    local parsed=$(parse_resp "$response")
+    local title=$(echo "$parsed" | grep "^TEXT:" | cut -c6- | tr -d '"')
     
-    if [[ -n "$title" ]]; then
+    if [[ -n "$title" && "$title" != "null" ]]; then
         # Save title to brain/state/titles.json
         local titles_file="brain/state/titles.json"
         mkdir -p "brain/state"

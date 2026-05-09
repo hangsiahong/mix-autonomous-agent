@@ -26,7 +26,11 @@ while true; do
     OFFSET=$(cat "$OFFSET_FILE")
     UPDATES=$(tg_poll "$OFFSET")
     
-    OK=$(echo "$UPDATES" | jq -r '.ok')
+    if [[ -z "$UPDATES" ]]; then
+        sleep 5; continue
+    fi
+
+    OK=$(echo "$UPDATES" | jq -r '.ok' 2>/dev/null)
     if [[ "$OK" != "true" ]]; then
         sleep 5; continue
     fi

@@ -513,12 +513,100 @@ print(json.dumps(body))
   local resp
   resp=$(curl "${_curl_args[@]}" -d "$payload")
   
-  if echo "$resp" | jq -e '.error' >/dev/null; then
-    echo "FAIL:google_error:$(echo "$resp" | jq -c '.error')"
+  if [[ "$resp" == "FAIL:"* ]]; then
+    echo "$resp"
+    return 1
+  fi
+
+  if echo "$resp" | jq -e '.error' >/dev/null 2>&1; then
+    echo "FAIL:google_error:$(echo "$resp" | jq -c '.error' 2>/dev/null)"
     return 1
   fi
 
   echo "$resp"
+}
+
+google_call_api_stream() {
+  local chat_id="$1"
+  local message_id="$2"
+  local skill="$3"
+  local sys_prompt_override="$4"
+
+  local mode
+  mode=$(grep '^mode=' "$_GOOGLE_CONFIG_FILE" 2>/dev/null | cut -d= -f2-)
+  [ -z "$mode" ] && mode="${GOOGLE_MODE:-studio}"
+
+  local api_key; api_key=$(google_get_api_key)
+  
+  local url
+  if [ "$mode" = "vertex" ]; then
+    local project_id="${GOOGLE_PROJECT:-}"
+    local region="${GOOGLE_REGION:-us-central1}"
+    if [[ "$MODEL" =~ $_GOOGLE_GLOBAL_MODELS_RE ]]; then region="global"; fi
+    url="https://aiplatform.googleapis.com/v1/projects/${project_id}/locations/${region}/publishers/google/models/${MODEL}:generateContent"
+  else
+    url="https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${api_key}"
+  fi
+
+  # Reuse the payload builder logic from google_call_api
+  # But we need the payload now
+  local system_prompt
+  if [[ -n "$sys_prompt_override" ]]; then
+    system_prompt="$sys_prompt_override"
+  else
+    system_prompt=$(cat brain/system_prompt.txt)
+  fi
+  local tools_json=$(cat brain/tools.json)
+
+  # ... payload building is inside the python script in google_call_api ...
+  # I will extract it to a shared function or just duplicate for now (caveman style).
+  
+  local payload
+  payload=$(SYSTEM_PROMPT="$system_prompt" \
+            HISTORY_JSON="$HISTORY" \
+            TOOLS_JSON="$tools_json" \
+            python3 -c '
+import json, os
+s = os.environ.get("SYSTEM_PROMPT", "")
+h = json.loads(os.environ.get("HISTORY_JSON", "[]"))
+t = json.loads(os.environ.get("TOOLS_JSON", "[]"))
+contents = []
+for msg in h:
+    role = "user" if msg["role"] == "user" else "model"
+    parts = []
+    if msg.get("content"):
+        if isinstance(msg["content"], str):
+            parts.append({"text": msg["content"]})
+        elif isinstance(msg["content"], list):
+            for p in msg["content"]:
+                if p["type"] == "text": parts.append({"text": p["text"]})
+                elif p["type"] == "image_url":
+                    b64_data = p["image_url"]["url"].split(",")[-1]
+                    mime = p["image_url"]["url"].split(";")[0].split(":")[-1]
+                    parts.append({"inline_data": {"mime_type": mime, "data": b64_data}})
+                elif p["type"] == "file_data":
+                    parts.append({"file_data": p["file_data"]})
+    if msg.get("tool_calls"):
+        for tc in msg["tool_calls"]:
+            parts.append({"function_call": {"name": tc["function"]["name"], "args": json.loads(tc["function"]["arguments"])}})
+    if msg.get("role") == "tool":
+        role = "user"
+        parts = [{"function_response": {"name": msg["name"], "response": {"content": msg["content"]}}}]
+    if parts: contents.append({"role": role, "parts": parts})
+body = {"contents": contents, "system_instruction": {"parts": [{"text": s}]}}
+if t: body["tools"] = [{"function_declarations": [{"name": tool["function"]["name"], "description": tool["function"]["description"], "parameters": tool["function"]["parameters"]} for tool in t]}]
+print(json.dumps(body))
+')
+
+  TG_TOKEN="$TG_TOKEN" \
+  CHAT_ID="$chat_id" \
+  MESSAGE_ID="$message_id" \
+  GOOGLE_STREAM_URL="$url" \
+  API_KEY="$api_key" \
+  GOOGLE_MODE="$mode" \
+  python3 core/mix/providers/google_stream.py <<EOF
+$payload
+EOF
 }
 
 # ─── Validate: check model availability ─────────────────────────────────────

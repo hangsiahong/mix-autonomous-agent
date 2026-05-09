@@ -4,6 +4,11 @@ parse_resp() {
     local text=""
     local tool_calls="null"
 
+    if [[ "$resp" != "{"* ]]; then
+        printf 'RAW:%s\nTC:null\nTEXT:\n' "$resp"
+        return
+    fi
+
     if echo "$resp" | jq -e '.candidates' >/dev/null 2>&1; then
         # Gemini Native
         text=$(echo "$resp" | jq -r '.candidates[0].content.parts[] | select(.text != null) | .text' | tr '\n' ' ' | sed 's/ $//')
