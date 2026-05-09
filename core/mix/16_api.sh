@@ -13,20 +13,46 @@ _api_build_payload() {
     system_prompt=$(cat brain/system_prompt.txt)
   fi
 
-  # Skill-specific prompt injection
-  if [[ -n "$skill" ]]; then
-    if [[ -f "brain/skills/${skill}/prompt.txt" ]]; then
-        local skill_prompt=$(cat "brain/skills/${skill}/prompt.txt")
-        system_prompt="${system_prompt}\n\n## ACTIVE SKILL: ${skill}\n${skill_prompt}"
-    fi
-  fi
-  
   local tools=$(cat brain/tools.json)
 
-  # Skill-specific tool filtering/addition
+  # Skill-specific prompt injection
   if [[ -n "$skill" ]]; then
+    local skill_prompt=""
+    local skill_tools="[]"
+
+    # 1. Load from core (system skills)
+    if [[ -f "core/skills/${skill}/prompt.txt" ]]; then
+        skill_prompt=$(cat "core/skills/${skill}/prompt.txt")
+    fi
+    if [[ -f "core/skills/${skill}/tools.json" ]]; then
+        skill_tools=$(cat "core/skills/${skill}/tools.json")
+    fi
+
+    # 2. Load from brain (user overrides/new skills) - Prepend/Append based on preference
+    # We treat brain as higher priority or extension
+    if [[ -f "brain/skills/${skill}/prompt.txt" ]]; then
+        local user_prompt=$(cat "brain/skills/${skill}/prompt.txt")
+        skill_prompt="${skill_prompt}\n\n${user_prompt}"
+    fi
     if [[ -f "brain/skills/${skill}/tools.json" ]]; then
-        local skill_tools=$(cat "brain/skills/${skill}/tools.json")
+        local user_tools=$(cat "brain/skills/${skill}/tools.json")
+        skill_tools=$(echo "$skill_tools" | jq --argjson ut "$user_tools" '. + $ut')
+    fi
+
+    # 3. Load from custom folder within brain skill (extra layer for cleanliness)
+    if [[ -f "brain/skills/${skill}/custom/prompt.txt" ]]; then
+        local custom_prompt=$(cat "brain/skills/${skill}/custom/prompt.txt")
+        skill_prompt="${skill_prompt}\n\n### CUSTOM EXTENSION\n${custom_prompt}"
+    fi
+    if [[ -f "brain/skills/${skill}/custom/tools.json" ]]; then
+        local custom_tools=$(cat "brain/skills/${skill}/custom/tools.json")
+        skill_tools=$(echo "$skill_tools" | jq --argjson ct "$custom_tools" '. + $ct')
+    fi
+
+    if [[ -n "$skill_prompt" ]]; then
+        system_prompt="${system_prompt}\n\n## ACTIVE SKILL: ${skill}\n${skill_prompt}"
+    fi
+    if [[ "$skill_tools" != "[]" ]]; then
         tools=$(echo "$tools" | jq --argjson st "$skill_tools" '. + $st')
     fi
   fi

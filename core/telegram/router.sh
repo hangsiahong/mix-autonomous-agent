@@ -40,6 +40,13 @@ tg_handle_update() {
         fi
     fi
 
+    # Auto-load AMA skill if mentioning AMA or autonomous-agent
+    local topic_cfg=$(get_topic_config "$chat_id" "$thread_id")
+    local skill=$(echo "$topic_cfg" | jq -r '.skill // empty')
+    if [[ -z "$skill" ]] && [[ "$text" =~ ([[:space:]]|^)[Aa][Mm][Aa]([[:space:]]|$) || "$text" =~ "autonomous-agent" ]]; then
+        skill="ama"
+    fi
+
     # Handle Slash Commands
     if [[ "$text" == /* ]]; then
         local cmd=$(echo "$text" | cut -d' ' -f1)
@@ -62,7 +69,7 @@ tg_handle_update() {
                     title=$(jq -r --arg id "$session_id" '.[$id] // "Untitled"' brain/state/titles.json)
                 fi
                 local sysinfo=$(bash tools/sys_info.sh)
-                tg_send "$chat_id" "Title: $title\nProvider: ${PROVIDER:-openai (default)}\nModel: ${MODEL:-gpt-4o-mini}\nSession: $session_id\nUser: ${username:-$user_id}\nType: $chat_type\n\n$sysinfo" "$thread_id"
+                tg_send "$chat_id" "Title: $title\nProvider: ${PROVIDER:-openai (default)}\nModel: ${MODEL:-gpt-4o-mini}\nSession: $session_id\nUser: ${username:-$user_id}\nType: $chat_type\nSkill: ${skill:-none}\n\n$sysinfo" "$thread_id"
                 ;;
             /insights)
                 local report=$(bash tools/insights.sh)
@@ -77,11 +84,11 @@ tg_handle_update() {
                 ;;
             *)
                 # Pass unknown commands to agent
-                run_agent "$chat_id" "$text" "$user_id" "$media_json" "$thread_id" "$session_id" "$chat_title" "$username"
+                run_agent "$chat_id" "$text" "$user_id" "$media_json" "$thread_id" "$session_id" "$chat_title" "$username" "$skill"
                 ;;
         esac
     else
         # Normal text -> Run Agent
-        run_agent "$chat_id" "$text" "$user_id" "$media_json" "$thread_id" "$session_id" "$chat_title" "$username"
+        run_agent "$chat_id" "$text" "$user_id" "$media_json" "$thread_id" "$session_id" "$chat_title" "$username" "$skill"
     fi
 }

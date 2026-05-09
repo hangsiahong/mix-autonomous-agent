@@ -8,6 +8,7 @@ run_agent() {
     local session_id="$6"
     local chat_title="$7"
     local username="$8"
+    local skill="${9}" # Skill passed from router
     
     load_history "$session_id"
     
@@ -20,14 +21,16 @@ run_agent() {
     context_prompt+="- **Session Key**: $session_id\n"
     
     # Skill Binding (Inspired by Hermes-Agent)
-    local topic_config=$(get_topic_config "$chat_id" "$thread_id")
-    local skill=""
-    if [[ -n "$topic_config" && "$topic_config" != "null" ]]; then
-        skill=$(echo "$topic_config" | jq -r '.skill // empty')
-        local topic_name=$(echo "$topic_config" | jq -r '.name // empty')
-        [[ -n "$topic_name" ]] && context_prompt+="- **Topic Name**: $topic_name\n"
-        [[ -n "$skill" ]] && context_prompt+="- **Active Skill**: $skill\n"
+    # If skill was not passed (not auto-detected), try looking up from config
+    if [[ -z "$skill" ]]; then
+        local topic_config=$(get_topic_config "$chat_id" "$thread_id")
+        if [[ -n "$topic_config" && "$topic_config" != "null" ]]; then
+            skill=$(echo "$topic_config" | jq -r '.skill // empty')
+            local topic_name=$(echo "$topic_config" | jq -r '.name // empty')
+            [[ -n "$topic_name" ]] && context_prompt+="- **Topic Name**: $topic_name\n"
+        fi
     fi
+    [[ -n "$skill" ]] && context_prompt+="- **Active Skill**: $skill\n"
     
     # Inject context hint
     append_text "user" "[SYSTEM: Context Updated]\n$context_prompt\n\n$input" "$media_json"
