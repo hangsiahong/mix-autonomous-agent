@@ -4,6 +4,7 @@
 - [SPEC.md](../SPEC.md): Goal, Constraints, Tasks.
 - [AGENT.md](../AGENT.md): Identity and Directives.
 - [SOUL.md](../SOUL.md): Cognitive Architecture.
+- [features.md](features.md): Implemented Capability Map.
 - [product_context.md](product_context.md): What is AMA?
 - [system_patterns.md](system_patterns.md): Architecture & Modular Design.
 - [active_context.md](active_context.md): Current focus & Next steps.

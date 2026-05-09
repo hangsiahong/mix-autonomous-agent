@@ -48,11 +48,14 @@ tg_url = f"https://api.telegram.org/bot{tg_token}/editMessageText"
 
 def update_tg(text):
     if not text: return
+    # Scrub thinking blocks from Telegram output
+    clean_text = re.sub(r"<(think|thinking|reasoning|thought)>.*?(</\1>|$)", "", text, flags=re.DOTALL | re.IGNORECASE)
+    if not clean_text.strip(): return
     try:
         requests.post(tg_url, json={
             "chat_id": chat_id,
             "message_id": message_id,
-            "text": text,
+            "text": clean_text.strip(),
             "parse_mode": "Markdown"
         }, timeout=5)
     except: pass
@@ -105,7 +108,8 @@ except Exception as e:
     sys.stderr.write(f"Error: {e}\n")
 
 # Final update
-update_tg(content if content else "(done)")
+clean_final = re.sub(r"<(think|thinking|reasoning|thought)>.*?(</\1>|$)", "", content, flags=re.DOTALL | re.IGNORECASE)
+update_tg(clean_final if clean_final.strip() else "(done)")
 
 # Output for bash parsing (TC: list of tool calls)
 tc_list = [v for k, v in sorted(tool_calls.items())]

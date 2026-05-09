@@ -6,14 +6,14 @@
 - **Streaming UI**: Live Telegram updates via Python SSE shim.
 
 ## Recent Changes
-- **Long-Term Memory**: Implemented LanceDB-based vector store for conversation archiving and retrieval.
-- **Smart Compaction**: History compaction now auto-archives discarded turns to the vector database.
-- **Identity Layer**: Created `AGENT.md` (Directives) and `SOUL.md` (Cognitive Strategy).
-- **Tool Expansion**: Added `memory_recall` and `memory_remember` tools.
-- **Conflict Prevention**: Solidified `tools/custom/` and `extensions/` for autonomous growth.
+- **Smart History Compression**: Implemented LLM-based summarization of middle turns to preserve context.
+- **Robustness Layer**: Added API error classification, retries, and tool loop guardrails.
+- **Observability**: Implemented usage tracking (tokens/tools) and the `insights` command.
+- **Self-Healing Edits**: `edit_code` now validates Bash syntax and auto-reverts on failure.
+- **Repo Mapping**: Added global project awareness via `repo_map` tool.
 
 ## Immediate Tasks
-- [ ] Verify LanceDB connectivity in the bot's runtime environment.
-- [ ] Test `gemini-2.0-flash` tool-calling with the new memory tools.
-- [ ] Finalize `bot.sh` reliability and error handling for long-polling.
-- [ ] Perform a "Self-Improvement" test: ask the agent to build a simple extension.
+- [ ] Implement **Curator** background task for skill maintenance and state cleanup.
+- [ ] Add **Trajectory Logging** for fine-tuning/debugging dataset collection.
+- [ ] Implement **Rate Limit Tracker** to handle multi-provider quota management.
+- [ ] Enhance **Reflection Core** to proactively optimize the system prompt based on usage insights.

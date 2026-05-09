@@ -42,7 +42,12 @@ tg_handle_update() {
                 if [ -f "brain/state/titles.json" ]; then
                     title=$(jq -r --arg id "$chat_id" '.[$id] // "Untitled"' brain/state/titles.json)
                 fi
-                tg_send "$chat_id" "Title: $title\nProvider: ${PROVIDER:-openai (default)}\nModel: ${MODEL:-gpt-4o-mini}\nChat ID: $chat_id\nUser ID: $user_id"
+                local sysinfo=$(bash tools/sys_info.sh)
+                tg_send "$chat_id" "Title: $title\nProvider: ${PROVIDER:-openai (default)}\nModel: ${MODEL:-gpt-4o-mini}\nChat ID: $chat_id\nUser ID: $user_id\n\n$sysinfo"
+                ;;
+            /insights)
+                local report=$(bash tools/insights.sh)
+                tg_send "$chat_id" "$report"
                 ;;
             /login)
                 if [[ "${PROVIDER}" == "copilot" ]]; then

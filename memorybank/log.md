@@ -40,3 +40,10 @@
     - Added \`sys_info\` tool for environment awareness (CPU/RAM/Disk/Time).
     - Refactored \`/status\` to display chat title and detailed ID info.
     - Improved agent loop with background async task support.
+- **2023-10-27**: Robustness & AGI Awareness Upgrades.
+    - Implemented **Smart Compression** (\`core/mix/30_compression.sh\`) with LLM summarization of middle turns.
+    - Added **Usage Tracking** (\`core/mix/32_usage.sh\`) for tokens and tool frequency.
+    - Implemented **Loop Guardrails** (\`core/mix/22_process_one_tool_call.sh\`) to block identical recursive tool calls.
+    - Created **Repo Mapping** (\`tools/repo_map.sh\`) for global project awareness.
+    - Added **Insights Tool** (\`tools/insights.sh\`) for self-monitoring.
+    - Verified all features are integrated into the main agent loop and background reflection.

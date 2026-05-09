@@ -87,16 +87,50 @@ for k,v in json.load(sys.stdin).items():
     done <<< "$_extra_pairs"
   fi
 
-  local tmp; tmp=$(mktemp)
-  local code
-  local curl_err=0
-  code=$(curl "${_curl_args[@]}" -o "$tmp" -d "$payload" 2>/dev/null) || curl_err=$?
-  local body; body=$(cat "$tmp" 2>/dev/null || true); rm -f "$tmp"
-  
-  if [ "$curl_err" -ne 0 ]; then
-    echo "FAIL:curl_error_$curl_err"
-    return 1
-  fi
-  [ "$code" != "200" ] && { echo "FAIL:$code:$body"; return 1; }
-  printf '%s' "$body"
+  local attempt=1
+  local max_attempts=3
+  while [ "$attempt" -le "$max_attempts" ]; do
+      if ! check_rate_limit "$PROVIDER" "$MODEL"; then
+          # If rate limited, we might want to fail fast or try a fallback model
+          # For now, just wait if it's the first attempt, or fail if we've waited enough
+          sleep 5
+      fi
+
+      local tmp; tmp=$(mktemp)
+      local code
+      local curl_err=0
+      code=$(curl "${_curl_args[@]}" -o "$tmp" -d "$payload" 2>/dev/null) || curl_err=$?
+      local body; body=$(cat "$tmp" 2>/dev/null || true); rm -f "$tmp"
+      
+      if [ "$curl_err" -ne 0 ]; then
+        echo "FAIL:curl_error_$curl_err"
+        return 1
+      fi
+
+      if [ "$code" == "200" ]; then
+          printf '%s' "$body"
+          return 0
+      fi
+
+      # Classify Error
+      local classification=$(classify_error "$code" "$body")
+      local reason=$(echo "$classification" | jq -r '.reason')
+      local retryable=$(echo "$classification" | jq -r '.retryable')
+      local should_compress=$(echo "$classification" | jq -r '.should_compress')
+
+      if [[ "$reason" == "rate_limit" ]]; then
+          mark_rate_limited "$PROVIDER" "$MODEL" 60
+      fi
+
+      if [[ "$retryable" == "true" && "$attempt" -lt "$max_attempts" ]]; then
+          local delay=$((2 ** attempt + RANDOM % 5))
+          echo "AMA: API Error $code, retrying in $delay s... ($attempt/$max_attempts)" >&2
+          sleep "$delay"
+          attempt=$((attempt + 1))
+          continue
+      fi
+
+      echo "FAIL:$code:$body"
+      return 1
+  done
 }
