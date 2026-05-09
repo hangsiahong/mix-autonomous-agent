@@ -1,5 +1,6 @@
 #!/bin/bash
 # core/access_control.sh - Tool execution permissions
+source "${_CONFIG_DIR:-core}/config.sh"
 
 # Sensitive tools that require explicit approval
 SENSITIVE_TOOLS=("edit_code" "create_code" "delete_file" "execute_bash")
@@ -30,9 +31,11 @@ check_tool_permission() {
     fi
     
     # In safety-first mode, we deny sensitive tools unless approved.
-    # Since we can't easily wait for a Telegram callback in this sync bash function without
-    # blocking the whole bot, we will for now allow but REQUIRE a specific skill or flag.
-    # REALITY: For now, we will allow but log, and later we will implement the /approve command.
+    # Check if the user ID is whitelisted via config
+    if ! is_whitelisted "$chat_id"; then
+        echo "Error: Only whitelisted users can use sensitive tools. Please whitelist user $chat_id."
+        return 1
+    fi
     
     echo "PERMISSION_GRANTED: $tool_name" >&2
     return 0

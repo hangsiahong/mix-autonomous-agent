@@ -76,23 +76,41 @@ run_agent() {
             append_tool_call "$tool_calls"
             
             # Process tool calls
-            while read -r tc; do
-                [[ -z "$tc" ]] && continue
-                local name=$(echo "$tc" | jq -r '.function.name // .name // empty' | tr -d '[:space:]')
-                local output=$(process_tc "$chat_id" "$msg_id" "$tc" "$thread_id")
-                local tc_id=$(echo "$tc" | jq -r '.id // empty')
+            local py_script=$(cat << 'EOF'
+import sys, json
+try:
+    calls = json.loads(sys.argv[1])
+    for tc in calls:
+        name = tc.get("function", {}).get("name") or tc.get("name", "")
+        tc_id = tc.get("id", "")
+        if not name:
+            name = "unknown_tool"
+        print(f"{name.strip()}|{tc_id.strip()}")
+except:
+    pass
+EOF
+)
+            while IFS='|' read -r name tc_id; do
+                [[ -z "$name" ]] && continue
                 if [[ -z "$tc_id" ]]; then
                     tc_id="tc_$(date +%s%N)"
                 fi
                 
-                # Check for explicit errors parsing the JSON, skip if jq failed
-                if [[ "$name" == "" || "$name" == "null" ]]; then
+                # Check for explicit errors parsing the JSON
+                if [[ "$name" == "unknown_tool" ]]; then
                      output="Error: Tool name could not be parsed from JSON payload."
-                     name="unknown_tool"
+                else
+                     # Find original tool call JSON to pass to process_tc
+                     local single_tc=$(echo "$tool_calls" | jq -c --arg id "$tc_id" '.[] | select(.id == $id)')
+                     # If the ID wasn't in the original payload, fallback to taking the first matching by name
+                     if [[ -z "$single_tc" || "$single_tc" == "null" ]]; then
+                         single_tc=$(echo "$tool_calls" | jq -c '.[]' | head -n 1) # simple fallback
+                     fi
+                     output=$(process_tc "$chat_id" "$msg_id" "$single_tc" "$thread_id")
                 fi
 
                 append_tool_result "$tc_id" "$name" "$output"
-            done < <(echo "$tool_calls" | jq -c '.[]' || true)
+            done < <(python3 -c "$py_script" "$tool_calls")
             
             # Continue loop
             # Provide an empty message placeholder for the next assistant stream since 

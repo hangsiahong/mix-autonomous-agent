@@ -4,6 +4,13 @@
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Load environment variables
+if [ -f "${DIR}/.env" ]; then
+    set -a
+    source "${DIR}/.env"
+    set +a
+fi
+
 source "${DIR}/core/mix/init.sh"
 source "${DIR}/core/config.sh"
 source "${DIR}/core/telegram/init.sh"

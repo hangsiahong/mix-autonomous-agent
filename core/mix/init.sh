@@ -12,6 +12,7 @@ for f in "${MIX_DIR}/providers"/*.sh; do
 done
 
 source "${MIX_DIR}/01_config.sh"
+source "${MIX_DIR}/../access_control.sh"
 source "${MIX_DIR}/11_history.sh"
 source "${MIX_DIR}/13_tool_execution.sh"
 source "${MIX_DIR}/16_api.sh"

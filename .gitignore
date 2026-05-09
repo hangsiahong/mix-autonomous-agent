@@ -2,3 +2,5 @@ reference
 .agent
 .mix
 .env
+brain/last_offset
+brain/state

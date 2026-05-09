@@ -36,7 +36,7 @@ tg_handle_update() {
              : # Allow admin to use /whitelist even if not whitelisted (though admin should be)
         else
             echo "Access denied for chat_id $chat_id / user_id $user_id. User text: $text"
-            tg_send "$chat_id" "Access denied. Chat ID: $chat_id. User ID: $user_id" "$thread_id"
+            # Do NOT send a reply to unauthorized users to prevent spam/discovery
             return
         fi
     fi
@@ -58,7 +58,16 @@ tg_handle_update() {
                 tg_send "$chat_id" "AMA (Autonomous Mix Agent) ready. Use /help for commands." "$thread_id"
                 ;;
             /help)
-                tg_send "$chat_id" "Commands: /start, /help, /reset, /status, /sethome, /whitelist <id>"
+                tg_send "$chat_id" "Commands: /start, /help, /reset, /status, /sethome, /whitelist <id>" "$thread_id"
+                ;;
+            /whitelist)
+                local target_id=$(echo "$args" | awk '{print $1}')
+                if [[ "$user_id" == "${TG_ADMIN}" && -n "$target_id" ]]; then
+                    add_to_whitelist "$target_id"
+                    tg_send "$chat_id" "User/Chat $target_id added to whitelist." "$thread_id"
+                else
+                    tg_send "$chat_id" "Usage: /whitelist <id> (Admin only)" "$thread_id"
+                fi
                 ;;
             /reset|/new)
                 rm -f "${DIR}/brain/state/history_${session_id}.json"
