@@ -25,8 +25,8 @@ run_agent() {
     if [[ -z "$skill" ]]; then
         local topic_config=$(get_topic_config "$chat_id" "$thread_id")
         if [[ -n "$topic_config" && "$topic_config" != "null" ]]; then
-            skill=$(echo "$topic_config" | jq -r '.skill // empty')
-            local topic_name=$(echo "$topic_config" | jq -r '.name // empty')
+            skill=$(echo "$topic_config" | python3 -c "import json,sys; print(json.load(sys.stdin).get('skill',''))" 2>/dev/null)
+            local topic_name=$(echo "$topic_config" | python3 -c "import json,sys; print(json.load(sys.stdin).get('name',''))" 2>/dev/null)
             [[ -n "$topic_name" ]] && context_prompt+="- **Topic Name**: $topic_name\n"
         fi
     fi
@@ -34,14 +34,16 @@ run_agent() {
     
     # Inject context hint
     append_text "user" "[SYSTEM: Context Updated]\n$context_prompt\n\n$input" "$media_json"
-    compact_history "$session_id"
-    
-    # Send a single placeholder message for the entire turn (openclaw pattern:
-    # one draft message, continuously edited, finalized with the answer)
+
+    # Send placeholder message BEFORE compression so the user sees immediate feedback.
+    # compress_history will edit it to "🗜️ Compacting..." if compression triggers,
+    # then restore "⏳ Thinking..." when done.
     tg_send_action "$chat_id" "typing" "$thread_id"
     local msg_id
     msg_id=$(tg_send "$chat_id" "⏳ Thinking..." "$thread_id")
     ( generate_title "$session_id" & )
+
+    compact_history "$session_id" "$chat_id" "$thread_id" "$msg_id"
 
     local turn=0
     local total_tool_calls=0
@@ -56,6 +58,8 @@ run_agent() {
         if [[ "$turn" -gt 1 ]]; then
             tg_send_action "$chat_id" "typing" "$thread_id"
         fi
+        # Ensure reasoning context is cleared at start of each API round
+        export _AMA_REASONING_HTML="${_AMA_REASONING_HTML:-}"
 
         local result
         result=$(call_api_stream "$chat_id" "$msg_id" "$skill")
@@ -86,8 +90,19 @@ if m:
         if [[ -n "$text" && "$text" != "null" ]]; then
             append_text "assistant" "$text"
         fi
-        
+
         if [[ -n "$tool_calls" && "$tool_calls" != "[]" && "$tool_calls" != "null" ]]; then
+            # If the model emitted reasoning text before calling tools, show it
+            # in the placeholder so the user can see the agent's thinking.
+            if [[ -n "$text" && "$text" != "null" ]]; then
+                local _esc_reason
+                _esc_reason=$(printf '%s' "$text" | head -c 500 | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
+                [[ ${#text} -gt 480 ]] && _esc_reason="${_esc_reason}..."
+                export _AMA_REASONING_HTML="$_esc_reason"
+                tg_edit "$chat_id" "$msg_id" "$_esc_reason" "HTML" > /dev/null 2>&1
+            else
+                export _AMA_REASONING_HTML=""
+            fi
             # Record tool calls in history
             append_tool_call "$tool_calls"
             
@@ -127,15 +142,25 @@ print(', '.join(c.get('function', {}).get('name', '?') for c in calls))
                     output="Error: Tool name could not be parsed from JSON payload."
                 else
                     local single_tc
-                    single_tc=$(echo "$tool_calls" | jq -c --arg id "$tc_id" '.[] | select(.id == $id)')
+                    single_tc=$(echo "$tool_calls" | python3 -c "
+import json, sys, os
+calls = json.load(sys.stdin)
+target_id = os.environ.get('TC_ID','')
+match = next((t for t in calls if t.get('id') == target_id), None)
+if match:
+    print(json.dumps(match, separators=(',',':')))
+" TC_ID="$tc_id" 2>/dev/null)
                     if [[ -z "$single_tc" || "$single_tc" == "null" ]]; then
-                        single_tc=$(echo "$tool_calls" | jq -c '.[]' | head -n 1)
+                        single_tc=$(echo "$tool_calls" | python3 -c "import json,sys; calls=json.load(sys.stdin); print(json.dumps(calls[0],separators=(',',':')) if calls else '')" 2>/dev/null)
                     fi
                     output=$(process_tc "$chat_id" "$msg_id" "$single_tc" "$thread_id")
                 fi
 
                 append_tool_result "$tc_id" "$name" "$output"
             done < <(python3 -c "$py_script" "$tool_calls")
+            # Reset to thinking indicator before next API round
+            tg_edit "$chat_id" "$msg_id" "⏳ Thinking..." "" > /dev/null 2>&1
+            export _AMA_REASONING_HTML=""
             continue
         fi
         

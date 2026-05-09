@@ -15,7 +15,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 python3 - <<PYEOF
-import json, os, sys, re, subprocess, glob
+import json, os, sys, re, subprocess, glob, tempfile
 
 query = os.environ.get("TOOL_query", "")
 session_filter = os.environ.get("TOOL_session", "")
@@ -128,32 +128,41 @@ CONVERSATION (may be truncated around relevant sections):
 Write a concise factual recap in past tense. Preserve specific technical details."""
 
     env = dict(os.environ)
-    # Write prompt to temp stdin via subprocess
+    prompt_file = None
     try:
+        # Write prompt to tempfile — avoids $@ empty-args bug and ARG_MAX limits
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as tf:
+            tf.write(summary_prompt)
+            prompt_file = tf.name
+
         result = subprocess.run(
             ["bash", "-c", f"""
 cd '{script_dir}'
 source core/mix/init.sh 2>/dev/null
-HISTORY=$(python3 -c "import json,sys; print(json.dumps([{{\"role\":\"user\",\"content\":sys.argv[1]}}]))" "$@" 2>/dev/null)
+HISTORY=$(python3 -c 'import json,sys; prompt=open(sys.argv[1]).read(); print(json.dumps([{{"role":"user","content":prompt}}]))' '{prompt_file}' 2>/dev/null)
 export HISTORY
-call_api "You are a conversation summarizer. Respond with a focused, factual summary." 2>/dev/null | python3 -c "
+call_api "You are a conversation summarizer. Respond with a focused, factual summary." 2>/dev/null | python3 -c '
 import sys,json
 try:
     r=json.load(sys.stdin)
-    t=r.get('choices',[{{}}])[0].get('message',{{}}).get('content','')
+    t=r.get("choices",[{{}}])[0].get("message",{{}}).get("content","")
     if not t:
-        t=r.get('candidates',[{{}}])[0].get('content',{{}}).get('parts',[{{}}])[0].get('text','')
-    print(t.strip(),end='')
+        t=r.get("candidates",[{{}}])[0].get("content",{{}}).get("parts",[{{}}])[0].get("text","")
+    print(t.strip(),end="")
 except: pass
-"
+'
 """],
-            input=summary_prompt,
-            capture_output=True, text=True, timeout=30, env=env,
-            stdin=subprocess.PIPE
+            capture_output=True, text=True, timeout=90, env=env
         )
         return result.stdout.strip() if result.stdout.strip() else None
     except Exception:
         return None
+    finally:
+        if prompt_file:
+            try:
+                os.unlink(prompt_file)
+            except OSError:
+                pass
 
 # ── Output results ────────────────────────────────────────────────────
 print(f"Session search: '{query}' — found {len(top)} matching session(s)\n")

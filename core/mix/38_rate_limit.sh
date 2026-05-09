@@ -10,7 +10,15 @@ check_rate_limit() {
     [ ! -f "$RL_STATE_FILE" ] && return 0
     
     local key="${provider}_${model}"
-    local backoff_until=$(jq -r --arg k "$key" '.[$k] // 0' "$RL_STATE_FILE" 2>/dev/null)
+    local backoff_until
+    backoff_until=$(KEY="$key" python3 -c "
+import json, os
+try:
+    d = json.load(open('$RL_STATE_FILE'))
+    print(d.get(os.environ['KEY'], 0) or 0)
+except:
+    print(0)
+" 2>/dev/null)
     backoff_until=$(( ${backoff_until:-0} + 0 ))  # coerce to int
     local now=$(date +%s)
     
@@ -33,6 +41,12 @@ mark_rate_limited() {
     local key="${provider}_${model}"
     local backoff_until=$(( $(date +%s) + delay ))
     
-    local updated=$(jq --arg k "$key" --argjson v "$backoff_until" '.[$k] = $v' "$RL_STATE_FILE")
-    echo "$updated" > "$RL_STATE_FILE"
+    KEY="$key" BU="$backoff_until" python3 -c "
+import json, os
+f = '$RL_STATE_FILE'
+try: d = json.load(open(f))
+except: d = {}
+d[os.environ['KEY']] = int(os.environ['BU'])
+open(f, 'w').write(json.dumps(d))
+"
 }

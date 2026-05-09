@@ -23,13 +23,20 @@ run_tool() {
     fi
     
     # If args is a JSON string containing an escaped JSON object, parse it
-    local is_string=$(echo "$args" | jq 'type == "string"')
-    if [[ "$is_string" == "true" ]]; then
-        args=$(echo "$args" | jq -r '.')
+    local _args_type
+    _args_type=$(echo "$args" | python3 -c "import json,sys; v=json.load(sys.stdin); print('string' if isinstance(v,str) else 'other')" 2>/dev/null)
+    if [[ "$_args_type" == "string" ]]; then
+        args=$(echo "$args" | python3 -c "import json,sys; print(json.load(sys.stdin))")
     fi
     
     # Export args as TOOL_ vars
-    eval $(echo "$args" | jq -r 'to_entries | .[] | "export TOOL_\(.key)=\( .value | @sh )"')
+    eval "$(echo "$args" | python3 -c "
+import json, sys, shlex
+d = json.load(sys.stdin)
+for k, v in d.items():
+    v_str = v if isinstance(v, str) else json.dumps(v)
+    print(f'export TOOL_{k}={shlex.quote(v_str)}')
+")"
     # Export context so tools like clarify can send Telegram messages
     export TOOL_CHAT_ID="$chat_id"
     export TOOL_THREAD_ID="$thread_id"
@@ -39,7 +46,11 @@ run_tool() {
     local status=$?
     
     # Unset
-    eval $(echo "$args" | jq -r 'to_entries | .[] | "unset TOOL_\(.key)"')
+    eval "$(echo "$args" | python3 -c "
+import json, sys
+for k in json.load(sys.stdin):
+    print(f'unset TOOL_{k}')
+")"
     unset TOOL_CHAT_ID TOOL_THREAD_ID
     
     echo "$output"

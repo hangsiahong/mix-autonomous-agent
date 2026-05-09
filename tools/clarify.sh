@@ -18,14 +18,18 @@ if [[ -z "$TG_TOKEN" || -z "$chat_id" ]]; then
     exit 0
 fi
 
-payload=$(jq -n \
-    --arg cid "$chat_id" \
-    --arg text "❓ $question" \
-    --arg pm "Markdown" \
-    '{chat_id: $cid, text: $text, parse_mode: $pm}')
+payload=$(CID="$chat_id" TXT="❓ $question" python3 -c "
+import json, os
+print(json.dumps({'chat_id': os.environ['CID'], 'text': os.environ['TXT'], 'parse_mode': 'Markdown'}))
+")
 
 if [[ -n "$thread_id" && "$thread_id" != "null" ]]; then
-    payload=$(echo "$payload" | jq --arg tid "$thread_id" '.message_thread_id = ($tid | tonumber)')
+    payload=$(TID="$thread_id" python3 -c "
+import json, os, sys
+d = json.load(sys.stdin)
+d['message_thread_id'] = int(os.environ['TID'])
+print(json.dumps(d))
+" <<< "$payload")
 fi
 
 curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \

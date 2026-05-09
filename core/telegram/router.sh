@@ -3,13 +3,34 @@
 
 tg_handle_update() {
     local update="$1"
-    local chat_id=$(echo "$update" | jq -r '.message.chat.id // .callback_query.message.chat.id')
-    local thread_id=$(echo "$update" | jq -r '.message.message_thread_id // .callback_query.message.message_thread_id // empty')
-    local chat_type=$(echo "$update" | jq -r '.message.chat.type // .callback_query.message.chat.type // "private"')
-    local chat_title=$(echo "$update" | jq -r '.message.chat.title // .callback_query.message.chat.title // empty')
-    local text=$(echo "$update" | jq -r '.message.text // .message.caption // .callback_query.data // empty')
-    local user_id=$(echo "$update" | jq -r '.message.from.id // .callback_query.from.id')
-    local username=$(echo "$update" | jq -r '.message.from.username // .callback_query.from.username // empty')
+
+    # Parse all update fields in one Python call (avoids 7+ jq invocations).
+    # shlex.quote is used so eval is safe regardless of message content.
+    local _vars
+    _vars=$(UPDATE="$update" python3 -c "
+import json, os, shlex
+try:
+    u = json.loads(os.environ['UPDATE'])
+except Exception:
+    u = {}
+msg = u.get('message') or {}
+cbq = u.get('callback_query') or {}
+src_msg = msg if msg else (cbq.get('message') or {})
+src_from = (msg.get('from') or cbq.get('from')) or {}
+chat = src_msg.get('chat') or {}
+vals = {
+    'chat_id':    str(chat.get('id', '') or ''),
+    'thread_id':  str(src_msg.get('message_thread_id', '') or ''),
+    'chat_type':  str(chat.get('type', 'private') or 'private'),
+    'chat_title': str(chat.get('title', '') or ''),
+    'text':       str(msg.get('text', '') or msg.get('caption', '') or cbq.get('data', '') or ''),
+    'user_id':    str(src_from.get('id', '') or ''),
+    'username':   str(src_from.get('username', '') or ''),
+}
+for k, v in vals.items():
+    print(f'{k}={shlex.quote(v)}')
+" 2>/dev/null) || true
+    eval "$_vars"
     
     # Build Session ID
     local session_id="tg_${chat_id}"
@@ -43,7 +64,7 @@ tg_handle_update() {
 
     # Auto-load AMA skill if mentioning AMA or autonomous-agent
     local topic_cfg=$(get_topic_config "$chat_id" "$thread_id")
-    local skill=$(echo "$topic_cfg" | jq -r '.skill // empty')
+    local skill=$(python3 -c "import json,sys; d=json.loads(sys.argv[1]); print(d.get('skill','') or '')" "$topic_cfg" 2>/dev/null)
     if [[ -z "$skill" ]] && [[ "$text" =~ ([[:space:]]|^)[Aa][Mm][Aa]([[:space:]]|$) || "$text" =~ "autonomous-agent" ]]; then
         skill="ama"
     fi
@@ -76,7 +97,12 @@ tg_handle_update() {
             /status)
                 local title="Untitled"
                 if [ -f "brain/state/titles.json" ]; then
-                    title=$(jq -r --arg id "$session_id" '.[$id] // "Untitled"' brain/state/titles.json)
+                    title=$(SID="$session_id" python3 -c "
+import json, os
+try:
+    d = json.load(open('brain/state/titles.json'))
+    print(d.get(os.environ['SID'], 'Untitled') or 'Untitled')
+except: print('Untitled')" 2>/dev/null)
                 fi
                 local sysinfo=$(bash tools/sys_info.sh)
                 tg_send "$chat_id" "Title: $title\nProvider: ${PROVIDER:-openai (default)}\nModel: ${MODEL:-gpt-4o-mini}\nSession: $session_id\nUser: ${username:-$user_id}\nType: $chat_type\nSkill: ${skill:-none}\n\n$sysinfo" "$thread_id"

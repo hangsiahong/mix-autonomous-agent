@@ -49,6 +49,17 @@ _api_build_payload() {
     system_prompt=$(cat brain/system_prompt.txt)
     _scan_for_injection "$system_prompt" "brain/system_prompt.txt" || system_prompt="[System prompt blocked due to injection pattern detected]"
 
+    # Inject SOUL.md persona (user-editable, loaded fresh each session — hermes pattern)
+    if [[ -f "SOUL.md" && -s "SOUL.md" ]]; then
+        local _soul_raw
+        _soul_raw=$(cat "SOUL.md")
+        # Strip comment block (<!-- ... -->) so only the actual persona text is injected
+        _soul_raw=$(echo "$_soul_raw" | python3 -c "import sys,re; print(re.sub(r'<!--.*?-->', '', sys.stdin.read(), flags=re.DOTALL).strip())")
+        if [[ -n "$_soul_raw" ]]; then
+            system_prompt="${system_prompt}\n\n---\n\n# Persona\n${_soul_raw}"
+        fi
+    fi
+
     # Inject curated memory snapshot (frozen at session start — stable prefix cache)
     local _mem_block=""
     local _ENTRY_DELIM=$'\n§\n'
@@ -95,7 +106,7 @@ print(content.replace("$(pwd)", os.environ["PWD_VAL"]))
     fi
     if [[ -f "brain/skills/${skill}/tools.json" ]]; then
         local user_tools=$(cat "brain/skills/${skill}/tools.json")
-        skill_tools=$(echo "$skill_tools" | jq --argjson ut "$user_tools" '. + $ut')
+        skill_tools=$(UT="$user_tools" python3 -c "import json,os,sys; a=json.load(sys.stdin); b=json.loads(os.environ['UT']); print(json.dumps(a+b,separators=(',',':')))" <<< "$skill_tools")
     fi
 
     # 3. Load from custom folder within brain skill (extra layer for cleanliness)
@@ -105,14 +116,14 @@ print(content.replace("$(pwd)", os.environ["PWD_VAL"]))
     fi
     if [[ -f "brain/skills/${skill}/custom/tools.json" ]]; then
         local custom_tools=$(cat "brain/skills/${skill}/custom/tools.json")
-        skill_tools=$(echo "$skill_tools" | jq --argjson ct "$custom_tools" '. + $ct')
+        skill_tools=$(CT="$custom_tools" python3 -c "import json,os,sys; a=json.load(sys.stdin); b=json.loads(os.environ['CT']); print(json.dumps(a+b,separators=(',',':')))" <<< "$skill_tools")
     fi
 
     if [[ -n "$skill_prompt" ]]; then
         system_prompt="${system_prompt}\n\n## ACTIVE SKILL: ${skill}\n${skill_prompt}"
     fi
     if [[ "$skill_tools" != "[]" ]]; then
-        tools=$(echo "$tools" | jq --argjson st "$skill_tools" '. + $st')
+        tools=$(ST="$skill_tools" python3 -c "import json,os,sys; a=json.load(sys.stdin); b=json.loads(os.environ['ST']); print(json.dumps(a+b,separators=(',',':')))" <<< "$tools")
     fi
   fi
   
@@ -252,23 +263,27 @@ for k,v in json.load(sys.stdin).items():
 
       # Classify Error
       local classification=$(classify_error "$code" "$body")
-      local reason=$(echo "$classification" | jq -r '.reason')
-      local retryable=$(echo "$classification" | jq -r '.retryable')
-      local should_compress=$(echo "$classification" | jq -r '.should_compress')
+      local _cls_parsed
+      _cls_parsed=$(echo "$classification" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+print(d.get('reason','unknown'))
+print(d.get('retryable','false'))
+print(d.get('should_compress','false'))
+" 2>/dev/null)
+      local reason retryable should_compress
+      IFS=$'\n' read -r reason retryable should_compress <<< "$_cls_parsed"
 
       if [[ "$reason" == "rate_limit" ]]; then
           mark_rate_limited "$PROVIDER" "$MODEL" 60
       fi
 
       # Log error for reflection
-      local err_entry=$(jq -n \
-          --arg ts "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
-          --arg provider "$PROVIDER" \
-          --arg model "$MODEL" \
-          --arg code "$code" \
-          --arg reason "$reason" \
-          --arg body "$body" \
-          '{ts: $ts, provider: $provider, model: $model, code: $code, reason: $reason, body: $body}')
+      local err_entry
+      err_entry=$(TS="$(date -u +"%Y-%m-%dT%H:%M:%SZ")" PROV="$PROVIDER" MOD="$MODEL" CODE="$code" RSN="$reason" BODY="$body" python3 -c "
+import json, os
+print(json.dumps({'ts':os.environ['TS'],'provider':os.environ['PROV'],'model':os.environ['MOD'],'code':os.environ['CODE'],'reason':os.environ['RSN'],'body':os.environ['BODY']}))
+")
       echo "$err_entry" >> "brain/state/error_log.jsonl"
 
       if [[ "$retryable" == "true" && "$attempt" -lt "$max_attempts" ]]; then

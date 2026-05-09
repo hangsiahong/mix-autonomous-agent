@@ -25,20 +25,36 @@ print(json.dumps(h, separators=(",", ":")))
 ')
         rm -f "$_h_file" "$_m_file"
     else
-        HISTORY=$(echo "$HISTORY" | jq -c --arg role "$role" --arg content "$content" '. + [{role: $role, content: $content}]')
+        HISTORY=$(ROLE="$role" CONTENT="$content" python3 -c "
+import json, os, sys
+h = json.load(sys.stdin)
+h.append({'role': os.environ['ROLE'], 'content': os.environ['CONTENT']})
+print(json.dumps(h, separators=(',', ':')))
+" <<< "$HISTORY")
     fi
 }
 
 append_tool_call() {
     local tool_calls="$1"
-    HISTORY=$(echo "$HISTORY" | jq -c --argjson tc "$tool_calls" '. + [{role: "assistant", content: null, tool_calls: $tc}]')
+    HISTORY=$(TC="$tool_calls" python3 -c "
+import json, os, sys
+h = json.load(sys.stdin)
+tc = json.loads(os.environ['TC'])
+h.append({'role': 'assistant', 'content': None, 'tool_calls': tc})
+print(json.dumps(h, separators=(',', ':')))
+" <<< "$HISTORY")
 }
 
 append_tool_result() {
     local id="$1"
     local name="$2"
     local output="$3"
-    HISTORY=$(echo "$HISTORY" | jq -c --arg id "$id" --arg name "$name" --arg output "$output" '. + [{role: "tool", tool_call_id: $id, name: $name, content: $output}]')
+    HISTORY=$(TID="$id" TNAME="$name" TOUT="$output" python3 -c "
+import json, os, sys
+h = json.load(sys.stdin)
+h.append({'role': 'tool', 'tool_call_id': os.environ['TID'], 'name': os.environ['TNAME'], 'content': os.environ['TOUT']})
+print(json.dumps(h, separators=(',', ':')))
+" <<< "$HISTORY")
 }
 
 save_history() {
@@ -57,29 +73,45 @@ load_history() {
 
 compact_history() {
     local session_id="$1"
+    local chat_id="${2:-}"
+    local thread_id="${3:-}"
+    local msg_id="${4:-}"
     
     # First, try smart compression if history is long
-    compress_history "$session_id"
+    compress_history "$session_id" "$chat_id" "$thread_id" "$msg_id"
     
     # Fallback to hard truncation if still over max limit
-    local count; count=$(echo "$HISTORY" | jq 'length' 2>/dev/null); count=${count:-0}
+    local count; count=$(echo "$HISTORY" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null); count=${count:-0}
     if [ "$count" -gt "$MAX_HIST_MSGS" ]; then
         local remove_count=$((count - MAX_HIST_MSGS))
-        local removed=$(echo "$HISTORY" | jq -c "limit($remove_count; .)")
-        
+        local removed
+        removed=$(python3 -c "import json,sys; h=json.load(sys.stdin); print(json.dumps(h[:${remove_count}],separators=(',',':')))" <<< "$HISTORY")
+
         local _hist_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
         local _root_dir="$(cd "$_hist_dir/../.." && pwd)"
-        echo "$removed" | jq -c '.[]' | while read -r msg; do
-            local role=$(echo "$msg" | jq -r '.role')
-            # Extract content text (handle both string and array)
-            local content=$(echo "$msg" | jq -r 'if .content | type == "array" then .content | map(.text // "") | join(" ") else .content // "" end')
-            
-            if [[ -n "$content" && "$content" != "null" ]]; then
-                python3 "${_root_dir}/tools/memory_helper.py" save "[$role]: $content" "{\"session_id\": \"$session_id\", \"type\": \"history\"}" >/dev/null 2>&1
-            fi
-        done
+        local _loop_py
+        _loop_py='
+import json, os, subprocess
+removed = json.loads(os.environ["REMOVED"])
+root = os.environ["ROOT"]
+sid = os.environ["SID"]
+for msg in removed:
+    role = msg.get("role", "")
+    c = msg.get("content") or ""
+    if isinstance(c, list):
+        c = " ".join(p.get("text","") for p in c if isinstance(p, dict))
+    c = str(c).strip()
+    if c and c != "null":
+        subprocess.run(
+            ["python3", f"{root}/tools/memory_helper.py", "save",
+             f"[{role}]: {c}",
+             json.dumps({"session_id": sid, "type": "history"})],
+            capture_output=True
+        )
+'
+        REMOVED="$removed" ROOT="$_root_dir" SID="$session_id" python3 -c "$_loop_py" 2>/dev/null
 
-        HISTORY=$(echo "$HISTORY" | jq -c "last($MAX_HIST_MSGS)")
+        HISTORY=$(python3 -c "import json,sys; h=json.load(sys.stdin); print(json.dumps(h[-${MAX_HIST_MSGS}:],separators=(',',':')))" <<< "$HISTORY")
     fi
 }
 

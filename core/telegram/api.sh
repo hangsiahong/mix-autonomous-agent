@@ -14,12 +14,22 @@ tg_send() {
     local text="$2"
     local thread_id="$3"
     local parse_mode="${4:-Markdown}"
-    local payload=$(jq -n --arg cid "$chat_id" --arg txt "$text" --arg pm "$parse_mode" \
-        '{chat_id: $cid, text: $txt, parse_mode: $pm}')
+    local payload
+    payload=$(TG_CID="$chat_id" TG_TXT="$text" TG_PM="$parse_mode" python3 -c "
+import json, os
+d = {'chat_id': os.environ['TG_CID'], 'text': os.environ['TG_TXT'], 'parse_mode': os.environ['TG_PM']}
+print(json.dumps(d))")
     if [[ -n "$thread_id" && "$thread_id" != "null" ]]; then
-        payload=$(echo "$payload" | jq --arg tid "$thread_id" '.message_thread_id = $tid')
+        payload=$(TID="$thread_id" python3 -c "
+import json, os, sys
+d = json.load(sys.stdin)
+try: d['message_thread_id'] = int(os.environ['TID'])
+except: d['message_thread_id'] = os.environ['TID']
+print(json.dumps(d))" <<< "$payload")
     fi
-    tg_api "sendMessage" "$payload" | jq -r '.result.message_id // empty'
+    tg_api "sendMessage" "$payload" | python3 -c "import json,sys
+try: print(json.load(sys.stdin).get('result',{}).get('message_id','') or '')
+except: pass"
 }
 
 tg_edit() {
@@ -27,15 +37,19 @@ tg_edit() {
     local message_id="$2"
     local text="$3"
     local parse_mode="${4:-Markdown}"
-    tg_api "editMessageText" "$(jq -n --arg cid "$chat_id" --arg mid "$message_id" --arg txt "$text" --arg pm "$parse_mode" \
-        '{chat_id: $cid, message_id: $mid, text: $txt, parse_mode: $pm}')"
+    local _payload
+    _payload=$(TG_CID="$chat_id" TG_MID="$message_id" TG_TXT="$text" TG_PM="$parse_mode" python3 -c "
+import json, os
+print(json.dumps({'chat_id': os.environ['TG_CID'], 'message_id': os.environ['TG_MID'],
+    'text': os.environ['TG_TXT'], 'parse_mode': os.environ['TG_PM']}))")
+    tg_api "editMessageText" "$_payload"
 }
 
 tg_delete() {
     local chat_id="$1"
     local message_id="$2"
-    tg_api "deleteMessage" "$(jq -n --arg cid "$chat_id" --arg mid "$message_id" \
-        '{chat_id: $cid, message_id: $mid}')"
+    tg_api "deleteMessage" "$(TG_CID="$chat_id" TG_MID="$message_id" python3 -c \
+        "import json,os; print(json.dumps({'chat_id':os.environ['TG_CID'],'message_id':os.environ['TG_MID']}))")" 
 }
 
 tg_send_photo() {
@@ -63,10 +77,16 @@ tg_send_photo() {
     else
         # URL or file_id — send as JSON
         local payload
-        payload=$(jq -n --arg cid "$chat_id" --arg ph "$photo" --arg cap "$caption" \
-            '{chat_id: $cid, photo: $ph, caption: $cap}')
+        payload=$(TG_CID="$chat_id" TG_PH="$photo" TG_CAP="$caption" python3 -c "
+import json, os
+print(json.dumps({'chat_id':os.environ['TG_CID'],'photo':os.environ['TG_PH'],'caption':os.environ['TG_CAP']}))")        
         if [[ -n "$thread_id" && "$thread_id" != "null" ]]; then
-            payload=$(echo "$payload" | jq --arg tid "$thread_id" '.message_thread_id = $tid')
+            payload=$(TID="$thread_id" python3 -c "
+import json, os, sys
+d = json.load(sys.stdin)
+try: d['message_thread_id'] = int(os.environ['TID'])
+except: d['message_thread_id'] = os.environ['TID']
+print(json.dumps(d))" <<< "$payload")
         fi
         tg_api "sendPhoto" "$payload"
     fi
@@ -74,7 +94,7 @@ tg_send_photo() {
 
 tg_get_file() {
     local file_id="$1"
-    tg_api "getFile" "$(jq -n --arg fid "$file_id" '{file_id: $fid}')"
+    tg_api "getFile" "$(TG_FID="$file_id" python3 -c "import json,os; print(json.dumps({'file_id':os.environ['TG_FID']}))")" 
 }
 
 tg_download() {
@@ -93,7 +113,7 @@ tg_set_commands() {
         {"command": "skill", "description": "View or set active skill"},
         {"command": "insights", "description": "Show usage insights"}
     ]'
-    tg_api "setMyCommands" "$(jq -n --argjson cmds "$commands" '{commands: $cmds}')" > /dev/null
+    tg_api "setMyCommands" "$(CMDS="$commands" python3 -c "import json,os; print(json.dumps({'commands':json.loads(os.environ['CMDS'])}))")" > /dev/null
 }
 
 tg_send_action() {
@@ -101,11 +121,17 @@ tg_send_action() {
     local action="$2"
     local thread_id="$3"
     
-    local payload=$(jq -n --arg cid "$chat_id" --arg act "$action" \
-        '{chat_id: $cid, action: $act}')
-    
+    local payload
+    payload=$(TG_CID="$chat_id" TG_ACT="$action" python3 -c "
+import json, os
+print(json.dumps({'chat_id':os.environ['TG_CID'],'action':os.environ['TG_ACT']}))")    
     if [[ -n "$thread_id" && "$thread_id" != "null" ]]; then
-        payload=$(echo "$payload" | jq --arg tid "$thread_id" '.message_thread_id = $tid')
+        payload=$(TID="$thread_id" python3 -c "
+import json, os, sys
+d = json.load(sys.stdin)
+try: d['message_thread_id'] = int(os.environ['TID'])
+except: d['message_thread_id'] = os.environ['TID']
+print(json.dumps(d))" <<< "$payload")
     fi
     
     tg_api "sendChatAction" "$payload" > /dev/null

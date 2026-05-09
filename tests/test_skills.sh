@@ -16,7 +16,7 @@ thread_id="42"
 topic_data='{"thread_id": "42", "skill": "test_skill", "name": "Testing"}'
 set_topic_config "$chat_id" "$thread_id" "$topic_data"
 
-found_skill=$(get_topic_config "$chat_id" "$thread_id" | jq -r '.skill')
+found_skill=$(get_topic_config "$chat_id" "$thread_id" | python3 -c "import json,sys; print(json.load(sys.stdin).get('skill',''))" 2>/dev/null)
 assert_eq "$found_skill" "test_skill" "Skill lookup in topic config"
 
 # Test Case 2: API Payload Construction with Skill
@@ -47,7 +47,14 @@ rmdir "${SKILL_DIR}/custom"
 rm "${SKILL_DIR}/prompt.txt"
 rmdir "${SKILL_DIR}"
 # Reset config for other tests (manually remove the test chat from group_topics)
-config=$(load_config | jq --arg cid "$chat_id" '.group_topics |= map(select(.chat_id != $cid))')
+config=$(load_config)
+config=$(CID="$chat_id" python3 -c "
+import json, os, sys
+d = json.load(sys.stdin)
+cid = os.environ['CID']
+d['group_topics'] = [g for g in d.get('group_topics', []) if g.get('chat_id') != cid]
+print(json.dumps(d))
+" <<< "$config")
 save_config "$config"
 
 echo "Skill Tests Completed."

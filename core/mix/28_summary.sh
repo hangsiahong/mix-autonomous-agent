@@ -38,8 +38,15 @@ print(json.dumps(out))
         mkdir -p "brain/state"
         [ ! -f "$titles_file" ] && echo "{}" > "$titles_file"
         
-        local updated=$(jq --arg id "$session_id" --arg t "$title" '.[$id] = $t' "$titles_file")
-        echo "$updated" > "$titles_file"
+        local updated
+        SID="$session_id" TITLE="$title" TFILE="$titles_file" python3 -c "
+import json, os
+tfile = os.environ['TFILE']
+try: d = json.load(open(tfile))
+except: d = {}
+d[os.environ['SID']] = os.environ['TITLE']
+open(tfile, 'w').write(json.dumps(d))
+"
         echo "Title generated: $title"
     fi
 }

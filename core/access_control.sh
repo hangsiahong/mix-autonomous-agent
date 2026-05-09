@@ -24,7 +24,15 @@ check_tool_permission() {
     [[ -n "$thread_id" ]] && session_id="tg_${chat_id}_${thread_id}"
     
     if [[ -f "$PERMISSION_STORE" ]]; then
-        local allowed=$(jq -r --arg sid "$session_id" --arg tool "$tool_name" '.[$sid][$tool] // "ask"' "$PERMISSION_STORE")
+        local allowed
+        allowed=$(SID="$session_id" TOOL="$tool_name" PSTORE="$PERMISSION_STORE" python3 -c "
+import json, os
+try:
+    d = json.load(open(os.environ['PSTORE']))
+    print(d.get(os.environ['SID'],{}).get(os.environ['TOOL'],'ask') or 'ask')
+except:
+    print('ask')
+" 2>/dev/null)
         if [[ "$allowed" == "always" ]]; then
             return 0
         fi
@@ -49,7 +57,15 @@ grant_permission() {
     mkdir -p "$(dirname "$PERMISSION_STORE")"
     [[ ! -f "$PERMISSION_STORE" ]] && echo "{}" > "$PERMISSION_STORE"
     
-    local new_store=$(jq --arg sid "$session_id" --arg tool "$tool_name" --arg level "$level" \
-        '.[$sid][$tool] = $level' "$PERMISSION_STORE")
-    echo "$new_store" > "$PERMISSION_STORE"
+    SID="$session_id" TOOL="$tool_name" LVL="$level" PSTORE="$PERMISSION_STORE" python3 -c "
+import json, os
+f = os.environ['PSTORE']
+try: d = json.load(open(f))
+except: d = {}
+sid = os.environ['SID']
+if sid not in d:
+    d[sid] = {}
+d[sid][os.environ['TOOL']] = os.environ['LVL']
+open(f, 'w').write(json.dumps(d))
+"
 }

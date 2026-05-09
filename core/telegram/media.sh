@@ -39,12 +39,12 @@ tg_extract_media() {
 
     # 1. Handle Photo
     local photo_id
-    photo_id=$(echo "$update" | jq -r '.message.photo[-1].file_id // empty')
+    photo_id=$(echo "$update" | python3 -c "import json,sys; photos=json.load(sys.stdin).get('message',{}).get('photo',[]); print(photos[-1].get('file_id','') if photos else '')" 2>/dev/null)
     if [[ -n "$photo_id" ]]; then
         local file_info
         file_info=$(tg_get_file "$photo_id")
         local file_path
-        file_path=$(echo "$file_info" | jq -r '.result.file_path // empty')
+        file_path=$(echo "$file_info" | python3 -c "import json,sys; print(json.load(sys.stdin).get('result',{}).get('file_path',''))" 2>/dev/null)
         if [[ -n "$file_path" ]]; then
             local tmp_file
             tmp_file=$(mktemp)
@@ -58,14 +58,14 @@ tg_extract_media() {
 
     # 2. Handle Document (Images sent as files)
     local doc_id
-    doc_id=$(echo "$update" | jq -r '.message.document.file_id // empty')
+    doc_id=$(echo "$update" | python3 -c "import json,sys; print(json.load(sys.stdin).get('message',{}).get('document',{}).get('file_id',''))" 2>/dev/null)
     local doc_mime
-    doc_mime=$(echo "$update" | jq -r '.message.document.mime_type // empty')
+    doc_mime=$(echo "$update" | python3 -c "import json,sys; print(json.load(sys.stdin).get('message',{}).get('document',{}).get('mime_type',''))" 2>/dev/null)
     if [[ -n "$doc_id" && "$doc_mime" == image/* ]]; then
         local file_info
         file_info=$(tg_get_file "$doc_id")
         local file_path
-        file_path=$(echo "$file_info" | jq -r '.result.file_path // empty')
+        file_path=$(echo "$file_info" | python3 -c "import json,sys; print(json.load(sys.stdin).get('result',{}).get('file_path',''))" 2>/dev/null)
         if [[ -n "$file_path" ]]; then
             local tmp_file
             tmp_file=$(mktemp)
@@ -79,14 +79,14 @@ tg_extract_media() {
 
     # 3. Handle Voice/Audio
     local voice_id
-    voice_id=$(echo "$update" | jq -r '.message.voice.file_id // .message.audio.file_id // empty')
+    voice_id=$(echo "$update" | python3 -c "import json,sys; m=json.load(sys.stdin).get('message',{}); print(m.get('voice',{}).get('file_id','') or m.get('audio',{}).get('file_id',''))" 2>/dev/null)
     local voice_mime
-    voice_mime=$(echo "$update" | jq -r '.message.voice.mime_type // .message.audio.mime_type // "audio/ogg"')
+    voice_mime=$(echo "$update" | python3 -c "import json,sys; m=json.load(sys.stdin).get('message',{}); print(m.get('voice',{}).get('mime_type','') or m.get('audio',{}).get('mime_type','') or 'audio/ogg')" 2>/dev/null)
     if [[ -n "$voice_id" ]]; then
         local file_info
         file_info=$(tg_get_file "$voice_id")
         local file_path
-        file_path=$(echo "$file_info" | jq -r '.result.file_path // empty')
+        file_path=$(echo "$file_info" | python3 -c "import json,sys; print(json.load(sys.stdin).get('result',{}).get('file_path',''))" 2>/dev/null)
         if [[ -n "$file_path" ]]; then
             local tmp_file
             tmp_file=$(mktemp --suffix=".ogg")
@@ -103,14 +103,14 @@ tg_extract_media() {
 
     # 4. Handle Video
     local video_id
-    video_id=$(echo "$update" | jq -r '.message.video.file_id // empty')
+    video_id=$(echo "$update" | python3 -c "import json,sys; print(json.load(sys.stdin).get('message',{}).get('video',{}).get('file_id',''))" 2>/dev/null)
     local video_mime
-    video_mime=$(echo "$update" | jq -r '.message.video.mime_type // "video/mp4"')
+    video_mime=$(echo "$update" | python3 -c "import json,sys; print(json.load(sys.stdin).get('message',{}).get('video',{}).get('mime_type','') or 'video/mp4')" 2>/dev/null)
     if [[ -n "$video_id" ]]; then
         local file_info
         file_info=$(tg_get_file "$video_id")
         local file_path
-        file_path=$(echo "$file_info" | jq -r '.result.file_path // empty')
+        file_path=$(echo "$file_info" | python3 -c "import json,sys; print(json.load(sys.stdin).get('result',{}).get('file_path',''))" 2>/dev/null)
         if [[ -n "$file_path" ]]; then
             local tmp_file
             tmp_file=$(mktemp --suffix=".mp4")

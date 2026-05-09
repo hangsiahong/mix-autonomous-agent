@@ -28,7 +28,14 @@ done
 
 echo -e "\n[Recent Errors]"
 if [[ -f "brain/state/error_log.jsonl" ]]; then
-    tail -n 5 "brain/state/error_log.jsonl" | jq -r '"\(.ts) | \(.reason) | \(.model)"'
+    python3 -c "
+import json, sys
+for line in open('brain/state/error_log.jsonl'):
+    try:
+        e = json.loads(line.strip())
+        print(f\"{e.get('ts','')} | {e.get('reason','')} | {e.get('model','')}\")
+    except: pass
+" 2>/dev/null | tail -n 5
 else
     echo "No errors logged."
 fi

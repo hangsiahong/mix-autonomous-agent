@@ -11,17 +11,20 @@ log_trajectory() {
     # Store only metadata, not full history (avoids O(n²) file growth)
     local msg_count=0
     if [[ -n "$HISTORY" ]]; then
-        msg_count=$(echo "$HISTORY" | jq 'length' 2>/dev/null || echo 0)
+        msg_count=$(echo "$HISTORY" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
     fi
 
     local entry
-    entry=$(jq -n \
-        --arg chat_id "$chat_id" \
-        --arg status "$status" \
-        --arg model "$MODEL" \
-        --arg ts "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
-        --argjson msg_count "$msg_count" \
-        '{ts: $ts, chat_id: $chat_id, status: $status, model: $model, msg_count: $msg_count}')
+    entry=$(CID="$chat_id" ST="$status" MOD="$MODEL" TS="$(date -u +"%Y-%m-%dT%H:%M:%SZ")" MC="$msg_count" python3 -c "
+import json, os
+print(json.dumps({
+    'ts': os.environ['TS'],
+    'chat_id': os.environ['CID'],
+    'status': os.environ['ST'],
+    'model': os.environ['MOD'],
+    'msg_count': int(os.environ['MC'])
+}))
+")
 
     echo "$entry" >> "$trajectory_file"
 

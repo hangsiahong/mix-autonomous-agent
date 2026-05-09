@@ -19,13 +19,23 @@ log_usage() {
     local totals_file="brain/state/usage_totals.json"
     [ ! -f "$totals_file" ] && echo "{\"prompt_tokens\": 0, \"completion_tokens\": 0, \"total_tokens\": 0}" > "$totals_file"
     
-    local p=$(echo "$usage_json" | jq -r '.prompt_tokens // 0')
-    local c=$(echo "$usage_json" | jq -r '.completion_tokens // 0')
-    local t=$(echo "$usage_json" | jq -r '.total_tokens // 0')
-    
-    local updated=$(jq --argjson p "$p" --argjson c "$c" --argjson t "$t" \
-        '.prompt_tokens += $p | .completion_tokens += $c | .total_tokens += $t' "$totals_file")
-    echo "$updated" > "$totals_file"
+    local p c t
+    read -r p c t <<< "$(echo "$usage_json" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+print(int(d.get('prompt_tokens', 0) or 0), int(d.get('completion_tokens', 0) or 0), int(d.get('total_tokens', 0) or 0))
+" 2>/dev/null)"
+
+    P="$p" C="$c" T="$t" TFILE="$totals_file" python3 -c "
+import json, os
+f = os.environ['TFILE']
+try: d = json.load(open(f))
+except: d = {'prompt_tokens': 0, 'completion_tokens': 0, 'total_tokens': 0}
+d['prompt_tokens'] = d.get('prompt_tokens', 0) + int(os.environ['P'])
+d['completion_tokens'] = d.get('completion_tokens', 0) + int(os.environ['C'])
+d['total_tokens'] = d.get('total_tokens', 0) + int(os.environ['T'])
+open(f, 'w').write(json.dumps(d))
+"
 }
 
 log_tool_usage() {

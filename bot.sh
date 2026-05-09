@@ -44,12 +44,13 @@ tg_set_commands
 
 # Drain stale Telegram messages accumulated while bot was offline
 _DRAIN=$(curl -s "https://api.telegram.org/bot${TG_TOKEN}/getUpdates?timeout=0&limit=100&offset=$(cat "$OFFSET_FILE")")
-_DRAIN_LAST=$(echo "$_DRAIN" | jq -r '.result[-1].update_id // empty' 2>/dev/null)
+_DRAIN_LAST=$(echo "$_DRAIN" | python3 -c "import json,sys; r=json.load(sys.stdin); res=r.get('result',[]); print(res[-1].get('update_id','') if res else '')" 2>/dev/null)
 if [[ -n "$_DRAIN_LAST" ]]; then
-    echo "AMA: Draining $(echo "$_DRAIN" | jq '.result | length') stale update(s) up to ID $_DRAIN_LAST..."
+    _DRAIN_COUNT=$(echo "$_DRAIN" | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('result',[])))" 2>/dev/null || echo 0)
+    echo "AMA: Draining $_DRAIN_COUNT stale update(s) up to ID $_DRAIN_LAST..."
     echo $((_DRAIN_LAST + 1)) > "$OFFSET_FILE"
 fi
-unset _DRAIN _DRAIN_LAST
+unset _DRAIN _DRAIN_LAST _DRAIN_COUNT
 
 while true; do
     OFFSET=$(cat "$OFFSET_FILE")
@@ -59,9 +60,9 @@ while true; do
         sleep 5; continue
     fi
 
-    OK=$(echo "$UPDATES" | jq -r '.ok' 2>/dev/null)
-    if [[ "$OK" != "true" ]]; then
-        ERR_CODE=$(echo "$UPDATES" | jq -r '.error_code // 0' 2>/dev/null)
+    OK=$(echo "$UPDATES" | python3 -c "import json,sys; print(json.load(sys.stdin).get('ok','false'))" 2>/dev/null)
+    if [[ "$OK" != "True" && "$OK" != "true" ]]; then
+        ERR_CODE=$(echo "$UPDATES" | python3 -c "import json,sys; print(json.load(sys.stdin).get('error_code',0))" 2>/dev/null)
         if [[ "$ERR_CODE" == "409" ]]; then
             echo "AMA: 409 Conflict — another instance owns the poll. Exiting." >&2
             exit 1
@@ -70,9 +71,13 @@ while true; do
         sleep 5; continue
     fi
 
-    echo "$UPDATES" | jq -c '.result[]' | while read -r update; do
+    echo "$UPDATES" | python3 -c "
+import json, sys
+for u in json.load(sys.stdin).get('result', []):
+    print(json.dumps(u))
+" | while read -r update; do
         if [[ -z "$update" || "$update" == "null" ]]; then continue; fi
-        UPDATE_ID=$(echo "$update" | jq -r '.update_id' 2>/dev/null)
+        UPDATE_ID=$(echo "$update" | python3 -c "import json,sys; print(json.load(sys.stdin).get('update_id',''))" 2>/dev/null)
         if [[ -z "$UPDATE_ID" || "$UPDATE_ID" == "null" ]]; then
             echo "DEBUG: Bad update: $update" >&2
             continue

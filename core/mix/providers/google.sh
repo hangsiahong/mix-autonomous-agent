@@ -529,8 +529,10 @@ for msg in h:
     return 1
   fi
 
-  if echo "$resp" | jq -e '.error' >/dev/null 2>&1; then
-    echo "FAIL:google_error:$(echo "$resp" | jq -c '.error' 2>/dev/null)"
+  if echo "$resp" | python3 -c "import json,sys; exit(0 if 'error' in json.load(sys.stdin) else 1)" 2>/dev/null; then
+    local _err
+    _err=$(echo "$resp" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin).get('error',{}),separators=(',',':')))" 2>/dev/null)
+    echo "FAIL:google_error:$_err"
     return 1
   fi
 

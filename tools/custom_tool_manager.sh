@@ -23,17 +23,33 @@ if [[ "$action" == "create" ]]; then
     # 2. Register in tools.json
     # Read existing tools
     EXISTING=$(cat "$TOOLS_FILE")
-    
+
     # Create new tool entry
-    NEW_ENTRY=$(jq -n \
-        --arg name "$name" \
-        --arg desc "$description" \
-        --argjson params "$parameters_json" \
-        '{name: $name, description: $desc, parameters: $params}')
-    
+    NEW_ENTRY=$(NAME="$name" DESC="$description" PARAMS="$parameters_json" python3 -c "
+import json, os
+print(json.dumps({
+    'name': os.environ['NAME'],
+    'description': os.environ['DESC'],
+    'parameters': json.loads(os.environ['PARAMS'])
+}))
+")
+
     # Check if already exists, update or append
-    UPDATED=$(echo "$EXISTING" | jq --arg name "$name" --argjson entry "$NEW_ENTRY" \
-        'if any(.[]; .name == $name) then map(if .name == $name then $entry else . end) else . + [$entry] end')
+    UPDATED=$(NAME="$name" ENTRY="$NEW_ENTRY" python3 -c "
+import json, os, sys
+tools = json.load(sys.stdin)
+name = os.environ['NAME']
+entry = json.loads(os.environ['ENTRY'])
+found = False
+for i, t in enumerate(tools):
+    if t.get('name') == name:
+        tools[i] = entry
+        found = True
+        break
+if not found:
+    tools.append(entry)
+print(json.dumps(tools))
+" <<< "$EXISTING")
     
     echo "$UPDATED" > "$TOOLS_FILE"
     echo "Tool $name created and registered successfully."
@@ -44,7 +60,12 @@ elif [[ "$action" == "delete" ]]; then
         
         # Unregister from tools.json
         EXISTING=$(cat "$TOOLS_FILE")
-        UPDATED=$(echo "$EXISTING" | jq --arg name "$name" 'map(select(.name != $name))')
+        UPDATED=$(NAME="$name" python3 -c "
+import json, os, sys
+tools = json.load(sys.stdin)
+name = os.environ['NAME']
+print(json.dumps([t for t in tools if t.get('name') != name]))
+" <<< "$EXISTING")
         echo "$UPDATED" > "$TOOLS_FILE"
         echo "Tool $name deleted and unregistered."
     else

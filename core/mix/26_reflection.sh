@@ -8,7 +8,18 @@ reflect_turn() {
     
     # Only reflect if the user isn't just saying 'hi'
     local last_user_msg
-    last_user_msg=$(echo "$HISTORY" | jq -r 'map(select(.role == "user")) | last | if .content | type == "array" then .content | map(.text // "") | join(" ") else .content // "" end')
+    last_user_msg=$(echo "$HISTORY" | python3 -c "
+import json, sys
+h = json.load(sys.stdin)
+users = [m for m in h if m.get('role') == 'user']
+if not users:
+    print('')
+else:
+    c = users[-1].get('content') or ''
+    if isinstance(c, list):
+        c = ' '.join(p.get('text','') for p in c if isinstance(p,dict))
+    print(c or '')
+" 2>/dev/null)
     if [[ ${#last_user_msg} -lt 20 ]]; then
         return
     fi
@@ -63,17 +74,27 @@ If you decide to take action, execute the tools and explain why in the thought.
         fi
 
         if [[ "$tool_calls" != "[]" && "$tool_calls" != "null" && -n "$tool_calls" ]]; then
-             echo "$tool_calls" | jq -c '.[]' | while read -r tc; do
-                local name=$(echo "$tc" | jq -r '.function.name')
-                local args=$(echo "$tc" | jq -r '.function.arguments')
+            local _tc_lines
+            _tc_lines=$(echo "$tool_calls" | python3 -c "
+import json, sys
+for tc in json.load(sys.stdin):
+    name = (tc.get('function') or {}).get('name','')
+    args = (tc.get('function') or {}).get('arguments','{}')
+    tc_json = json.dumps(tc, separators=(',',':'))
+    print(name + '\x1f' + args + '\x1f' + tc_json)
+" 2>/dev/null)
+            while IFS= read -r _line; do
+                local name args tc_json
+                IFS=$'\x1f' read -r name args tc_json <<< "$_line"
                 echo "Reflection: Executing $name"
                 log_tool_usage "$session_id" "$name"
-                local output=$(run_tool "$name" "$args")
-                
+                local output
+                output=$(run_tool "$name" "$args")
+
                 # Append to history so the next reflection turn knows what happened
-                append_tool_call "[$tc]"
+                append_tool_call "[$tc_json]"
                 append_tool_result "ref_$(date +%s)" "$name" "$output"
-            done
+            done <<< "$_tc_lines"
             continue
         fi
         break

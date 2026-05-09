@@ -22,8 +22,10 @@ if [[ "$action" == "bind" ]]; then
     # For now, just create the directory if it doesn't exist to allow "proto-skills"
     mkdir -p "${_ROOT_DIR}/brain/skills/${skill}"
     
-    topic_data=$(jq -n --arg tid "$thread_id" --arg s "$skill" --arg n "$name" \
-        '{thread_id: $tid, skill: $s, name: $n}')
+    topic_data=$(TID="$thread_id" SKILL="$skill" NAME="$name" python3 -c "
+import json, os
+print(json.dumps({'thread_id': os.environ['TID'], 'skill': os.environ['SKILL'], 'name': os.environ['NAME']}))
+")
     
     set_topic_config "$chat_id" "$thread_id" "$topic_data"
     echo "Skill '$skill' bound to topic '$name' ($thread_id) in chat $chat_id."
@@ -33,7 +35,7 @@ elif [[ "$action" == "unbind" ]]; then
      # For simplicity, just set skill to empty
      topic_data=$(get_topic_config "$chat_id" "$thread_id")
      if [[ -n "$topic_config" && "$topic_config" != "null" ]]; then
-         topic_data=$(echo "$topic_data" | jq 'del(.skill)')
+         topic_data=$(echo "$topic_data" | python3 -c "import json,sys; d=json.load(sys.stdin); d.pop('skill',None); print(json.dumps(d))")
          set_topic_config "$chat_id" "$thread_id" "$topic_data"
          echo "Skill unbound from topic $thread_id."
      else

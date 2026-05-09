@@ -9,9 +9,14 @@ if [ ! -f "$TOTALS_FILE" ]; then
     exit 0
 fi
 
-PROMPT_TOKENS=$(jq -r '.prompt_tokens' "$TOTALS_FILE")
-COMPLETION_TOKENS=$(jq -r '.completion_tokens' "$TOTALS_FILE")
-TOTAL_TOKENS=$(jq -r '.total_tokens' "$TOTALS_FILE")
+read -r PROMPT_TOKENS COMPLETION_TOKENS TOTAL_TOKENS <<< "$(python3 -c "
+import json
+try:
+    d = json.load(open('$TOTALS_FILE'))
+    print(d.get('prompt_tokens',0), d.get('completion_tokens',0), d.get('total_tokens',0))
+except:
+    print(0, 0, 0)
+" 2>/dev/null)"
 
 echo "📊 **AMA Usage Insights**"
 echo ""
@@ -23,7 +28,17 @@ echo ""
 
 if [ -f "$TOOL_LOG" ]; then
     echo "**Top Tools Used:**"
-    sort "$TOOL_LOG" | jq -r '.tool' | sort | uniq -c | sort -nr | head -n 5 | while read -r count tool; do
+    python3 -c "
+import json, sys
+from collections import Counter
+tools = []
+for line in open('$TOOL_LOG'):
+    try:
+        tools.append(json.loads(line.strip()).get('tool',''))
+    except: pass
+for tool, count in Counter(tools).most_common(5):
+    print(count, tool)
+" 2>/dev/null | while read -r count tool; do
         echo "- $tool: $count times"
     done
 fi

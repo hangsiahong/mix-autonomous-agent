@@ -1,31 +1,72 @@
 # Parse LLM response (supports OpenAI and Gemini Native)
 parse_resp() {
     local resp="$1"
-    local text=""
-    local tool_calls="null"
 
     if [[ "$resp" != "{"* ]]; then
         printf 'RAW:%s\nTC:null\nTEXT:\n' "$resp"
         return
     fi
 
-    if echo "$resp" | jq -e '.candidates' >/dev/null 2>&1; then
-        # Gemini Native
-        text=$(echo "$resp" | jq -r '.candidates[0].content.parts[] | select(.text != null) | .text' | tr '\n' ' ' | sed 's/ $//')
-        
-        local g_tc=$(echo "$resp" | jq -c '.candidates[0].content.parts[] | select(.functionCall != null) | .functionCall' 2>/dev/null | jq -s -c '.')
-        if [[ "$g_tc" != "[]" && "$g_tc" != "null" ]]; then
-            # Convert Gemini functionCall to OpenAI tool_call format for consistency in history
-            tool_calls=$(echo "$g_tc" | jq -c 'map({id: "call_" + (now | tostring), type: "function", function: {name: .name, arguments: (.args | tojson)}})')
-        fi
-    elif echo "$resp" | jq -e '.choices' >/dev/null 2>&1; then
-        # OpenAI Format
-        text=$(echo "$resp" | jq -r '.choices[0].message.content // empty')
-        # Ensure id exists in tool_calls
-        tool_calls=$(echo "$resp" | jq -c '(.choices[0].message.tool_calls // empty) | if type == "array" then map(if .id == null or .id == "" then .id = "call_" + (.function.name // "tool") else . end) else . end')
+    local _parsed
+    _parsed=$(RESP="$resp" python3 -c "
+import json, os, time
+resp_str = os.environ['RESP']
+try:
+    r = json.loads(resp_str)
+except Exception:
+    print('PARSE_ERROR')
+    raise SystemExit(0)
+
+text = ''
+tool_calls = None
+
+if 'candidates' in r:
+    # Gemini Native
+    parts = (r.get('candidates') or [{}])[0].get('content', {}).get('parts', [])
+    text = ' '.join(p.get('text', '') for p in parts if 'text' in p).rstrip()
+    g_tc = [p['functionCall'] for p in parts if 'functionCall' in p]
+    if g_tc:
+        tool_calls = [
+            {
+                'id': 'call_' + str(int(time.time() * 1000) % 10**9 + i),
+                'type': 'function',
+                'function': {
+                    'name': fc.get('name', ''),
+                    'arguments': json.dumps(fc.get('args', {}))
+                }
+            }
+            for i, fc in enumerate(g_tc)
+        ]
+elif 'choices' in r:
+    # OpenAI Format
+    msg = (r.get('choices') or [{}])[0].get('message', {})
+    text = msg.get('content', '') or ''
+    tc = msg.get('tool_calls')
+    if isinstance(tc, list):
+        tool_calls = []
+        for t in tc:
+            if not t.get('id'):
+                t = dict(t)
+                fname = (t.get('function') or {}).get('name', 'tool')
+                t['id'] = 'call_' + fname
+            tool_calls.append(t)
+
+# Collapse newlines to spaces for single-line output
+text = text.replace('\\n', ' ').strip()
+
+print('TEXT:' + (text or ''))
+print('TC:' + (json.dumps(tool_calls, separators=(',',':')) if tool_calls is not None else 'null'))
+" 2>/dev/null)
+
+    if [[ "$_parsed" == "PARSE_ERROR" || -z "$_parsed" ]]; then
+        printf 'RAW:%s\nTC:null\nTEXT:\n' "$resp"
+        return
     fi
-    
+
+    local text tool_calls
+    text=$(echo "$_parsed" | grep "^TEXT:" | cut -c6-)
+    tool_calls=$(echo "$_parsed" | grep "^TC:" | cut -c4-)
     [ -z "$tool_calls" ] && tool_calls="null"
-    
+
     printf 'RAW:%s\nTC:%s\nTEXT:%s\n' "$resp" "$tool_calls" "$text"
 }

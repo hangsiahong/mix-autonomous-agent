@@ -25,27 +25,41 @@ is_whitelisted() {
     if [[ -n "${TG_ADMIN}" && "$id" == "${TG_ADMIN}" ]]; then
         return 0
     fi
-    
-    local whitelist=$(load_config | jq -r '.whitelist[]')
-    for entry in $whitelist; do
-        if [[ "$id" == "$entry" ]]; then
-            return 0
-        fi
-    done
-    return 1
+
+    ID="$id" CF="$CONFIG_FILE" python3 -c "
+import json, os
+try:
+    d = json.load(open(os.environ['CF']))
+    exit(0 if os.environ['ID'] in d.get('whitelist', []) else 1)
+except:
+    exit(1)
+"
 }
 
 add_to_whitelist() {
     local id="$1"
     local config=$(load_config)
-    local new_config=$(echo "$config" | jq --arg id "$id" '.whitelist += [$id] | .whitelist |= unique')
+    local new_config
+    new_config=$(ID="$id" python3 -c "
+import json, os, sys
+d = json.load(sys.stdin)
+wl = d.get('whitelist', [])
+d['whitelist'] = list(dict.fromkeys(wl + [os.environ['ID']]))
+print(json.dumps(d))
+" <<< "$config")
     save_config "$new_config"
 }
 
 set_home_chat() {
     local id="$1"
     local config=$(load_config)
-    local new_config=$(echo "$config" | jq --arg id "$id" '.home_chat = $id')
+    local new_config
+    new_config=$(ID="$id" python3 -c "
+import json, os, sys
+d = json.load(sys.stdin)
+d['home_chat'] = os.environ['ID']
+print(json.dumps(d))
+" <<< "$config")
     save_config "$new_config"
     # Also ensure home chat is whitelisted
     add_to_whitelist "$id"
@@ -55,10 +69,19 @@ get_topic_config() {
     local chat_id="$1"
     local thread_id="$2"
     local config=$(load_config)
-    
+
     # Try to find topic in group_topics
-    echo "$config" | jq -c --arg cid "$chat_id" --arg tid "$thread_id" \
-        '.group_topics[]? | select(.chat_id == $cid) | .topics[]? | select(.thread_id == $tid)'
+    CID="$chat_id" TID="$thread_id" python3 -c "
+import json, os, sys
+d = json.load(sys.stdin)
+cid = os.environ['CID']
+tid = os.environ['TID']
+for g in d.get('group_topics', []):
+    if g.get('chat_id') == cid:
+        for t in g.get('topics', []):
+            if t.get('thread_id') == tid:
+                print(json.dumps(t, separators=(',',':')))
+" <<< "$config"
 }
 
 set_topic_config() {
@@ -66,32 +89,32 @@ set_topic_config() {
     local thread_id="$2"
     local key="$3"
     local val="$4"
-    
+
     local config=$(load_config)
-    
-    # Ensure group_topics exists
-    config=$(echo "$config" | jq 'if has("group_topics") then . else . + {group_topics: []} end')
-    
-    # Check if chat_id exists in group_topics
-    local chat_exists=$(echo "$config" | jq --arg cid "$chat_id" 'any(.group_topics[]; .chat_id == $cid)')
-    
-    if [[ "$chat_exists" == "false" ]]; then
-        config=$(echo "$config" | jq --arg cid "$chat_id" '.group_topics += [{chat_id: $cid, topics: []}]')
-    fi
-    
-    # Update or add topic
-    local updated_config=$(echo "$config" | jq --arg cid "$chat_id" --arg tid "$thread_id" --arg key "$key" --arg val "$val" '
-        .group_topics |= map(
-            if .chat_id == $cid then
-                .topics |= (
-                    if any(.[]; .thread_id == $tid) then
-                        map(if .thread_id == $tid then .[$key] = $val else . end)
-                    else
-                        . + [{thread_id: $tid, ($key): $val}]
-                    end
-                )
-            else . end
-        )')
-    
+
+    local updated_config
+    updated_config=$(CID="$chat_id" TID="$thread_id" KEY="$key" VAL="$val" python3 -c "
+import json, os, sys
+d = json.load(sys.stdin)
+cid = os.environ['CID']
+tid = os.environ['TID']
+key = os.environ['KEY']
+val = os.environ['VAL']
+if 'group_topics' not in d:
+    d['group_topics'] = []
+group = next((g for g in d['group_topics'] if g.get('chat_id') == cid), None)
+if group is None:
+    group = {'chat_id': cid, 'topics': []}
+    d['group_topics'].append(group)
+topics = group.get('topics', [])
+topic = next((t for t in topics if t.get('thread_id') == tid), None)
+if topic is None:
+    topics.append({'thread_id': tid, key: val})
+else:
+    topic[key] = val
+group['topics'] = topics
+print(json.dumps(d))
+" <<< "$config")
+
     save_config "$updated_config"
 }
