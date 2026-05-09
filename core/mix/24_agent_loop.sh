@@ -72,7 +72,7 @@ run_agent() {
             # Process tool calls
             echo "$tool_calls" | jq -c '.[]' | while read -r tc; do
                 local name=$(echo "$tc" | jq -r '.name')
-                local output=$(process_tc "$chat_id" "$msg_id" "$tc")
+                local output=$(process_tc "$chat_id" "$msg_id" "$tc" "$thread_id")
                 append_tool_result "tc_$(date +%s%N)" "$name" "$output"
             done
             

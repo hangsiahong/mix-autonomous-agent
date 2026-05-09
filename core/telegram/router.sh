@@ -71,6 +71,15 @@ tg_handle_update() {
                 local sysinfo=$(bash tools/sys_info.sh)
                 tg_send "$chat_id" "Title: $title\nProvider: ${PROVIDER:-openai (default)}\nModel: ${MODEL:-gpt-4o-mini}\nSession: $session_id\nUser: ${username:-$user_id}\nType: $chat_type\nSkill: ${skill:-none}\n\n$sysinfo" "$thread_id"
                 ;;
+            /skill)
+                local sname=$(echo "$args" | awk '{print $1}')
+                if [[ -z "$sname" ]]; then
+                    tg_send "$chat_id" "Current skill: ${skill:-none}\nUsage: /skill <name>" "$thread_id"
+                else
+                    set_topic_config "$chat_id" "$thread_id" "skill" "$sname"
+                    tg_send "$chat_id" "Skill set to: $sname" "$thread_id"
+                fi
+                ;;
             /insights)
                 local report=$(bash tools/insights.sh)
                 tg_send "$chat_id" "$report" "$thread_id"

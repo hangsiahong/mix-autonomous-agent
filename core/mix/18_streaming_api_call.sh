@@ -7,10 +7,10 @@ call_api_stream() {
 
     local attempt=1
     local max_attempts=3
-    
+
     while [ "$attempt" -le "$max_attempts" ]; do
         local payload=$(_api_build_payload "true" "$sys_prompt_override" "$skill")
-        
+
         # Resolve API key and headers from Mix logic
         local _api_key="$API_KEY"
         if [ "$PROVIDER" != "default" ] && type "${PROVIDER}_get_api_key" >/dev/null 2>&1; then
@@ -71,6 +71,7 @@ def update_tg(text):
     except: pass
 
 content = ""
+thought_active = False
 tool_calls = {} # Use dict to accumulate by index
 usage = None
 last_update = time.time()
@@ -81,24 +82,36 @@ try:
             if not line: continue
             line = line.decode("utf-8")
             if not line.startswith("data: "): continue
-            
+
             data_str = line[6:]
             if data_str == "[DONE]": break
-            
+
             try:
                 data = json.loads(data_str)
             except: continue
-            
+
             # Check for usage info
             if "usage" in data:
                 usage = data["usage"]
-            
+
             delta = data.get("choices", [{}])[0].get("delta", {})
-            
+
+            if "thought" in delta and delta["thought"]:
+                if not thought_active:
+                    content += "<think>"
+                    thought_active = True
+                content += delta["thought"]
+
             if "content" in delta and delta["content"]:
+                if thought_active:
+                    content += "</think>"
+                    thought_active = False
                 content += delta["content"]
-            
+
             if "tool_calls" in delta:
+                if thought_active:
+                    content += "</think>"
+                    thought_active = False
                 for tc in delta["tool_calls"]:
                     idx = tc.get("index", 0)
                     if idx not in tool_calls:
@@ -107,7 +120,7 @@ try:
                         f = tc["function"]
                         if "name" in f: tool_calls[idx]["name"] += f["name"]
                         if "arguments" in f: tool_calls[idx]["args"] += f["arguments"]
-            
+
             if time.time() - last_update > 2.0:
                 display_text = content if content else "..."
                 if tool_calls:
@@ -138,7 +151,7 @@ EOF
         # Check for errors in err_out or status
         if [[ $status -ne 0 || "$result" != *"TC:"* ]]; then
              echo "AMA: Stream Error (Status $status). Err: $err_out" >&2
-             
+
              # Try to classify error from err_out if possible, or just retry
              if [[ "$attempt" -lt "$max_attempts" ]]; then
                  if [[ -n "$FALLBACK_MODEL" && "$MODEL" != "$FALLBACK_MODEL" ]]; then

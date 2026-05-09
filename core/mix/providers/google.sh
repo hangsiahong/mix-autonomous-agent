@@ -284,7 +284,30 @@ _google_login_vertex() {
   echo "  Project: $project_id | Region: $region"
 }
 
-_google_save_config() {
+# ─── Extra Payload: reasoning/thinking ──────────────────────────────────────
+google_extra_payload_json() {
+  local model_lower="${MODEL:-}"
+  model_lower="${model_lower,,}"
+  
+  # Remove provider prefix if present
+  model_lower="${model_lower#google/}"
+
+  # Default thinking config for Gemini 3+
+  if [[ "$model_lower" =~ gemini-3 ]]; then
+      local level="${_GOOGLE_THINKING_LEVEL:-medium}"
+      # Gemini 3 Pro only supports low/high
+      if [[ "$model_lower" =~ pro ]]; then
+          [[ "$level" != "high" ]] && level="low"
+      fi
+
+      # OpenAI-compatible field names for Gemini Thinking
+      printf '{"include_thoughts": true, "thinking_level": "%s"}' "$level"
+      return 0
+  fi
+
+  # Default for others
+  echo "{}"
+}
   local mode="$1"
   local project_id="${2:-}"
   local region="${3:-us-central1}"

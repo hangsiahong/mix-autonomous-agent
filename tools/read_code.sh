@@ -10,6 +10,8 @@ fi
 
 if [[ -f "$path" ]]; then
     cat "$path"
+    # Inject subdirectory context discovery
+    bash "$(dirname "${BASH_SOURCE[0]}")/context_discovery.sh" "$path"
 else
     echo "Error: File $path not found."
     exit 1

@@ -3,6 +3,7 @@ process_tc() {
     local chat_id="$1"
     local msg_id="$2"
     local tc_json="$3" # Single tool call object
+    local thread_id="$4"
     
     local name=$(echo "$tc_json" | jq -r '.name')
     local args=$(echo "$tc_json" | jq -c '.args')
@@ -23,7 +24,7 @@ process_tc() {
     tg_edit "$chat_id" "$msg_id" "⚒ Running tool: \`$name\`..."
     
     log_tool_usage "$chat_id" "$name"
-    local output=$(run_tool "$name" "$args")
+    local output=$(run_tool "$name" "$args" "$chat_id" "$thread_id")
     
     # Check for image attachment
     if echo "$output" | grep -q "IMAGE_URL:"; then

@@ -2,6 +2,14 @@
 run_tool() {
     local name="$1"
     local args_json="$2"
+    local chat_id="$3"
+    local thread_id="$4"
+    
+    # Check permissions
+    if ! check_tool_permission "$name" "$chat_id" "$thread_id"; then
+        echo "Error: Permission denied for tool $name."
+        return 1
+    fi
     
     local script="tools/${name}.sh"
     # Support custom tools added by agent

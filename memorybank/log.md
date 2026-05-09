@@ -72,3 +72,10 @@
     - Implemented Python-based environment variable passing in API layer to resolve JSON/Shell escaping issues.
     - Created comprehensive test suite (`tests/`) for Session Isolation and Skill Binding.
     - All tests passing; core loop stable with multi-topic support.
+- **2023-10-27**: Advanced Logic & Safety.
+    - **Telegram Topic Isolation & Skill Binding**: Fixed `set_topic_config` and added `/skill` command to pin skills to specific threads.
+    - **Automated Testing**: Created `scripts/run_all_tests.sh` to run the test suite and report pass/fail.
+    - **Subdirectory Context Discovery**: Updated `read_code.sh` to recursively find `README.md`/`HINTS.md` context from the target directory up to 3 levels.
+    - **Permission Management**: Implemented `core/access_control.sh` with sensitive tool detection and `PERMISSION_STORE`.
+    - **Gemini 3 & Reasoning**: Added payload support for `thinking_level`, captured `thought` stream fields into `<think>` tags, and implemented scrubbing for clean Telegram output.
+    - **Media Support Enhancement**: Updated `ama` skill prompt to inform the agent about file uploads in `uploads/`.

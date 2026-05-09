@@ -13,6 +13,9 @@
 - **Repo Mapping**: Added global project awareness via `repo_map` tool.
 
 ## Immediate Tasks
+- [x] Implement Telegram topic isolation, skill binding, and automated testing.
+- [x] Add Subdirectory Context Discovery and Permission Management.
+- [x] Support Gemini 3 thinking/reasoning levels.
 - [ ] Implement **Curator** background task for skill maintenance and state cleanup.
 - [ ] Add **Trajectory Logging** for fine-tuning/debugging dataset collection.
 - [ ] Implement **Rate Limit Tracker** to handle multi-provider quota management.

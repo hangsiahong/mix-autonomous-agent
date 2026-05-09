@@ -10,3 +10,5 @@ if [[ "$RESOLVED_PATH" != "$PROJECT_ROOT"* ]]; then
 fi
 
 find "$dir" -maxdepth 2 -not -path '*/.*'
+# Inject subdirectory context discovery
+bash "$(dirname "${BASH_SOURCE[0]}")/context_discovery.sh" "$dir"

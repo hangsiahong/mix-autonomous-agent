@@ -22,7 +22,12 @@ _api_build_payload() {
 
     # 1. Load from core (system skills)
     if [[ -f "core/skills/${skill}/prompt.txt" ]]; then
-        skill_prompt=$(cat "core/skills/${skill}/prompt.txt")
+        # Use a temporary python snippet to expand environment variables safely
+        skill_prompt=$(CAT_FILE="core/skills/${skill}/prompt.txt" PWD_VAL="$(pwd)" python3 -c '
+import os
+content = open(os.environ["CAT_FILE"]).read()
+print(content.replace("$(pwd)", os.environ["PWD_VAL"]))
+')
     fi
     if [[ -f "core/skills/${skill}/tools.json" ]]; then
         skill_tools=$(cat "core/skills/${skill}/tools.json")

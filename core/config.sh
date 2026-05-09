@@ -64,7 +64,8 @@ get_topic_config() {
 set_topic_config() {
     local chat_id="$1"
     local thread_id="$2"
-    local topic_data="$3" # JSON object
+    local key="$3"
+    local val="$4"
     
     local config=$(load_config)
     
@@ -79,14 +80,14 @@ set_topic_config() {
     fi
     
     # Update or add topic
-    local updated_config=$(echo "$config" | jq --arg cid "$chat_id" --arg tid "$thread_id" --argjson data "$topic_data" '
+    local updated_config=$(echo "$config" | jq --arg cid "$chat_id" --arg tid "$thread_id" --arg key "$key" --arg val "$val" '
         .group_topics |= map(
             if .chat_id == $cid then
                 .topics |= (
                     if any(.[]; .thread_id == $tid) then
-                        map(if .thread_id == $tid then $data else . end)
+                        map(if .thread_id == $tid then .[$key] = $val else . end)
                     else
-                        . + [$data]
+                        . + [{thread_id: $tid, ($key): $val}]
                     end
                 )
             else . end
