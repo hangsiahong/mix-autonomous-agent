@@ -141,10 +141,17 @@ except Exception as e:
 
 # Final update
 clean_final = re.sub(r"<(think|thinking|reasoning|thought)>.*?(</\1>|$)", "", content, flags=re.DOTALL | re.IGNORECASE)
+if tool_calls:
+    clean_final += "\n\n(Running tools...)"
 update_tg(clean_final if clean_final.strip() else "(done)")
 
 # Output for bash parsing (TC: list of tool calls)
-tc_list = [v for k, v in sorted(tool_calls.items())]
+tc_list = []
+for k, v in sorted(tool_calls.items()):
+    if not v.get("id"):
+        v["id"] = f"call_{int(time.time() * 1000)}"
+    tc_list.append(v)
+
 print(f"TC:{json.dumps(tc_list)}")
 print(f"TEXT:{content}")
 if usage:

@@ -21,7 +21,8 @@ parse_resp() {
     elif echo "$resp" | jq -e '.choices' >/dev/null 2>&1; then
         # OpenAI Format
         text=$(echo "$resp" | jq -r '.choices[0].message.content // empty')
-        tool_calls=$(echo "$resp" | jq -c '.choices[0].message.tool_calls // empty')
+        # Ensure id exists in tool_calls
+        tool_calls=$(echo "$resp" | jq -c '(.choices[0].message.tool_calls // empty) | if type == "array" then map(if .id == null or .id == "" then .id = "call_" + (.function.name // "tool") else . end) else . end')
     fi
     
     [ -z "$tool_calls" ] && tool_calls="null"

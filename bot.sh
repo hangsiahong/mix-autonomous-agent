@@ -20,6 +20,7 @@ OFFSET_FILE="${DIR}/brain/last_offset"
 [ ! -f "$OFFSET_FILE" ] && echo "0" > "$OFFSET_FILE"
 
 echo "AMA Bot Starting..."
+tg_set_commands
 set -x
 while true; do
     echo "Polling..."

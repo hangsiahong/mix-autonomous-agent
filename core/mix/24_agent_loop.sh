@@ -42,6 +42,7 @@ run_agent() {
         local TURN_CALLS=""
         
         # 1. Create a "thinking" message in Telegram
+        tg_send_action "$chat_id" "typing" "$thread_id"
         local msg_id=$(tg_send "$chat_id" "Thinking..." "$thread_id")
         
         # Update title if it's the first turn
@@ -75,13 +76,28 @@ run_agent() {
             append_tool_call "$tool_calls"
             
             # Process tool calls
-            echo "$tool_calls" | jq -c '.[]' | while read -r tc; do
-                local name=$(echo "$tc" | jq -r '.name')
+            while read -r tc; do
+                [[ -z "$tc" ]] && continue
+                local name=$(echo "$tc" | jq -r '.function.name // .name // empty' | tr -d '[:space:]')
                 local output=$(process_tc "$chat_id" "$msg_id" "$tc" "$thread_id")
-                append_tool_result "tc_$(date +%s%N)" "$name" "$output"
-            done
+                local tc_id=$(echo "$tc" | jq -r '.id // empty')
+                if [[ -z "$tc_id" ]]; then
+                    tc_id="tc_$(date +%s%N)"
+                fi
+                
+                # Check for explicit errors parsing the JSON, skip if jq failed
+                if [[ "$name" == "" || "$name" == "null" ]]; then
+                     output="Error: Tool name could not be parsed from JSON payload."
+                     name="unknown_tool"
+                fi
+
+                append_tool_result "$tc_id" "$name" "$output"
+            done < <(echo "$tool_calls" | jq -c '.[]' || true)
             
             # Continue loop
+            # Provide an empty message placeholder for the next assistant stream since 
+            # the last message edit showed "✅ Tool X completed."
+            # The next stream turn will update the thinking placeholder.
             continue
         fi
         

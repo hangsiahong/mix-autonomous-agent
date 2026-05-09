@@ -81,7 +81,10 @@ def main():
                             tool_calls[name]["arguments"] = json.dumps(fc["args"])
 
                 if time.time() - last_update > 2.0:
-                    update_tg(tg_token, chat_id, message_id, content if content else "...")
+                    display_text = content if content else "..."
+                    if tool_calls:
+                        display_text += "\n\n(Running tools...)"
+                    update_tg(tg_token, chat_id, message_id, display_text)
                     last_update = time.time()
                     
             if "usageMetadata" in data:
@@ -89,7 +92,10 @@ def main():
     except Exception as e:
         sys.stderr.write(f"Error: {e}\n")
 
-    update_tg(tg_token, chat_id, message_id, content if content else "(done)")
+    display_final = content if content else ""
+    if tool_calls:
+        display_final += "\n\n(Running tools...)"
+    update_tg(tg_token, chat_id, message_id, display_final if display_final else "(done)")
     
     tc_list = [{"id": f"call_{int(time.time())}_{i}", "type": "function", "function": v} for i, v in enumerate(tool_calls.values())]
     print(f"TC:{json.dumps(tc_list)}")

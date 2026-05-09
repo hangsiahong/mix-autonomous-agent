@@ -7,7 +7,7 @@ run_tool() {
     
     # Check permissions
     if ! check_tool_permission "$name" "$chat_id" "$thread_id"; then
-        echo "Error: Permission denied for tool $name."
+        echo "Error: Permission denied for tool '${name}'."
         return 1
     fi
     
@@ -22,15 +22,21 @@ run_tool() {
         return 1
     fi
     
+    # If args is a JSON string containing an escaped JSON object, parse it
+    local is_string=$(echo "$args" | jq 'type == "string"')
+    if [[ "$is_string" == "true" ]]; then
+        args=$(echo "$args" | jq -r '.')
+    fi
+    
     # Export args as TOOL_ vars
-    eval $(echo "$args_json" | jq -r 'to_entries | .[] | "export TOOL_\(.key)=\( .value | @sh )"')
+    eval $(echo "$args" | jq -r 'to_entries | .[] | "export TOOL_\(.key)=\( .value | @sh )"')
     
     local output
     output=$(bash "$script" 2>&1)
     local status=$?
     
     # Unset
-    eval $(echo "$args_json" | jq -r 'to_entries | .[] | "unset TOOL_\(.key)"')
+    eval $(echo "$args" | jq -r 'to_entries | .[] | "unset TOOL_\(.key)"')
     
     echo "$output"
 }

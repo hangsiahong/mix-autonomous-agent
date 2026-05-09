@@ -60,7 +60,7 @@ tg_handle_update() {
             /help)
                 tg_send "$chat_id" "Commands: /start, /help, /reset, /status, /sethome, /whitelist <id>"
                 ;;
-            /reset)
+            /reset|/new)
                 rm -f "${DIR}/brain/state/history_${session_id}.json"
                 tg_send "$chat_id" "Conversation history reset." "$thread_id"
                 ;;

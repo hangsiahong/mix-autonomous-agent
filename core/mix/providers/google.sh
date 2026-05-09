@@ -664,6 +664,8 @@ for msg in history:
     if msg.get("role") == "tool":
         if "id" in msg and "tool_call_id" not in msg:
             msg["tool_call_id"] = msg.pop("id")
+        if not msg.get("tool_call_id"):
+            msg["tool_call_id"] = "call_" + msg.get("name", "tool")
     
     if msg.get("role") == "assistant" and msg.get("tool_calls"):
         for tc in msg["tool_calls"]:
@@ -679,7 +681,18 @@ for msg in history:
             tc["extra_content"]["google"]["thought_signature"] = sig
             # Ensure "id" exists for assistant tool_calls
             if "id" not in tc or not tc["id"]:
-                tc["id"] = "call_" + tc["function"]["name"]
+                tc["id"] = "call_" + tc.get("function", {}).get("name", tc.get("name", "tool"))
+            if "type" not in tc or not tc["type"]:
+                tc["type"] = "function"
+            
+            # Ensure "function" exists if using raw name/args from Gemini output
+            if "function" not in tc and "name" in tc:
+                args_val = tc.get("args", "{}")
+                if not isinstance(args_val, str):
+                    args_val = json.dumps(args_val)
+                tc["function"] = {"name": tc.pop("name"), "arguments": args_val}
+                tc.pop("args", None)
+
 print(json.dumps(history))
 '
 }

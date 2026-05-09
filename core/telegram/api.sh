@@ -56,3 +56,31 @@ tg_download() {
     local local_dest="$2"
     curl -s -o "$local_dest" "https://api.telegram.org/file/bot${TG_TOKEN}/${file_path}"
 }
+
+tg_set_commands() {
+    local commands='[
+        {"command": "start", "description": "Start the bot"},
+        {"command": "help", "description": "Show help"},
+        {"command": "new", "description": "Reset conversation history"},
+        {"command": "reset", "description": "Reset conversation history"},
+        {"command": "status", "description": "Show agent status"},
+        {"command": "skill", "description": "View or set active skill"},
+        {"command": "insights", "description": "Show usage insights"}
+    ]'
+    tg_api "setMyCommands" "$(jq -n --argjson cmds "$commands" '{commands: $cmds}')" > /dev/null
+}
+
+tg_send_action() {
+    local chat_id="$1"
+    local action="$2"
+    local thread_id="$3"
+    
+    local payload=$(jq -n --arg cid "$chat_id" --arg act "$action" \
+        '{chat_id: $cid, action: $act}')
+    
+    if [[ -n "$thread_id" && "$thread_id" != "null" ]]; then
+        payload=$(echo "$payload" | jq --arg tid "$thread_id" '.message_thread_id = $tid')
+    fi
+    
+    tg_api "sendChatAction" "$payload" > /dev/null
+}
