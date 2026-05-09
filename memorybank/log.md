@@ -30,3 +30,8 @@
     - Implemented dynamic whitelist system to control bot access (users, groups, channels) without restarts.
     - Added \`/sethome\` command (Hermes style) to define the primary operations chat.
     - Added \`/whitelist <id>\` for on-the-fly access management.
+- **2023-10-27**: Web Research Capability.
+    - Implemented \`tools/web_search.sh\` using DuckDuckGo (minimalist scraping).
+    - Implemented \`tools/fetch_url.sh\` using Jina Reader (Markdown extraction).
+    - Registered research tools in \`brain/tools.json\`.
+    - Updated system prompt to mandate proactive research for missing information.

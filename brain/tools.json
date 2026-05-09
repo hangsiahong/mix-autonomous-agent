@@ -87,5 +87,27 @@
       },
       "required": ["action", "target_id"]
     }
+  },
+  {
+    "name": "web_search",
+    "description": "Search the web for current information.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": { "type": "string", "description": "The search query" }
+      },
+      "required": ["query"]
+    }
+  },
+  {
+    "name": "fetch_url",
+    "description": "Read the content of a specific webpage and return it as Markdown.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "url": { "type": "string", "description": "The full URL to fetch" }
+      },
+      "required": ["url"]
+    }
   }
 ]
