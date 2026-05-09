@@ -87,7 +87,16 @@ ex = json.loads(os.environ.get("EXTRA_PAYLOAD", "{}"))
 stream = os.environ.get("STREAM_MODE", "false").lower() == "true"
 
 msg = [{"role": "system", "content": s}] + h
-body = {"model": m, "messages": msg, "tools": t, "tool_choice": "auto"}
+body = {"model": m, "messages": msg}
+if t:
+    wrapped_tools = []
+    for tool in t:
+        if isinstance(tool, dict) and "type" not in tool:
+            wrapped_tools.append({"type": "function", "function": tool})
+        else:
+            wrapped_tools.append(tool)
+    body["tools"] = wrapped_tools
+    body["tool_choice"] = "auto"
 if stream:
     body["stream"] = True
     body["stream_options"] = {"include_usage": True}

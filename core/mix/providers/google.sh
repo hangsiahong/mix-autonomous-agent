@@ -55,8 +55,8 @@ google_activate() {
 
   if [ -z "$mode" ] && [ -f "$_GOOGLE_CONFIG_FILE" ]; then
     mode=$(grep '^mode=' "$_GOOGLE_CONFIG_FILE" 2>/dev/null | cut -d= -f2-)
-    project_id=$(grep '^project_id=' "$_GOOGLE_CONFIG_FILE" 2>/dev/null | cut -d= -f2-)
-    region=$(grep '^region=' "$_GOOGLE_CONFIG_FILE" 2>/dev/null | cut -d= -f2-)
+    [ -z "$project_id" ] && project_id=$(grep '^project_id=' "$_GOOGLE_CONFIG_FILE" 2>/dev/null | cut -d= -f2-)
+    [ -z "$region" ] && region=$(grep '^region=' "$_GOOGLE_CONFIG_FILE" 2>/dev/null | cut -d= -f2-)
     [ -z "$region" ] && region="us-central1"
     _GOOGLE_THINKING_LEVEL=$(grep '^thinking_level=' "$_GOOGLE_CONFIG_FILE" 2>/dev/null | cut -d= -f2-) || true
   fi
@@ -295,61 +295,8 @@ _google_save_config() {
   {
     printf 'mode=%s\nproject_id=%s\nregion=%s\n' "$mode" "$project_id" "$region"
     [ -n "${_GOOGLE_THINKING_LEVEL:-}" ] && printf 'thinking_level=%s\n' "$_GOOGLE_THINKING_LEVEL"
-  } > "$_GOOGLE_CONFIG_FILE"
+} > "$_GOOGLE_CONFIG_FILE"
   chmod 600 "$_GOOGLE_CONFIG_FILE"
-}
-
-# ─── Get API key (called on every API request) ─────────────────────────────
-google_get_api_key() {
-  local mode="${GOOGLE_MODE:-}"
-  if [ -z "$mode" ] && [ -f "$_GOOGLE_CONFIG_FILE" ]; then
-    mode=$(grep '^mode=' "$_GOOGLE_CONFIG_FILE" 2>/dev/null | cut -d= -f2-)
-  fi
-
-  if [ "$mode" = "vertex" ]; then
-    # Cache token for 10 mins to avoid CLI overhead
-    local now
-    now=$(date +%s)
-    local cache_ts=0
-    [ -f "${_GOOGLE_TOKEN_CACHE}.ts" ] && cache_ts=$(cat "${_GOOGLE_TOKEN_CACHE}.ts")
-
-    if [ $((now - cache_ts)) -lt 600 ] && [ -f "$_GOOGLE_TOKEN_CACHE" ]; then
-      cat "$_GOOGLE_TOKEN_CACHE"
-    else
-      local token
-      token=$(gcloud auth print-access-token 2>/dev/null) || return 1
-      echo "$token" > "$_GOOGLE_TOKEN_CACHE"
-      echo "$now" > "${_GOOGLE_TOKEN_CACHE}.ts"
-      echo "$token"
-    fi
-  else
-    # Studio: use key
-    local key="${GOOGLE_API_KEY:-${GEMINI_KEY:-$API_KEY}}"
-    if [ -z "$key" ] && [ -f "$_GOOGLE_KEY_FILE" ]; then
-      key=$(cat "$_GOOGLE_KEY_FILE")
-    fi
-    echo "$key"
-  fi
-}
-
-# ─── Extra headers ──────────────────────────────────────────────────────────
-google_extra_headers_json() {
-  local mode
-  mode=$(grep '^mode=' "$_GOOGLE_CONFIG_FILE" 2>/dev/null | cut -d= -f2-) || true
-
-  if [ "$mode" = "vertex" ]; then
-    # Vertex requires Project ID in headers if using global endpoint
-    # and often prefers x-goog-user-project
-    local project_id
-    project_id=$(grep '^project_id=' "$_GOOGLE_CONFIG_FILE" 2>/dev/null | cut -d= -f2-) || true
-    if [ -n "$project_id" ]; then
-      printf '{"x-goog-user-project": "%s"}' "$project_id"
-    else
-      echo "{}"
-    fi
-  else
-    echo "{}"
-  fi
 }
 
 # ─── Extra Payload: reasoning/thinking ──────────────────────────────────────
@@ -378,6 +325,10 @@ google_extra_payload_json() {
 }
 
 _google_get_vertex_token() {
+  if [ -n "${GOOGLE_VERTEX_KEY:-}" ]; then
+    echo -n "$GOOGLE_VERTEX_KEY"
+    return 0
+  fi
   if [ -f "$_GOOGLE_TOKEN_CACHE" ]; then
     local mtime=$(stat -c %Y "$_GOOGLE_TOKEN_CACHE")
     local now=$(date +%s)
@@ -409,8 +360,44 @@ google_get_api_key() {
   fi
 }
 
+google_extra_headers_json() {
+  local mode
+  mode=$(grep '^mode=' "$_GOOGLE_CONFIG_FILE" 2>/dev/null | cut -d= -f2-) || true
+  [ -z "$mode" ] && mode="${GOOGLE_MODE:-studio}"
+
+  if [ "$mode" = "vertex" ]; then
+    local api_key; api_key=$(google_get_api_key)
+    # If it's a Vertex API key (AQ...), use x-goog-api-key and suppress Auth: Bearer
+    if [[ "$api_key" == AQ.* ]]; then
+      printf '{"Authorization": null, "x-goog-api-key": "%s"}' "$api_key"
+      return 0
+    fi
+
+    # Vertex requires Project ID in headers if using global endpoint
+    local project_id
+    project_id=$(grep '^project_id=' "$_GOOGLE_CONFIG_FILE" 2>/dev/null | cut -d= -f2-) || true
+    if [ -n "$project_id" ]; then
+      printf '{"x-goog-user-project": "%s"}' "$project_id"
+      return 0
+    fi
+  fi
+  echo "{}"
+}
+
 google_call_api() {
   local sys_prompt_override="$1"
+
+  # If using OpenAI-compatible endpoint, fallback to standard call_api
+  # Using subshell + unset trick to avoid recursion while keeping PROVIDER=google
+  if [[ "$BASE_URL" == */openapi ]]; then
+    (
+      unset -f google_call_api
+      unset -f google_filter_history
+      call_api "$sys_prompt_override"
+    )
+    return $?
+  fi
+
   local mode
   mode=$(grep '^mode=' "$_GOOGLE_CONFIG_FILE" 2>/dev/null | cut -d= -f2-)
   [ -z "$mode" ] && mode="${GOOGLE_MODE:-studio}"
@@ -440,7 +427,7 @@ google_call_api() {
   fi
 
   local tools_json=$(cat brain/tools.json)
-  
+
   # Conversion script for History (OpenAI -> Gemini Native)
   # This script handles multi-modal array content and tool calls.
   local payload
@@ -457,7 +444,7 @@ contents = []
 for msg in h:
     role = "user" if msg["role"] == "user" else "model"
     parts = []
-    
+
     if msg.get("content"):
         if isinstance(msg["content"], str):
             parts.append({"text": msg["content"]})
@@ -472,7 +459,7 @@ for msg in h:
                     parts.append({"inline_data": {"mime_type": mime, "data": b64_data}})
                 elif p["type"] == "file_data":
                     parts.append({"file_data": p["file_data"]})
-    
+
     if msg.get("tool_calls"):
         # For Gemini native, tool calls are parts of the content
         for tc in msg["tool_calls"]:
@@ -480,7 +467,7 @@ for msg in h:
                 "name": tc["function"]["name"],
                 "args": json.loads(tc["function"]["arguments"])
             }})
-            
+
     if msg.get("role") == "tool":
         role = "user" # Gemini expects tool results in a "user" role content (functionResponse)
         parts = [{"function_response": {
@@ -491,18 +478,28 @@ for msg in h:
     if parts:
         contents.append({"role": role, "parts": parts})
 
-# Gemini native payload
-body = {
-    "contents": contents,
-    "system_instruction": {"parts": [{"text": s}]},
-}
-if t:
-    body["tools"] = [{"function_declarations": [
-        {"name": tool["function"]["name"], "description": tool["function"]["description"], "parameters": tool["function"]["parameters"]}
-        for tool in t
-    ]}]
+    # Gemini native payload
+    body = {
+        "contents": contents,
+        "system_instruction": {"parts": [{"text": s}]},
+    }
+    if t:
+        decls = []
+        for tool in t:
+            if "function" in tool:
+                # OpenAI format: {"type": "function", "function": {...}}
+                f = tool["function"]
+            else:
+                # Raw format: {"name": "...", "description": "...", "parameters": {...}}
+                f = tool
+            decls.append({
+                "name": f.get("name"),
+                "description": f.get("description", ""),
+                "parameters": f.get("parameters", {"type": "object", "properties": {}})
+            })
+        body["tools"] = [{"function_declarations": decls}]
 
-print(json.dumps(body))
+    print(json.dumps(body))
 ')
 
   local _curl_args=(-s -X POST "$url" -H "Content-Type: application/json")
@@ -512,7 +509,7 @@ print(json.dumps(body))
 
   local resp
   resp=$(curl "${_curl_args[@]}" -d "$payload")
-  
+
   if [[ "$resp" == "FAIL:"* ]]; then
     echo "$resp"
     return 1
@@ -532,12 +529,22 @@ google_call_api_stream() {
   local skill="$3"
   local sys_prompt_override="$4"
 
+  # If using OpenAI-compatible endpoint, fallback to standard call_api_stream
+  if [[ "$BASE_URL" == */openapi ]]; then
+    (
+      unset -f google_call_api_stream
+      unset -f google_filter_history
+      call_api_stream "$chat_id" "$message_id" "$skill" "$sys_prompt_override"
+    )
+    return $?
+  fi
+
   local mode
   mode=$(grep '^mode=' "$_GOOGLE_CONFIG_FILE" 2>/dev/null | cut -d= -f2-)
   [ -z "$mode" ] && mode="${GOOGLE_MODE:-studio}"
 
   local api_key; api_key=$(google_get_api_key)
-  
+
   local url
   if [ "$mode" = "vertex" ]; then
     local project_id="${GOOGLE_PROJECT:-}"
@@ -560,7 +567,7 @@ google_call_api_stream() {
 
   # ... payload building is inside the python script in google_call_api ...
   # I will extract it to a shared function or just duplicate for now (caveman style).
-  
+
   local payload
   payload=$(SYSTEM_PROMPT="$system_prompt" \
             HISTORY_JSON="$HISTORY" \
@@ -594,7 +601,19 @@ for msg in h:
         parts = [{"function_response": {"name": msg["name"], "response": {"content": msg["content"]}}}]
     if parts: contents.append({"role": role, "parts": parts})
 body = {"contents": contents, "system_instruction": {"parts": [{"text": s}]}}
-if t: body["tools"] = [{"function_declarations": [{"name": tool["function"]["name"], "description": tool["function"]["description"], "parameters": tool["function"]["parameters"]} for tool in t]}]
+if t:
+    decls = []
+    for tool in t:
+        if "function" in tool:
+            f = tool["function"]
+        else:
+            f = tool
+        decls.append({
+            "name": f.get("name"),
+            "description": f.get("description", ""),
+            "parameters": f.get("parameters", {"type": "object", "properties": {}})
+        })
+    body["tools"] = [{"function_declarations": decls}]
 print(json.dumps(body))
 ')
 
