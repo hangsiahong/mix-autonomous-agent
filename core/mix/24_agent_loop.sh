@@ -14,6 +14,7 @@ run_agent() {
     local turn=0
     while [ "$turn" -lt "$MAX_TURNS" ]; do
         turn=$((turn + 1))
+        local TURN_CALLS=""
         
         # 1. Create a "thinking" message in Telegram
         local msg_id=$(tg_send "$chat_id" "Thinking...")
@@ -27,6 +28,12 @@ run_agent() {
         
         local tool_calls=$(echo "$result" | grep "^TC:" | cut -c4-)
         local text=$(echo "$result" | grep "^TEXT:" | cut -c6-)
+        local usage=$(echo "$result" | grep "^USAGE:" | cut -c7-)
+        
+        # Log usage
+        if [[ -n "$usage" ]]; then
+            log_usage "$chat_id" "$usage" "$MODEL"
+        fi
         
         # Append assistant response to history
         if [[ -n "$text" && "$text" != "null" ]]; then
@@ -55,5 +62,5 @@ run_agent() {
     save_history "$chat_id"
     
     # Run self-reflection in the background
-    reflect_turn "$chat_id"
+    ( reflect_turn "$chat_id" & )
 }

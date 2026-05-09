@@ -19,6 +19,8 @@ This document tracks unique features implemented in AMA to prevent duplication a
 
 ## 🛡 Stability & Safety
 - **Self-Healing Edit**: `tools/edit_code.sh` automatically validates Bash syntax (`bash -n`) after every edit. If the edit breaks the script, it reverts to a backup and reports the error, preventing the agent from "bricking" itself.
-- **History Compaction**: Prevents context overflow by moving old turns to vector memory.
-- **Tool Guardrails**: Custom tool registration requires valid JSON schema.
+- **Smart History Compaction**: `core/mix/30_compression.sh` summarizes middle turns to save context while preserving head/tail.
+- **Tool Loop Guardrails**: `core/mix/22_process_one_tool_call.sh` detects and blocks identical tool calls within a single turn.
+- **Usage Insights**: `tools/insights.sh` tracks tokens and tool usage frequency.
+- **Repo Mapping**: `tools/repo_map.sh` provides a recursive tree view of the project structure.
 - **ID Injection**: Every user turn is injected with `chat_id` and `user_id` context for reliable access control.

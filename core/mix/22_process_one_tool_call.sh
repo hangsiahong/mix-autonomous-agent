@@ -7,9 +7,22 @@ process_tc() {
     local name=$(echo "$tc_json" | jq -r '.name')
     local args=$(echo "$tc_json" | jq -c '.args')
     
+    # 1. Guardrail: Detect loops (same tool + same args in same turn)
+    local args_hash=$(echo "$args" | sha256sum | awk '{print $1}')
+    local call_sig="${name}_${args_hash}"
+    
+    # We use a turn-scoped variable to track calls
+    # TURN_CALLS is initialized in run_agent
+    if [[ "$TURN_CALLS" == *"$call_sig"* ]]; then
+        echo "Error: Loop detected! You already called $name with these exact arguments in this turn. Change your strategy."
+        return
+    fi
+    TURN_CALLS="$TURN_CALLS $call_sig"
+
     # Update Telegram status
     tg_edit "$chat_id" "$msg_id" "⚒ Running tool: \`$name\`..."
     
+    log_tool_usage "$chat_id" "$name"
     local output=$(run_tool "$name" "$args")
     
     # Return output

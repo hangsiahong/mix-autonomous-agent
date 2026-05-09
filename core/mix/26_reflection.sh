@@ -57,6 +57,7 @@ If you decide to take action, execute the tools and explain why in the thought.
                 local name=$(echo "$tc" | jq -r '.function.name')
                 local args=$(echo "$tc" | jq -r '.function.arguments')
                 echo "Reflection: Executing $name"
+                log_tool_usage "$chat_id" "$name"
                 local output=$(run_tool "$name" "$args")
                 
                 # Append to history so the next reflection turn knows what happened

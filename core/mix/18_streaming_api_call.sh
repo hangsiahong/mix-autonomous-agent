@@ -59,6 +59,7 @@ def update_tg(text):
 
 content = ""
 tool_calls = {} # Use dict to accumulate by index
+usage = None
 last_update = time.time()
 
 try:
@@ -74,6 +75,10 @@ try:
             try:
                 data = json.loads(data_str)
             except: continue
+            
+            # Check for usage info
+            if "usage" in data:
+                usage = data["usage"]
             
             delta = data.get("choices", [{}])[0].get("delta", {})
             
@@ -106,6 +111,8 @@ update_tg(content if content else "(done)")
 tc_list = [v for k, v in sorted(tool_calls.items())]
 print(f"TC:{json.dumps(tc_list)}")
 print(f"TEXT:{content}")
+if usage:
+    print(f"USAGE:{json.dumps(usage)}")
 ' <<EOF
 $payload
 EOF

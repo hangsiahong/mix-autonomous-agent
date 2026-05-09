@@ -1,14 +1,17 @@
 #!/bin/bash
 # tools/custom_tool_manager.sh - Help agent create and register new tools
 
+_TOOLS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_ROOT_DIR="$(cd "$_TOOLS_DIR/.." && pwd)"
+
 action="${TOOL_action}" # create, list, delete
 name="${TOOL_name}"
 description="${TOOL_description}"
 code="${TOOL_code}"
 parameters_json="${TOOL_parameters_json}"
 
-TOOLS_FILE="brain/tools.json"
-CUSTOM_DIR="tools/custom"
+TOOLS_FILE="${_ROOT_DIR}/brain/tools.json"
+CUSTOM_DIR="${_ROOT_DIR}/tools/custom"
 
 mkdir -p "$CUSTOM_DIR"
 

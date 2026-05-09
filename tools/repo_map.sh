@@ -1,0 +1,8 @@
+#!/bin/bash
+# tools/repo_map.sh - Recursive file listing for context
+
+MAX_DEPTH=3
+[ -n "$TOOL_depth" ] && MAX_DEPTH="$TOOL_depth"
+
+echo "Current Project Structure (max depth $MAX_DEPTH):"
+tree -L "$MAX_DEPTH" --noreport -I "node_modules|.git|brain/state|brain/history"

@@ -111,6 +111,24 @@
     }
   },
   {
+    "name": "repo_map",
+    "description": "Get a recursive tree view of the project structure.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "depth": { "type": "integer", "description": "Max depth for recursion (default 3)" }
+      }
+    }
+  },
+  {
+    "name": "insights",
+    "description": "Show usage statistics, token consumption, and top tools used by AMA.",
+    "parameters": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
     "name": "sys_info",
     "description": "Get current system status (CPU, RAM, Disk, Time). Use this if you need to know the environment state.",
     "parameters": {
