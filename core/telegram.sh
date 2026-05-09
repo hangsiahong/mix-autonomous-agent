@@ -11,8 +11,21 @@ TG_API="https://api.telegram.org/bot${TG_TOKEN}"
 tg_send() {
     local chat_id="$1"
     local text="$2"
-    curl -s -X POST "${TG_API}/sendMessage" \
+    local resp
+    resp=$(curl -s -X POST "${TG_API}/sendMessage" \
         -d "chat_id=${chat_id}" \
+        -d "text=${text}" \
+        -d "parse_mode=Markdown")
+    echo "$resp" | jq -r '.result.message_id // empty'
+}
+
+tg_edit() {
+    local chat_id="$1"
+    local message_id="$2"
+    local text="$3"
+    curl -s -X POST "${TG_API}/editMessageText" \
+        -d "chat_id=${chat_id}" \
+        -d "message_id=${message_id}" \
         -d "text=${text}" \
         -d "parse_mode=Markdown" > /dev/null
 }
