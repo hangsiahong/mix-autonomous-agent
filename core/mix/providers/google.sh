@@ -392,7 +392,6 @@ google_call_api() {
   if [[ "$BASE_URL" == */openapi ]]; then
     (
       unset -f google_call_api
-      unset -f google_filter_history
       call_api "$sys_prompt_override"
     )
     return $?
@@ -533,7 +532,6 @@ google_call_api_stream() {
   if [[ "$BASE_URL" == */openapi ]]; then
     (
       unset -f google_call_api_stream
-      unset -f google_filter_history
       call_api_stream "$chat_id" "$message_id" "$skill" "$sys_prompt_override"
     )
     return $?
@@ -657,6 +655,16 @@ google_filter_history() {
 import json, sys
 history = json.load(sys.stdin)
 for msg in history:
+    # Ensure role "tool" has "tool_call_id" instead of "id" for standard OpenAI
+    # But some surfaces want "tool_call_id".
+    # IMPORTANT: Vertex OpenAI-compat strictly follows OpenAI spec.
+    # In OpenAI: assistant has tool_calls[i].id
+    #            tool has tool_call_id
+    
+    if msg.get("role") == "tool":
+        if "id" in msg and "tool_call_id" not in msg:
+            msg["tool_call_id"] = msg.pop("id")
+    
     if msg.get("role") == "assistant" and msg.get("tool_calls"):
         for tc in msg["tool_calls"]:
             if "extra_content" not in tc:
@@ -669,6 +677,9 @@ for msg in history:
             if not sig:
                 sig = "skip_thought_signature_validator"
             tc["extra_content"]["google"]["thought_signature"] = sig
+            # Ensure "id" exists for assistant tool_calls
+            if "id" not in tc or not tc["id"]:
+                tc["id"] = "call_" + tc["function"]["name"]
 print(json.dumps(history))
 '
 }

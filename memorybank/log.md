@@ -79,3 +79,9 @@
     - **Permission Management**: Implemented `core/access_control.sh` with sensitive tool detection and `PERMISSION_STORE`.
     - **Gemini 3 & Reasoning**: Added payload support for `thinking_level`, captured `thought` stream fields into `<think>` tags, and implemented scrubbing for clean Telegram output.
     - **Media Support Enhancement**: Updated `ama` skill prompt to inform the agent about file uploads in `uploads/`.
+- Sat May  9 03:45:41 PM +07 2026: Implemented Gemini Multimodal support and fixed bot auth/parsing issues.
+- **2026-05-09**: Vertex AI Tool & History Fix.
+    - Fixed Vertex AI tool validation (400) and history integrity for OpenAI-compat surface.
+    - Implemented robust `id` and `thought_signature` handling in `google_filter_history`.
+    - Fixed streaming tool-call reconstruction in `18_streaming_api_call.sh`.
+    - Renamed `args` to `arguments` in `google_stream.py` for parity.

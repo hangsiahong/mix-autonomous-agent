@@ -43,9 +43,14 @@ echo "--- Testing google_extra_headers_json ---"
 HEADERS=$(google_extra_headers_json)
 echo "Headers: $HEADERS"
 
-echo "--- Testing call_api ---"
-# We'll use a simple prompt
-export HISTORY='[{"role": "user", "content": "Hello, respond with one word: OK"}]'
+echo "--- Testing call_api (tool_call_id vs id) ---"
+export MODEL="gemini-3-flash-preview"
+export _GOOGLE_VERTEX_MODEL_PREFIX="google/"
+export HISTORY='[
+  {"role": "user", "content": "What time is it?"},
+  {"role": "assistant", "content": null, "tool_calls": [{"id": "call_abc", "type": "function", "function": {"name": "sys_info", "arguments": "{}"}}]},
+  {"role": "tool", "id": "call_abc", "name": "sys_info", "content": "12:00"}
+]'
 
 # Debug: Print payload
 payload=$(_api_build_payload "false")

@@ -75,10 +75,10 @@ def main():
                         # Actually it usually sends one full function call or parts of it.
                         # For now assume one function call per turn or accumulate by name.
                         if name not in tool_calls:
-                            tool_calls[name] = {"name": name, "args": ""}
+                            tool_calls[name] = {"name": name, "arguments": ""}
                         if "args" in fc:
                             # In Gemini, args is already a dict
-                            tool_calls[name]["args"] = json.dumps(fc["args"])
+                            tool_calls[name]["arguments"] = json.dumps(fc["args"])
 
                 if time.time() - last_update > 2.0:
                     update_tg(tg_token, chat_id, message_id, content if content else "...")

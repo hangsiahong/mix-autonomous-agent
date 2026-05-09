@@ -120,11 +120,15 @@ try:
                 for tc in delta["tool_calls"]:
                     idx = tc.get("index", 0)
                     if idx not in tool_calls:
-                        tool_calls[idx] = {"name": "", "args": ""}
+                        tool_calls[idx] = {"id": "", "type": "function", "function": {"name": "", "arguments": ""}}
+                    
+                    if "id" in tc:
+                        tool_calls[idx]["id"] += tc["id"]
+                    
                     if "function" in tc:
                         f = tc["function"]
-                        if "name" in f: tool_calls[idx]["name"] += f["name"]
-                        if "arguments" in f: tool_calls[idx]["args"] += f["arguments"]
+                        if "name" in f: tool_calls[idx]["function"]["name"] += f["name"]
+                        if "arguments" in f: tool_calls[idx]["function"]["arguments"] += f["arguments"]
 
             if time.time() - last_update > 2.0:
                 display_text = content if content else "..."
