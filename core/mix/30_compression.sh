@@ -38,9 +38,24 @@ Respond ONLY with the summary.
 CONVERSATION TO SUMMARIZE:
 $middle_msgs"
 
-    # Use call_api (non-streaming)
-    local summary_response=$(call_api "$summary_prompt")
-    local summary_text=$(echo "$summary_response" | jq -r '.choices[0].message.content // empty')
+    # Call API with a fresh single-user-message history (no full conversation context)
+    local saved_history="$HISTORY"
+    HISTORY=$(python3 -c "import json,sys; print(json.dumps([{'role':'user','content':sys.argv[1]}]))" "$summary_prompt" 2>/dev/null)
+    local summary_response
+    summary_response=$(call_api "You are a conversation summarizer. Respond ONLY with a concise bulleted summary. No preamble.")
+    HISTORY="$saved_history"
+    # Extract text from either OpenAI format or Gemini native format
+    local summary_text
+    summary_text=$(echo "$summary_response" | python3 -c "
+import sys, json
+try:
+    r = json.load(sys.stdin)
+    t = r.get('choices',[{}])[0].get('message',{}).get('content','')
+    if not t:
+        t = r.get('candidates',[{}])[0].get('content',{}).get('parts',[{}])[0].get('text','')
+    print(t.strip(), end='')
+except: pass
+" 2>/dev/null)
 
     if [[ -z "$summary_text" ]]; then
         echo "AMA: Compression failed (empty summary)."
@@ -67,5 +82,5 @@ $middle_msgs"
     HISTORY=$(echo "$first_part" | jq -c ". + [$summary_msg] + $last_part")
     
     echo "AMA: Context compressed successfully."
-    save_history "$chat_id"
+    save_history "$session_id"
 }

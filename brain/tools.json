@@ -1,201 +1,349 @@
 [
   {
-    "name": "list_files",
-    "description": "List files in a directory",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "directory": {
-          "type": "string"
-        }
-      }
-    }
-  },
-  {
-    "name": "read_code",
-    "description": "Read file content",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "path": {
-          "type": "string"
-        }
-      },
-      "required": ["path"]
-    }
-  },
-  {
-    "name": "edit_code",
-    "description": "Edit file with search/replace",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "path": { "type": "string" },
-        "old_text": { "type": "string" },
-        "new_text": { "type": "string" }
-      },
-      "required": ["path", "old_text", "new_text"]
-    }
-  },
-  {
-    "name": "memory_recall",
-    "description": "Search long-term memory for relevant past conversations or knowledge",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "query": { "type": "string", "description": "Search query" },
-        "limit": { "type": "integer", "description": "Number of memories to return" }
-      },
-      "required": ["query"]
-    }
-  },
-  {
-    "name": "memory_remember",
-    "description": "Save an important fact, pattern, or lesson to long-term memory",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "text": { "type": "string", "description": "The fact or insight to remember" },
-        "metadata_json": { "type": "string", "description": "Optional JSON metadata" }
-      },
-      "required": ["text"]
-    }
-  },
-  {
-    "name": "custom_tool_manager",
-    "description": "Create or manage custom tools for the agent to use",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "action": { "type": "string", "enum": ["create", "list", "delete"] },
-        "name": { "type": "string", "description": "Name of the tool (e.g., search_web)" },
-        "description": { "type": "string", "description": "What the tool does" },
-        "code": { "type": "string", "description": "Full Bash code for the tool script" },
-        "parameters_json": { "type": "object", "description": "JSON schema for the tool parameters" }
-      },
-      "required": ["action"]
-    }
-  },
-  {
-    "name": "access_control",
-    "description": "Manage bot access whitelist and home chat setting.",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "action": { "type": "string", "enum": ["whitelist", "sethome"], "description": "Action to perform" },
-        "target_id": { "type": "string", "description": "The Telegram ID (user, group, or channel) to whitelist or set as home" }
-      },
-      "required": ["action", "target_id"]
-    }
-  },
-  {
     "name": "web_search",
-    "description": "Search the web for current information.",
+    "description": "Search the web using DuckDuckGo. Returns top 10 results with titles and URLs.",
     "parameters": {
       "type": "object",
       "properties": {
-        "query": { "type": "string", "description": "The search query" }
+        "query": {
+          "type": "string",
+          "description": "The search query string."
+        }
       },
       "required": ["query"]
     }
   },
   {
     "name": "fetch_url",
-    "description": "Read the content of a specific webpage and return it as Markdown.",
+    "description": "Fetch and read the content of any URL as clean Markdown (via Jina Reader). Use for reading articles, docs, or any web page.",
     "parameters": {
       "type": "object",
       "properties": {
-        "url": { "type": "string", "description": "The full URL to fetch" }
+        "url": {
+          "type": "string",
+          "description": "The full URL to fetch."
+        }
       },
       "required": ["url"]
     }
   },
   {
-    "name": "repo_map",
-    "description": "Get a recursive tree view of the project structure.",
+    "name": "bash",
+    "description": "Run a bash command in the project directory. Use this to read files (cat), list directories (ls), search code (grep), check git status, run scripts, or any shell operation.",
     "parameters": {
       "type": "object",
       "properties": {
-        "depth": { "type": "integer", "description": "Max depth for recursion (default 3)" }
-      }
+        "command": {
+          "type": "string",
+          "description": "The bash command to run."
+        }
+      },
+      "required": ["command"]
     }
   },
   {
-    "name": "insights",
-    "description": "Show usage statistics, token consumption, and top tools used by AMA.",
+    "name": "write_file",
+    "description": "Create or overwrite a file with the given content. Use for creating new scripts, configs, or any file from scratch. Set append=true to add to an existing file.",
     "parameters": {
       "type": "object",
-      "properties": {}
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Relative path to the file to create or overwrite."
+        },
+        "content": {
+          "type": "string",
+          "description": "The full content to write to the file."
+        },
+        "append": {
+          "type": "boolean",
+          "description": "If true, append to the file instead of overwriting. Default: false."
+        }
+      },
+      "required": ["path", "content"]
     }
   },
   {
-    "name": "sys_info",
-    "description": "Get current system status (CPU, RAM, Disk, Time). Use this if you need to know the environment state.",
+    "name": "search_files",
+    "description": "Search for a text pattern across project files using grep. Returns matching lines with file paths and line numbers.",
     "parameters": {
       "type": "object",
-      "properties": {}
+      "properties": {
+        "pattern": {
+          "type": "string",
+          "description": "The text or regex pattern to search for."
+        },
+        "path": {
+          "type": "string",
+          "description": "Directory or file to search in. Defaults to project root."
+        },
+        "file_glob": {
+          "type": "string",
+          "description": "Filename glob to filter files, e.g. '*.sh' or '*.py'. Default: all files."
+        },
+        "ignore_case": {
+          "type": "boolean",
+          "description": "Case-insensitive search. Default: false."
+        }
+      },
+      "required": ["pattern"]
+    }
+  },
+  {
+    "name": "todo",
+    "description": "Manage a per-session task list. Use to plan and track multi-step work. Actions: add, list, done, delete, clear.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": ["add", "list", "done", "delete", "clear"],
+          "description": "Action to perform."
+        },
+        "session": {
+          "type": "string",
+          "description": "Session identifier for the todo list. Defaults to 'default'."
+        },
+        "text": {
+          "type": "string",
+          "description": "Task description (required for 'add')."
+        },
+        "id": {
+          "type": "string",
+          "description": "Task ID (required for 'done' and 'delete')."
+        }
+      },
+      "required": ["action"]
+    }
+  },
+  {
+    "name": "clarify",
+    "description": "Send a clarifying question to the user before taking an ambiguous or irreversible action. Stops the current turn and waits for their reply.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "question": {
+          "type": "string",
+          "description": "The question to ask the user."
+        }
+      },
+      "required": ["question"]
+    }
+  },
+  {
+    "name": "process",
+    "description": "Run shell commands in the background and manage them. Actions: run (start), list (show all), output (get logs), kill (stop).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": ["run", "list", "output", "kill"],
+          "description": "Action to perform."
+        },
+        "command": {
+          "type": "string",
+          "description": "The bash command to run in background (required for 'run')."
+        },
+        "name": {
+          "type": "string",
+          "description": "A label for the process. Used to reference it in output/kill. Auto-generated if not provided."
+        }
+      },
+      "required": ["action"]
+    }
+  },
+  {
+    "name": "session_search",
+    "description": "Search past conversation history for a keyword or phrase across all sessions or a specific one.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "The keyword or phrase to search for."
+        },
+        "session": {
+          "type": "string",
+          "description": "Specific session ID to search (e.g. 'tg_670967877'). Searches all sessions if omitted."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max number of matching snippets to return per session. Default: 20."
+        }
+      },
+      "required": ["query"]
     }
   },
   {
     "name": "image_generate",
-    "description": "Generate an image from a text description (prompt).",
+    "description": "Generate an image from a text prompt using Pollinations AI (free, no key required). Returns a URL to the generated image.",
     "parameters": {
       "type": "object",
       "properties": {
-        "prompt": { "type": "string", "description": "Visual description of the image" },
-        "width": { "type": "integer", "description": "Image width in pixels (default 1024)" },
-        "height": { "type": "integer", "description": "Image height in pixels (default 1024)" }
+        "prompt": {
+          "type": "string",
+          "description": "Description of the image to generate."
+        },
+        "width": {
+          "type": "integer",
+          "description": "Image width in pixels. Default: 1024."
+        },
+        "height": {
+          "type": "integer",
+          "description": "Image height in pixels. Default: 1024."
+        }
       },
       "required": ["prompt"]
     }
   },
   {
-    "name": "read_error_log",
-    "description": "Read the recent API errors logged by the system.",
+    "name": "edit_code",
+    "description": "Edit a file by replacing a specific block of text with new text. Validates bash syntax after edit and auto-reverts on error.",
     "parameters": {
       "type": "object",
       "properties": {
-        "limit": { "type": "integer", "description": "Number of recent errors to show (default 10)" }
-      }
+        "path": {
+          "type": "string",
+          "description": "Path to the file to edit."
+        },
+        "old_text": {
+          "type": "string",
+          "description": "The exact text to find and replace (must appear exactly once)."
+        },
+        "new_text": {
+          "type": "string",
+          "description": "The new text to replace old_text with."
+        }
+      },
+      "required": ["path", "old_text", "new_text"]
     }
   },
   {
-    "name": "check_health",
-    "description": "Check the health of the AMA system, including file existence, syntax, and recent error rates.",
+    "name": "repo_map",
+    "description": "Get a tree view of the entire project structure.",
     "parameters": {
       "type": "object",
-      "properties": {}
+      "properties": {
+        "depth": {
+          "type": "integer",
+          "description": "Max depth for the tree. Defaults to 3."
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "memory_remember",
+    "description": "Save an important fact or note to long-term memory for future recall.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "The information to remember."
+        },
+        "metadata_json": {
+          "type": "string",
+          "description": "Optional JSON metadata string, e.g. {\"topic\": \"user preferences\"}."
+        }
+      },
+      "required": ["text"]
+    }
+  },
+  {
+    "name": "memory_recall",
+    "description": "Search long-term memory for relevant information using a query.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Search query to find relevant memories."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max number of results to return. Defaults to 3."
+        }
+      },
+      "required": ["query"]
+    }
+  },
+  {
+    "name": "sys_info",
+    "description": "Get current system stats: CPU load, memory usage, disk space, uptime.",
+    "parameters": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    }
+  },
+  {
+    "name": "read_error_log",
+    "description": "Read recent errors from the agent error log to diagnose issues.",
+    "parameters": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    }
+  },
+  {
+    "name": "custom_tool_manager",
+    "description": "Create, list, or delete custom tools. Use 'create' to build new automation scripts.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": ["create", "list", "delete"],
+          "description": "Action to perform."
+        },
+        "name": {
+          "type": "string",
+          "description": "Tool name (used as filename, no spaces)."
+        },
+        "description": {
+          "type": "string",
+          "description": "What the tool does."
+        },
+        "code": {
+          "type": "string",
+          "description": "The bash script code for the tool."
+        },
+        "parameters_json": {
+          "type": "string",
+          "description": "JSON schema of the tool's parameters."
+        }
+      },
+      "required": ["action"]
+    }
+  },
+  {
+    "name": "skill_manager",
+    "description": "Manage agent skills (list, activate, deactivate).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "description": "Action: list, activate, or deactivate."
+        },
+        "skill": {
+          "type": "string",
+          "description": "Skill name."
+        }
+      },
+      "required": ["action"]
+    }
+  },
+  {
+    "name": "insights",
+    "description": "Show token usage statistics and tool usage frequency.",
+    "parameters": {
+      "type": "object",
+      "properties": {},
+      "required": []
     }
   }
-    ,{
-        "name": "skill_manager",
-        "description": "Bind, unbind or list skills for specific Telegram forum topics. Skills can inject specialized prompts or tools.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["bind", "unbind", "list"],
-                    "description": "Action to perform."
-                },
-                "chat_id": {
-                    "type": "string",
-                    "description": "The Telegram chat ID."
-                },
-                "thread_id": {
-                    "type": "string",
-                    "description": "The Telegram message_thread_id (Topic ID)."
-                },
-                "skill": {
-                    "type": "string",
-                    "description": "The name of the skill to bind (e.g., 'coder', 'researcher')."
-                },
-                "name": {
-                    "type": "string",
-                    "description": "Friendly name for the topic."
-                }
-            },
-            "required": ["action"]
-        }
-    }
 ]
+

@@ -18,9 +18,9 @@ tg_extract_media() {
             local b64=$(base64 -w 0 < "$tmp_file")
             local mime="image/jpeg"
             rm -f "$tmp_file"
-            
-            media_json=$(jq -n --arg b64 "$b64" --arg mime "$mime" \
-                '[{type: "image_url", image_url: {url: "data:\($mime);base64,\($b64)"}}]')
+
+            media_json=$(B64DATA="$b64" MIME="$mime" jq -n \
+                '[{type: "image_url", image_url: {url: ("data:" + env.MIME + ";base64," + env.B64DATA)}}]')
         fi
     fi
 
@@ -35,9 +35,9 @@ tg_extract_media() {
             tg_download "$file_path" "$tmp_file"
             local b64=$(base64 -w 0 < "$tmp_file")
             rm -f "$tmp_file"
-            
-            media_json=$(jq -n --arg b64 "$b64" --arg mime "$doc_mime" \
-                '[{type: "image_url", image_url: {url: "data:\($mime);base64,\($b64)"}}]')
+
+            media_json=$(B64DATA="$b64" MIME="$doc_mime" jq -n \
+                '[{type: "image_url", image_url: {url: ("data:" + env.MIME + ";base64," + env.B64DATA)}}]')
         fi
     fi
     

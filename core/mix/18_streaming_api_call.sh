@@ -61,17 +61,44 @@ headers.update(extra_headers)
 
 tg_url = f"https://api.telegram.org/bot{tg_token}/editMessageText"
 
+def md_to_html(text):
+    result = []
+    parts = re.split(r'(```[\w]*\n?[\s\S]*?```|`[^`\n]+`)', text)
+    for i, part in enumerate(parts):
+        if i % 2 == 1:
+            if part.startswith('```'):
+                code = re.sub(r'^```\w*\n?', '', part)
+                code = re.sub(r'\n?```$', '', code)
+                code = code.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+                result.append(f'<pre><code>{code}</code></pre>')
+            else:
+                code = part[1:-1]
+                code = code.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+                result.append(f'<code>{code}</code>')
+        else:
+            p = part.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+            p = re.sub(r'^#{1,6} +(.+)$', r'<b>\1</b>', p, flags=re.MULTILINE)
+            p = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', p, flags=re.DOTALL)
+            p = re.sub(r'__(.+?)__', r'<b>\1</b>', p, flags=re.DOTALL)
+            p = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\s)\*(?!\*)', r'<i>\1</i>', p)
+            p = re.sub(r'_([^_\n]+?)_', r'<i>\1</i>', p)
+            p = re.sub(r'~~(.+?)~~', r'<s>\1</s>', p)
+            p = re.sub(r'\[([^\]]+)\]\((https?://[^)]+)\)', r'<a href="\2">\1</a>', p)
+            result.append(p)
+    return ''.join(result)
+
 def update_tg(text):
     if not text: return
     # Scrub thinking blocks from Telegram output
     clean_text = re.sub(r"<(think|thinking|reasoning|thought)>.*?(</\1>|$)", "", text, flags=re.DOTALL | re.IGNORECASE)
     if not clean_text.strip(): return
+    html = md_to_html(clean_text.strip())
     try:
         requests.post(tg_url, json={
             "chat_id": chat_id,
             "message_id": message_id,
-            "text": clean_text.strip(),
-            "parse_mode": "Markdown"
+            "text": html,
+            "parse_mode": "HTML"
         }, timeout=5)
     except: pass
 

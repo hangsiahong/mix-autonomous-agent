@@ -1,6 +1,17 @@
 # Config
 WORKDIR="$(pwd)"
+# Save values explicitly passed in the environment (before .env can override them)
+_env_PROVIDER="${PROVIDER:-}"
+_env_MODEL="${MODEL:-}"
+_env_BASE_URL="${BASE_URL:-}"
+_env_API_KEY="${API_KEY:-}"
 [ -f .env ] && source .env
+# Restore explicitly-set env vars so they win over .env defaults
+[ -n "$_env_PROVIDER" ] && PROVIDER="$_env_PROVIDER"
+[ -n "$_env_MODEL" ]    && MODEL="$_env_MODEL"
+[ -n "$_env_BASE_URL" ] && BASE_URL="$_env_BASE_URL"
+[ -n "$_env_API_KEY" ]  && API_KEY="$_env_API_KEY"
+unset _env_PROVIDER _env_MODEL _env_BASE_URL _env_API_KEY
 
 # API Config
 PROVIDER="${PROVIDER:-default}"
@@ -8,7 +19,7 @@ MODEL="${MODEL:-${LLM_MODEL:-gemini-2.0-flash-exp}}"
 FALLBACK_MODEL="gemini-1.5-flash"
 # BASE_URL is handled by providers or default
 BASE_URL="${BASE_URL:-https://generativelanguage.googleapis.com/v1beta}"
-API_KEY="${GEMINI_KEY:-${API_KEY:-}}"
+API_KEY="${GEMINI_KEY:-${GOOGLE_VERTEX_KEY:-${API_KEY:-}}}"
 
 # Agent Config
 MAX_TURNS=30

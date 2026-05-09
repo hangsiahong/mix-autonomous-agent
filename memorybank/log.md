@@ -1,5 +1,22 @@
 # Log
 
+- **2026-05-09**: Toolset Expansion (12 → 19 tools) & UX Overhaul.
+    - **Replaced** `list_files` + `read_code` with unified `bash` tool (safety-guarded, ARG_MAX safe).
+    - **Added** 6 new tools: `write_file`, `search_files`, `todo`, `clarify`, `process`, `session_search`.
+    - **Registered** `image_generate` (was on disk but not exposed to LLM).
+    - **Exported** `TOOL_CHAT_ID`/`TOOL_THREAD_ID` in tool dispatch layer so tools can send Telegram messages.
+    - **OpenClaw-style single-draft message**: Agent loop now creates ONE Telegram message per user turn and edits it progressively — no more per-tool-call message spam.
+    - **Deduped tool footer**: Final response shows `🔧 N tool calls: tool_a ×3, tool_b ×1` instead of flat repeated list.
+    - **HTML formatting** (OpenClaw-style): All Telegram output now uses `parse_mode: HTML`. Added `md_to_tg_html()` in `formatter.sh` and inline streaming converter. Supports bold, italic, code blocks, links, headings, strikethrough.
+    - **Per-tool call cap**: Max 3 calls per tool per turn; hard stop with clear error message to LLM.
+    - **System prompt anti-loop rule**: "If tool returns empty, do not retry — answer from what you have."
+    - **Startup message drain**: Bot now discards stale Telegram updates on startup to prevent replaying old commands.
+    - **Improved `/stop`**: Kills whole process group (not just subshell), reliably terminates.
+    - **Fixed `set -x`**: Removed debug trace that was flooding stdout.
+    - **Fixed media ARG_MAX bug**: `jq --arg b64 "$b64"` with large images exceeded kernel ARG_MAX. Now uses `B64DATA=... jq -n 'env.B64DATA'`.
+    - **Fixed compression**: Compression was always failing because it parsed OpenAI format from Gemini native response. Now handles both formats. Also fixed HISTORY context pollution — compression now sets a clean single-message HISTORY for the summary call.
+    - **Fixed `grep -c` arithmetic error**: `name_count` was getting `"0\n0"` due to `|| echo 0` on exit code 1. Fixed with `|| name_count=0` assignment pattern.
+
 - **2023-10-27**: Initialization.
     - Defined AMA core structure.
     - Integrated Mix modular engine (History, API, Providers).

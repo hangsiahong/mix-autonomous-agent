@@ -10,7 +10,8 @@ check_rate_limit() {
     [ ! -f "$RL_STATE_FILE" ] && return 0
     
     local key="${provider}_${model}"
-    local backoff_until=$(jq -r --arg k "$key" '.[$k] // 0' "$RL_STATE_FILE")
+    local backoff_until=$(jq -r --arg k "$key" '.[$k] // 0' "$RL_STATE_FILE" 2>/dev/null)
+    backoff_until=$(( ${backoff_until:-0} + 0 ))  # coerce to int
     local now=$(date +%s)
     
     if [ "$now" -lt "$backoff_until" ]; then

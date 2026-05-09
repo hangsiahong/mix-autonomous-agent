@@ -28,23 +28,16 @@ _GOOGLE_THINKING_LEVEL=""  # empty = model default (high/dynamic for Gemini 3)
 # Known models (hardcoded — stable, small list)
 # Gemini 3.x models only available on Vertex AI via location=global
 _GOOGLE_MODELS=(
-  "gemini-3.1-pro-preview"
-  "gemini-3.1-flash-lite-preview"
-  "gemini-3.1-flash-image-preview"
-  "gemini-3-flash-preview"
-  "gemini-3-pro-preview"
-  "gemini-3-pro-image-preview"
   "gemini-2.5-pro"
-  "gemini-2.5-flash"
-  "gemini-2.5-flash-lite"
-  "gemini-2.0-flash"
-  "gemini-2.0-flash-lite"
+  "gemini-2.0-flash-exp"
+  "gemini-2.0-flash-thinking-exp"
   "gemini-1.5-pro"
   "gemini-1.5-flash"
+  "gemini-3-flash-preview"
 )
 
-# Models that require location=global on Vertex AI (Preview)
-_GOOGLE_GLOBAL_MODELS_RE='gemini-3'
+# Regex to detect global-only preview models
+_GOOGLE_GLOBAL_MODELS_RE='gemini-3|gemini-exp'
 
 # ─── Activate: read config, set BASE_URL + auth ────────────────────────────
 google_activate() {
@@ -427,17 +420,25 @@ google_call_api() {
 
   local tools_json=$(cat brain/tools.json)
 
+  local _extra_payload="{}"
+  if type google_extra_payload_json >/dev/null 2>&1; then
+      _extra_payload=$(google_extra_payload_json)
+  fi
+
   # Conversion script for History (OpenAI -> Gemini Native)
   # This script handles multi-modal array content and tool calls.
   local payload
   payload=$(SYSTEM_PROMPT="$system_prompt" \
-            HISTORY_JSON="$HISTORY" \
-            TOOLS_JSON="$tools_json" \
+            HISTORY_JSON="${HISTORY:-[]}" \
+            TOOLS_JSON="${tools_json:-[]}" \
+            EXTRA_PAYLOAD="$_extra_payload" \
             python3 -c '
 import json, os
 s = os.environ.get("SYSTEM_PROMPT", "")
-h = json.loads(os.environ.get("HISTORY_JSON", "[]"))
-t = json.loads(os.environ.get("TOOLS_JSON", "[]"))
+try: h = json.loads(os.environ.get("HISTORY_JSON") or "[]")
+except: h = []
+try: t = json.loads(os.environ.get("TOOLS_JSON") or "[]")
+except: t = []
 
 contents = []
 for msg in h:
@@ -497,6 +498,13 @@ for msg in h:
                 "parameters": f.get("parameters", {"type": "object", "properties": {}})
             })
         body["tools"] = [{"function_declarations": decls}]
+
+    try:
+        ex = json.loads(os.environ.get("EXTRA_PAYLOAD", "{}"))
+        if ex:
+            if "thinking_level" not in ex:
+                body.update(ex)
+    except: pass
 
     print(json.dumps(body))
 ')
@@ -563,18 +571,28 @@ google_call_api_stream() {
   fi
   local tools_json=$(cat brain/tools.json)
 
+  local _extra_payload="{}"
+  if type google_extra_payload_json >/dev/null 2>&1; then
+      _extra_payload=$(google_extra_payload_json)
+  fi
+
   # ... payload building is inside the python script in google_call_api ...
   # I will extract it to a shared function or just duplicate for now (caveman style).
 
   local payload
   payload=$(SYSTEM_PROMPT="$system_prompt" \
-            HISTORY_JSON="$HISTORY" \
-            TOOLS_JSON="$tools_json" \
+            HISTORY_JSON="${HISTORY:-[]}" \
+            TOOLS_JSON="${tools_json:-[]}" \
+            EXTRA_PAYLOAD="$_extra_payload" \
             python3 -c '
-import json, os
+import sys, json, os
+# h_raw = os.environ.get("HISTORY_JSON")
+# sys.stderr.write(f"DEBUG HISTORY_RAW: {h_raw}\n")
 s = os.environ.get("SYSTEM_PROMPT", "")
-h = json.loads(os.environ.get("HISTORY_JSON", "[]"))
-t = json.loads(os.environ.get("TOOLS_JSON", "[]"))
+try: h = json.loads(os.environ.get("HISTORY_JSON") or "[]")
+except: h = []
+try: t = json.loads(os.environ.get("TOOLS_JSON") or "[]")
+except: t = []
 contents = []
 for msg in h:
     role = "user" if msg["role"] == "user" else "model"
@@ -612,6 +630,19 @@ if t:
             "parameters": f.get("parameters", {"type": "object", "properties": {}})
         })
     body["tools"] = [{"function_declarations": decls}]
+
+try:
+    ex = json.loads(os.environ.get("EXTRA_PAYLOAD", "{}"))
+    if ex:
+        if "generationConfig" not in body:
+            body["generationConfig"] = {}
+        if "thinking_level" not in ex:
+            body.update(ex)
+except: pass
+
+import sys
+# DEBUG
+# sys.stderr.write(f"DEBUG PAYLOAD: {json.dumps(body)}\n")
 print(json.dumps(body))
 ')
 
@@ -660,13 +691,13 @@ for msg in history:
     # IMPORTANT: Vertex OpenAI-compat strictly follows OpenAI spec.
     # In OpenAI: assistant has tool_calls[i].id
     #            tool has tool_call_id
-    
+
     if msg.get("role") == "tool":
         if "id" in msg and "tool_call_id" not in msg:
             msg["tool_call_id"] = msg.pop("id")
         if not msg.get("tool_call_id"):
             msg["tool_call_id"] = "call_" + msg.get("name", "tool")
-    
+
     if msg.get("role") == "assistant" and msg.get("tool_calls"):
         for tc in msg["tool_calls"]:
             if "extra_content" not in tc:
@@ -684,7 +715,7 @@ for msg in history:
                 tc["id"] = "call_" + tc.get("function", {}).get("name", tc.get("name", "tool"))
             if "type" not in tc or not tc["type"]:
                 tc["type"] = "function"
-            
+
             # Ensure "function" exists if using raw name/args from Gemini output
             if "function" not in tc and "name" in tc:
                 args_val = tc.get("args", "{}")

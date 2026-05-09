@@ -30,6 +30,9 @@ run_tool() {
     
     # Export args as TOOL_ vars
     eval $(echo "$args" | jq -r 'to_entries | .[] | "export TOOL_\(.key)=\( .value | @sh )"')
+    # Export context so tools like clarify can send Telegram messages
+    export TOOL_CHAT_ID="$chat_id"
+    export TOOL_THREAD_ID="$thread_id"
     
     local output
     output=$(bash "$script" 2>&1)
@@ -37,6 +40,7 @@ run_tool() {
     
     # Unset
     eval $(echo "$args" | jq -r 'to_entries | .[] | "unset TOOL_\(.key)"')
+    unset TOOL_CHAT_ID TOOL_THREAD_ID
     
     echo "$output"
 }

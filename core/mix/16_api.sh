@@ -80,10 +80,19 @@ print(content.replace("$(pwd)", os.environ["PWD_VAL"]))
   python3 -c '
 import json, os, sys
 s = os.environ.get("SYSTEM_PROMPT", "")
-t = json.loads(os.environ.get("TOOLS", "[]"))
-h = json.loads(os.environ.get("HISTORY_JSON", "[]"))
+try:
+    t = json.loads(os.environ.get("TOOLS") or "[]")
+except:
+    t = []
+try:
+    h = json.loads(os.environ.get("HISTORY_JSON") or "[]")
+except:
+    h = []
 m = os.environ.get("MODEL_NAME", "")
-ex = json.loads(os.environ.get("EXTRA_PAYLOAD", "{}"))
+try:
+    ex = json.loads(os.environ.get("EXTRA_PAYLOAD") or "{}")
+except:
+    ex = {}
 stream = os.environ.get("STREAM_MODE", "false").lower() == "true"
 
 msg = [{"role": "system", "content": s}] + h

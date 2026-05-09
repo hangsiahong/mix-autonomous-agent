@@ -58,7 +58,7 @@ tg_handle_update() {
                 tg_send "$chat_id" "AMA (Autonomous Mix Agent) ready. Use /help for commands." "$thread_id"
                 ;;
             /help)
-                tg_send "$chat_id" "Commands: /start, /help, /reset, /status, /sethome, /whitelist <id>" "$thread_id"
+                tg_send "$chat_id" "Commands: /start, /help, /reset, /status, /sethome, /whitelist <id>, /stop" "$thread_id"
                 ;;
             /whitelist)
                 local target_id=$(echo "$args" | awk '{print $1}')
@@ -93,6 +93,22 @@ tg_handle_update() {
             /insights)
                 local report=$(bash tools/insights.sh)
                 tg_send "$chat_id" "$report" "$thread_id"
+                ;;
+            /stop)
+                if [[ "$user_id" == "${TG_ADMIN}" ]]; then
+                    tg_send "$chat_id" "Shutting down. Goodbye." "$thread_id"
+                    local _bot_pid
+                    _bot_pid=$(cat "${DIR}/brain/state/bot.pid" 2>/dev/null)
+                    rm -f "${DIR}/brain/state/bot.pid"
+                    # Kill the whole process group so running agents are also stopped
+                    if [[ -n "$_bot_pid" ]]; then
+                        kill -TERM "-$_bot_pid" 2>/dev/null || kill -TERM "$_bot_pid" 2>/dev/null
+                    fi
+                    kill -TERM "$$" 2>/dev/null
+                    exit 0
+                else
+                    tg_send "$chat_id" "Admin only." "$thread_id"
+                fi
                 ;;
             /login)
                 if [[ "${PROVIDER}" == "copilot" ]]; then

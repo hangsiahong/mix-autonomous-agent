@@ -23,8 +23,16 @@ This document tracks unique features implemented in AMA to prevent duplication a
 ## 🛡 Stability & Safety
 - **Subdirectory Context Discovery**: `read_code` and `list_files` automatically inject `README.md` or `HINTS.md` from the target directory up to 3 levels deep.
 - **Self-Healing Edit**: `tools/edit_code.sh` automatically validates Bash syntax (`bash -n`) after every edit. If the edit breaks the script, it reverts to a backup and reports the error, preventing the agent from "bricking" itself.
-- **Smart History Compaction**: `core/mix/30_compression.sh` summarizes middle turns to save context while preserving head/tail.
-- **Tool Loop Guardrails**: `core/mix/22_process_one_tool_call.sh` detects and blocks identical tool calls within a single turn.
+- **Smart History Compaction**: `core/mix/30_compression.sh` summarizes middle turns to save context while preserving head/tail. Handles OpenAI + Gemini native response formats.
+- **Tool Loop Guardrails**: `core/mix/22_process_one_tool_call.sh` detects identical tool calls AND caps same tool at 3 calls/turn with a hard stop message to the LLM.
+- **ARG_MAX-safe media handling**: Image base64 passed via env var to `jq` (`B64DATA=... jq -n 'env.B64DATA'`) — avoids kernel argument size limit.
 - **Usage Insights**: `tools/insights.sh` tracks tokens and tool usage frequency.
 - **Repo Mapping**: `tools/repo_map.sh` provides a recursive tree view of the project structure.
 - **ID Injection**: Every user turn is injected with `chat_id` and `user_id` context for reliable access control.
+
+## 💬 Telegram UX (OpenClaw-style)
+- **Single-draft message flow**: One Telegram message per user turn, continuously edited — no spam of per-tool status messages.
+- **HTML formatting**: All output uses `parse_mode: HTML` with `md_to_tg_html()` in `formatter.sh`. Live streaming also converts to HTML. Supports `<b>`, `<i>`, `<code>`, `<pre><code>`, `<s>`, `<a href>`.
+- **Deduped tool footer**: Response ends with `🔧 N tool calls: tool_a ×3, tool_b ×1`.
+- **Startup drain**: Stale Telegram updates are discarded on bot startup — prevents replaying buffered commands.
+- **Reliable `/stop`**: Kills process group via PID file, not just current subshell.

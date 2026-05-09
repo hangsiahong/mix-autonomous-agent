@@ -7,8 +7,14 @@ reflect_turn() {
     local session_id="$3"
     
     # Only reflect if the user isn't just saying 'hi'
-    local last_user_msg=$(echo "$HISTORY" | jq -r 'map(select(.role == "user")) | last | .content')
-    if [[ ${#last_user_msg} -lt 10 ]]; then
+    local last_user_msg
+    last_user_msg=$(echo "$HISTORY" | jq -r 'map(select(.role == "user")) | last | if .content | type == "array" then .content | map(.text // "") | join(" ") else .content // "" end')
+    if [[ ${#last_user_msg} -lt 20 ]]; then
+        return
+    fi
+
+    # Skip reflection for local/offline models — too slow for background calls
+    if [[ "$PROVIDER" == "ollama" ]]; then
         return
     fi
 
