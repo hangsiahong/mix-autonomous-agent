@@ -8,6 +8,9 @@ if [[ ! -f "$path" ]]; then
     exit 1
 fi
 
+# Create backup for self-healing
+cp "$path" "${path}.bak"
+
 python3 -c "
 import sys
 path = sys.argv[1]
@@ -22,3 +25,16 @@ new_content = content.replace(old, new)
 with open(path, 'w') as f:
     f.write(new_content)
 " "$path" "$old_text" "$new_text"
+
+# Self-Healing/Validation
+if [[ "$path" == *.sh ]]; then
+    if ! bash -n "$path" 2>/tmp/bash_err; then
+        # Revert change
+        mv "${path}.bak" "$path" 2>/dev/null
+        echo "Error: Syntax error in bash script. Edit rejected."
+        cat /tmp/bash_err
+        exit 1
+    fi
+fi
+
+echo "File $path updated successfully."
