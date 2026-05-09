@@ -1,0 +1,51 @@
+[
+  {
+    "name": "list_files",
+    "description": "List files in a directory",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "directory": {
+          "type": "string",
+          "description": "The directory to list (default: .)"
+        }
+      }
+    }
+  },
+  {
+    "name": "read_code",
+    "description": "Read the content of a file",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "The path to the file"
+        }
+      },
+      "required": ["path"]
+    }
+  },
+  {
+    "name": "edit_code",
+    "description": "Edit a file using search and replace",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "The path to the file"
+        },
+        "old_text": {
+          "type": "string",
+          "description": "The exact text to find"
+        },
+        "new_text": {
+          "type": "string",
+          "description": "The replacement text"
+        }
+      },
+      "required": ["path", "old_text", "new_text"]
+    }
+  }
+]
