@@ -20,10 +20,20 @@ if [[ -f "${DIR}/brain/state/error_log.jsonl" ]]; then
     fi
 fi
 
-# 2. Cleanup old trajectories (keep last 1000)
-if [[ -f "${DIR}/brain/state/trajectories.jsonl" ]]; then
-    tail -n 1000 "${DIR}/brain/state/trajectories.jsonl" > "${DIR}/brain/state/trajectories.tmp"
-    mv "${DIR}/brain/state/trajectories.tmp" "${DIR}/brain/state/trajectories.jsonl"
-fi
+# 2. Cleanup log files (keep last N lines)
+for logfile in "${DIR}/brain/state/trajectories.jsonl" \
+               "${DIR}/brain/state/tool_usage.jsonl" \
+               "${DIR}/brain/state/usage_log.jsonl" \
+               "${DIR}/brain/state/error_log.jsonl"; do
+    if [[ -f "$logfile" ]]; then
+        local_keep=500
+        [[ "$logfile" == *tool_usage* || "$logfile" == *error_log* ]] && local_keep=200
+        line_count=$(wc -l < "$logfile")
+        if [[ $line_count -gt $((local_keep + 100)) ]]; then
+            tail -n "$local_keep" "$logfile" > "${logfile}.tmp" && mv "${logfile}.tmp" "$logfile"
+            echo "[$(date)] Trimmed $logfile to $local_keep lines"
+        fi
+    fi
+done
 
 echo "[$(date)] Maintenance complete."
