@@ -13,12 +13,14 @@ Build a self-improving, autonomous agent in Bash that communicates via Telegram.
 ## §I Interfaces
 - `bot.sh`: Main entry point, Telegram polling.
 - `core/mix/`: Modular engine (History, API, Execution, Loop).
+- `core/mix/providers/`: Pluggable API backends (Google, Copilot, etc.).
 - `core/telegram.sh`: Bot API wrapper.
 - `tools/`: Bash tools.
 - `brain/`: System prompt, tool definitions, and conversation state.
 
 ## §V Invariants
 - Modular Bash structure inspired by Mix Coding Agent.
+- Multi-provider support (Pluggable logic).
 - Streaming responses to Telegram via message editing (OpenClaw style).
 - Self-modification capability.
 
