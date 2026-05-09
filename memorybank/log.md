@@ -15,3 +15,8 @@
     - Added \`core/ui.sh\` for pluggable Terminal/Telegram output.
     - Implemented \`extensions/\` system for conflict-free self-modification.
     - Updated \`copilot_login\` for Telegram interaction.
+- **2023-10-27**: Memory & Identity Implementation.
+    - Integrated LanceDB for long-term vector memory.
+    - Created \`AGENT.md\` and \`SOUL.md\` to define identity and cognitive patterns.
+    - Implemented automatic history archiving during compaction.
+    - Added \`memory_recall\` and \`memory_remember\` tools.
