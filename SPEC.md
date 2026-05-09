@@ -32,6 +32,9 @@ Build a self-improving, autonomous agent in Bash that communicates via Telegram.
 - [x] Implement `tools/edit_code.sh` (Self-modification tool).
 - [x] Implement `tools/read_code.sh`.
 - [x] Implement `bot.sh` entry point.
+- [x] Implement **Reflection Core** for proactive self-awareness.
+- [x] Implement **Skill Manager** (`custom_tool_manager`) for autonomous tool creation.
+- [x] Integrate **LanceDB** for persistent episodic/semantic memory.
 
 ## §B Bugs
 - N/A

@@ -45,4 +45,7 @@ run_agent() {
     done
     
     save_history "$chat_id"
+    
+    # Run self-reflection in the background
+    reflect_turn "$chat_id"
 }

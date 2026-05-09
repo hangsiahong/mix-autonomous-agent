@@ -60,5 +60,20 @@
       },
       "required": ["text"]
     }
+  },
+  {
+    "name": "custom_tool_manager",
+    "description": "Create or manage custom tools for the agent to use",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["create", "list", "delete"] },
+        "name": { "type": "string", "description": "Name of the tool (e.g., search_web)" },
+        "description": { "type": "string", "description": "What the tool does" },
+        "code": { "type": "string", "description": "Full Bash code for the tool script" },
+        "parameters_json": { "type": "object", "description": "JSON schema for the tool parameters" }
+      },
+      "required": ["action"]
+    }
   }
 ]

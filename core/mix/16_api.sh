@@ -1,10 +1,17 @@
 # API helper
 _api_build_payload() {
   local stream="${1:-false}"
+  local sys_prompt_override="$2"
   local _model="$MODEL"
   [ -n "${_GOOGLE_VERTEX_MODEL_PREFIX:-}" ] && _model="${_GOOGLE_VERTEX_MODEL_PREFIX}${MODEL}"
   
-  local system_prompt=$(cat brain/system_prompt.txt)
+  local system_prompt
+  if [[ -n "$sys_prompt_override" ]]; then
+    system_prompt="$sys_prompt_override"
+  else
+    system_prompt=$(cat brain/system_prompt.txt)
+  fi
+  
   local tools=$(cat brain/tools.json)
   
   local _hist_for_api
@@ -41,8 +48,9 @@ print(json.dumps(body))
 }
 
 call_api() {
+  local sys_prompt_override="$1"
   local payload
-  payload=$(_api_build_payload "false") || { echo "FAIL:payload"; return 1; }
+  payload=$(_api_build_payload "false" "$sys_prompt_override") || { echo "FAIL:payload"; return 1; }
 
   local _api_key="$API_KEY"
   if [ "$PROVIDER" != "default" ] && type "${PROVIDER}_get_api_key" >/dev/null 2>&1; then
