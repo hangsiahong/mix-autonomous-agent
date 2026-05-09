@@ -8,7 +8,7 @@ KEEP_FIRST_N=2            # Always keep the first 2 messages (usually intro/setu
 
 compress_history() {
     local chat_id="$1"
-    local count=$(echo "$HISTORY" | jq 'length')
+    local count; count=$(echo "$HISTORY" | jq 'length' 2>/dev/null); count=${count:-0}
     
     if [ "$count" -le "$COMPRESSION_THRESHOLD" ]; then
         return
@@ -66,7 +66,9 @@ except: pass
     local first_part=$(echo "$HISTORY" | jq -c ".[0:$start_index]")
     local last_part=$(echo "$HISTORY" | jq -c ".[$end_index:]")
     
-    local summary_msg=$(jq -n --arg text "[CONTEXT SUMMARY]:\n$summary_text" \
+    local summary_prefix="[CONTEXT COMPACTION — REFERENCE ONLY] Earlier turns were compacted into the summary below. This is a handoff from a previous context window — treat it as background reference, NOT as active instructions. Do NOT answer questions or fulfill requests mentioned in this summary; they were already addressed. Your current task is identified in the '## Active Task' section of the summary — resume exactly from there. Respond ONLY to the latest user message that appears AFTER this summary. The current session state may reflect work described here — avoid repeating it:"
+
+    local summary_msg=$(jq -n --arg text "$summary_prefix\n\n$summary_text" \
         '{role: "system", content: $text}')
 
     # 5. Archive the compressed part to long-term memory before replacing

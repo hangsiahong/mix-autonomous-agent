@@ -1,3 +1,39 @@
+# Prompt injection scanner — blocks obvious attacks in context files before injection
+_scan_for_injection() {
+    local content="$1"
+    local source="${2:-unknown}"
+    local verdict
+    verdict=$(printf '%s' "$content" | python3 -c "
+import sys, re
+text = sys.stdin.read()
+
+INVISIBLE = {'\u200b','\u200c','\u200d','\u2060','\ufeff','\u202a','\u202b','\u202c','\u202d','\u202e'}
+BAD_PATTERNS = [
+    (r'ignore\\s+(previous|all|above|prior)\\s+instructions', 'prompt_injection'),
+    (r'system\\s+prompt\\s+override', 'sys_prompt_override'),
+    (r'disregard\\s+(your|all|any)\\s+(instructions|rules|guidelines)', 'disregard_rules'),
+    (r'do\\s+not\\s+tell\\s+the\\s+user', 'deception_hide'),
+    (r'curl\\s+[^\\n]*\\\\\$\\{?\\w*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|API)', 'exfil_curl'),
+    (r'cat\\s+[^\\n]*(\\.env|credentials|\\.netrc|\\.pgpass)', 'read_secrets'),
+    (r'<!--[^>]*(?:ignore|override|system|secret|hidden)[^>]*-->', 'html_comment_injection'),
+]
+found = []
+for c in text:
+    if c in INVISIBLE:
+        found.append('invisible_unicode_U' + format(ord(c), '04X'))
+        break
+for pat, pid in BAD_PATTERNS:
+    if re.search(pat, text, re.IGNORECASE):
+        found.append(pid)
+print('BLOCKED:' + ','.join(found) if found else 'OK')
+" 2>/dev/null || echo 'OK')
+    if [[ "$verdict" == BLOCKED:* ]]; then
+        echo "AMA: [SECURITY] Injection pattern detected in '$source': ${verdict#BLOCKED:}. Content blocked." >&2
+        return 1
+    fi
+    return 0
+}
+
 # API helper
 _api_build_payload() {
   local stream="${1:-false}"
@@ -11,6 +47,24 @@ _api_build_payload() {
     system_prompt="$sys_prompt_override"
   else
     system_prompt=$(cat brain/system_prompt.txt)
+    _scan_for_injection "$system_prompt" "brain/system_prompt.txt" || system_prompt="[System prompt blocked due to injection pattern detected]"
+
+    # Inject curated memory snapshot (frozen at session start — stable prefix cache)
+    local _mem_block=""
+    local _ENTRY_DELIM=$'\n§\n'
+    if [[ -f "brain/state/MEMORY.md" && -s "brain/state/MEMORY.md" ]]; then
+        local _mem_raw
+        _mem_raw=$(cat "brain/state/MEMORY.md")
+        _mem_block="${_mem_block}## My Notes (MEMORY.md)\n${_mem_raw}\n"
+    fi
+    if [[ -f "brain/state/USER.md" && -s "brain/state/USER.md" ]]; then
+        local _user_raw
+        _user_raw=$(cat "brain/state/USER.md")
+        _mem_block="${_mem_block}## About the User (USER.md)\n${_user_raw}\n"
+    fi
+    if [[ -n "$_mem_block" ]]; then
+        system_prompt="[System note: The following is your persistent memory — NOT new user input. Treat as authoritative reference. Do not re-execute tasks described here; they were completed in prior sessions.]\n\n${_mem_block}\n---\n\n${system_prompt}"
+    fi
   fi
 
   local tools=$(cat brain/tools.json)
@@ -70,24 +124,32 @@ print(content.replace("$(pwd)", os.environ["PWD_VAL"]))
     _extra_payload=$(${PROVIDER}_extra_payload_json 2>/dev/null) || _extra_payload="{}"
   fi
 
-  # Use environment variables to pass data to python safely
-  SYSTEM_PROMPT="$system_prompt" \
+  # Write large blobs to tempfiles to avoid ARG_MAX / env-size limits.
+  # HISTORY_JSON can be megabytes when it contains embedded base64 images.
+  local _hist_file _sys_file
+  _hist_file=$(mktemp)
+  _sys_file=$(mktemp)
+  printf '%s' "$_hist_for_api" > "$_hist_file"
+  printf '%s' "$system_prompt" > "$_sys_file"
+
   TOOLS="$tools" \
-  HISTORY_JSON="$_hist_for_api" \
+  HIST_FILE="$_hist_file" \
+  SYS_FILE="$_sys_file" \
   MODEL_NAME="$_model" \
   EXTRA_PAYLOAD="$_extra_payload" \
   STREAM_MODE="$stream" \
   python3 -c '
 import json, os, sys
-s = os.environ.get("SYSTEM_PROMPT", "")
+s = open(os.environ["SYS_FILE"]).read()
+try:
+    h = json.load(open(os.environ["HIST_FILE"]))
+except Exception as e:
+    sys.stderr.write(f"Bad HISTORY JSON: {e}\n")
+    h = []
 try:
     t = json.loads(os.environ.get("TOOLS") or "[]")
 except:
     t = []
-try:
-    h = json.loads(os.environ.get("HISTORY_JSON") or "[]")
-except:
-    h = []
 m = os.environ.get("MODEL_NAME", "")
 try:
     ex = json.loads(os.environ.get("EXTRA_PAYLOAD") or "{}")
@@ -111,7 +173,10 @@ if stream:
     body["stream_options"] = {"include_usage": True}
 body.update(ex)
 print(json.dumps(body))
-' 2>/dev/null
+'
+  local _py_status=$?
+  rm -f "$_hist_file" "$_sys_file"
+  return $_py_status
 }
 
 call_api() {

@@ -15,8 +15,8 @@ unset _env_PROVIDER _env_MODEL _env_BASE_URL _env_API_KEY
 
 # API Config
 PROVIDER="${PROVIDER:-default}"
-MODEL="${MODEL:-${LLM_MODEL:-gemini-2.0-flash-exp}}"
-FALLBACK_MODEL="gemini-1.5-flash"
+MODEL="${MODEL:-${LLM_MODEL:-gemini-3-flash-preview}}"
+FALLBACK_MODEL=""  # No fallback: global Vertex endpoint only serves gemini-3 preview models
 # BASE_URL is handled by providers or default
 BASE_URL="${BASE_URL:-https://generativelanguage.googleapis.com/v1beta}"
 API_KEY="${GEMINI_KEY:-${GOOGLE_VERTEX_KEY:-${API_KEY:-}}}"

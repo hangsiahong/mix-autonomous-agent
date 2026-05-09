@@ -41,11 +41,20 @@ except Exception as e:
     local args_hash=$(echo "$args" | sha256sum | awk '{print $1}')
     local call_sig="${name}_${args_hash}"
 
-    # 2. Per-tool call cap: max 3 calls of the same tool per turn
+    # 2. Per-tool call cap: idempotent (read-only) tools get 6, mutating tools get 2, others get 3
+    local _idempotent_tools="read_code list_files web_search fetch_url memory_recall check_health sys_info context_discovery repo_map read_error_log insights"
+    local _mutating_tools="edit_code memory_remember custom_tool_manager skill_manager image_generate"
+    local tool_cap=3
+    if echo " $_idempotent_tools " | grep -qw "$name"; then
+        tool_cap=6
+    elif echo " $_mutating_tools " | grep -qw "$name"; then
+        tool_cap=2
+    fi
+
     local name_count=0
     name_count=$(echo "$TURN_CALLS" | tr ' ' '\n' | grep -c "^${name}_" 2>/dev/null) || name_count=0
-    if [[ $name_count -ge 3 ]]; then
-        echo "Error: You have already called '$name' ${name_count} times this turn. Do not retry further — answer using what you already have."
+    if [[ $name_count -ge $tool_cap ]]; then
+        echo "Error: You have already called '$name' ${name_count} times this turn (limit: $tool_cap). Do not retry further — answer using what you already have."
         return
     fi
 

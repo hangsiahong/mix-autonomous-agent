@@ -40,10 +40,36 @@ tg_delete() {
 
 tg_send_photo() {
     local chat_id="$1"
-    local photo="$2"
+    local photo="$2"     # can be a local file path OR a public URL/file_id
     local caption="$3"
-    tg_api "sendPhoto" "$(jq -n --arg cid "$chat_id" --arg ph "$photo" --arg cap "$caption" \
-        '{chat_id: $cid, photo: $ph, caption: $cap}')"
+    local thread_id="$4"
+
+    if [[ "$photo" == /* || "$photo" == ./* ]]; then
+        # Local file — use multipart form upload (telegram-bot-bash pattern)
+        # This avoids base64/ARG_MAX issues and works for large files
+        local curl_args=(
+            -s
+            -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendPhoto"
+            -F "chat_id=${chat_id}"
+            -F "photo=@${photo}"
+        )
+        if [[ -n "$caption" ]]; then
+            curl_args+=(-F "caption=${caption}")
+        fi
+        if [[ -n "$thread_id" && "$thread_id" != "null" ]]; then
+            curl_args+=(-F "message_thread_id=${thread_id}")
+        fi
+        curl "${curl_args[@]}"
+    else
+        # URL or file_id — send as JSON
+        local payload
+        payload=$(jq -n --arg cid "$chat_id" --arg ph "$photo" --arg cap "$caption" \
+            '{chat_id: $cid, photo: $ph, caption: $cap}')
+        if [[ -n "$thread_id" && "$thread_id" != "null" ]]; then
+            payload=$(echo "$payload" | jq --arg tid "$thread_id" '.message_thread_id = $tid')
+        fi
+        tg_api "sendPhoto" "$payload"
+    fi
 }
 
 tg_get_file() {
@@ -54,7 +80,7 @@ tg_get_file() {
 tg_download() {
     local file_path="$1"
     local local_dest="$2"
-    curl -s -o "$local_dest" "https://api.telegram.org/file/bot${TG_TOKEN}/${file_path}"
+    curl -sf -o "$local_dest" "https://api.telegram.org/file/bot${TG_TOKEN}/${file_path}"
 }
 
 tg_set_commands() {

@@ -128,6 +128,10 @@ last_update = time.time()
 
 try:
     with requests.post(url, json=payload, headers=headers, stream=True, timeout=60) as r:
+        if r.status_code not in (200, 206):
+            body = r.text[:2000]
+            sys.stderr.write(f"API HTTP {r.status_code}: {body}\n")
+            sys.exit(1)
         for line in r.iter_lines():
             if not line: continue
             line = line.decode("utf-8")

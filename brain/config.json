@@ -1,5 +1,17 @@
 {
-  "whitelist": [],
-  "home_chat": null,
-  "group_topics": []
+  "whitelist": [
+    "670967877"
+  ],
+  "home_chat": "670967877",
+  "group_topics": [
+    {
+      "chat_id": "670967877",
+      "topics": [
+        {
+          "thread_id": "",
+          "skill": "/skill"
+        }
+      ]
+    }
+  ]
 }

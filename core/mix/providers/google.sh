@@ -28,12 +28,10 @@ _GOOGLE_THINKING_LEVEL=""  # empty = model default (high/dynamic for Gemini 3)
 # Known models (hardcoded — stable, small list)
 # Gemini 3.x models only available on Vertex AI via location=global
 _GOOGLE_MODELS=(
+  "gemini-3-flash-preview"
   "gemini-2.5-pro"
   "gemini-2.0-flash-exp"
   "gemini-2.0-flash-thinking-exp"
-  "gemini-1.5-pro"
-  "gemini-1.5-flash"
-  "gemini-3-flash-preview"
 )
 
 # Regex to detect global-only preview models
@@ -427,16 +425,24 @@ google_call_api() {
 
   # Conversion script for History (OpenAI -> Gemini Native)
   # This script handles multi-modal array content and tool calls.
+  # Write large blobs to tempfiles to avoid ARG_MAX / env-size limits.
+  local _g_hist_file _g_sys_file
+  _g_hist_file=$(mktemp)
+  _g_sys_file=$(mktemp)
+  printf '%s' "${HISTORY:-[]}" > "$_g_hist_file"
+  printf '%s' "$system_prompt" > "$_g_sys_file"
+
   local payload
-  payload=$(SYSTEM_PROMPT="$system_prompt" \
-            HISTORY_JSON="${HISTORY:-[]}" \
+  payload=$(HIST_FILE="$_g_hist_file" \
+            SYS_FILE="$_g_sys_file" \
             TOOLS_JSON="${tools_json:-[]}" \
             EXTRA_PAYLOAD="$_extra_payload" \
             python3 -c '
-import json, os
-s = os.environ.get("SYSTEM_PROMPT", "")
-try: h = json.loads(os.environ.get("HISTORY_JSON") or "[]")
-except: h = []
+import json, os, sys
+s = open(os.environ["SYS_FILE"]).read()
+try: h = json.load(open(os.environ["HIST_FILE"]))
+except Exception as e:
+    sys.stderr.write(f"Bad HISTORY JSON: {e}\n"); h = []
 try: t = json.loads(os.environ.get("TOOLS_JSON") or "[]")
 except: t = []
 
@@ -508,6 +514,7 @@ for msg in h:
 
     print(json.dumps(body))
 ')
+  rm -f "$_g_hist_file" "$_g_sys_file"
 
   local _curl_args=(-s -X POST "$url" -H "Content-Type: application/json")
   if [ "$mode" = "vertex" ]; then
@@ -580,17 +587,21 @@ google_call_api_stream() {
   # I will extract it to a shared function or just duplicate for now (caveman style).
 
   local payload
-  payload=$(SYSTEM_PROMPT="$system_prompt" \
-            HISTORY_JSON="${HISTORY:-[]}" \
+  local _gs_hist_file _gs_sys_file
+  _gs_hist_file=$(mktemp)
+  _gs_sys_file=$(mktemp)
+  printf '%s' "${HISTORY:-[]}" > "$_gs_hist_file"
+  printf '%s' "$system_prompt" > "$_gs_sys_file"
+  payload=$(HIST_FILE="$_gs_hist_file" \
+            SYS_FILE="$_gs_sys_file" \
             TOOLS_JSON="${tools_json:-[]}" \
             EXTRA_PAYLOAD="$_extra_payload" \
             python3 -c '
 import sys, json, os
-# h_raw = os.environ.get("HISTORY_JSON")
-# sys.stderr.write(f"DEBUG HISTORY_RAW: {h_raw}\n")
-s = os.environ.get("SYSTEM_PROMPT", "")
-try: h = json.loads(os.environ.get("HISTORY_JSON") or "[]")
-except: h = []
+s = open(os.environ["SYS_FILE"]).read()
+try: h = json.load(open(os.environ["HIST_FILE"]))
+except Exception as e:
+    sys.stderr.write(f"Bad HISTORY JSON: {e}\n"); h = []
 try: t = json.loads(os.environ.get("TOOLS_JSON") or "[]")
 except: t = []
 contents = []
@@ -641,10 +652,9 @@ try:
 except: pass
 
 import sys
-# DEBUG
-# sys.stderr.write(f"DEBUG PAYLOAD: {json.dumps(body)}\n")
 print(json.dumps(body))
 ')
+  rm -f "$_gs_hist_file" "$_gs_sys_file"
 
   TG_TOKEN="$TG_TOKEN" \
   CHAT_ID="$chat_id" \

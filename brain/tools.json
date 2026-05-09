@@ -1,13 +1,17 @@
 [
   {
     "name": "web_search",
-    "description": "Search the web using DuckDuckGo. Returns top 10 results with titles and URLs.",
+    "description": "Search the web. Auto-selects backend: Tavily (if TAVILY_API_KEY set) → Exa → Brave → SearXNG → DuckDuckGo. Returns titles, URLs, and snippets. SSRF-protected.",
     "parameters": {
       "type": "object",
       "properties": {
         "query": {
           "type": "string",
           "description": "The search query string."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Number of results to return (1-15, default 8)."
         }
       },
       "required": ["query"]
@@ -15,13 +19,21 @@
   },
   {
     "name": "fetch_url",
-    "description": "Fetch and read the content of any URL as clean Markdown (via Jina Reader). Use for reading articles, docs, or any web page.",
+    "description": "Fetch the content of a URL as clean Markdown (via Jina Reader). SSRF-protected — blocks private IPs and cloud metadata endpoints. Optionally uses LLM to extract the relevant portion when 'query' is provided. Truncates large pages intelligently around matching content.",
     "parameters": {
       "type": "object",
       "properties": {
         "url": {
           "type": "string",
-          "description": "The full URL to fetch."
+          "description": "The full URL to fetch (must be a public http/https URL)."
+        },
+        "query": {
+          "type": "string",
+          "description": "Optional: what you want to extract from the page. If provided, content is centered around matching sections and optionally summarized by LLM."
+        },
+        "max_chars": {
+          "type": "integer",
+          "description": "Max characters to return before truncation/summarization (default 8000)."
         }
       },
       "required": ["url"]
@@ -155,13 +167,13 @@
   },
   {
     "name": "session_search",
-    "description": "Search past conversation history for a keyword or phrase across all sessions or a specific one.",
+    "description": "Search past conversation sessions for a topic or keyword. Ranks sessions by relevance, extracts context windows around matches, and uses LLM to summarize the top matching sessions. Perfect for recalling past conversations, decisions, or code from earlier chats.",
     "parameters": {
       "type": "object",
       "properties": {
         "query": {
           "type": "string",
-          "description": "The keyword or phrase to search for."
+          "description": "The topic, keyword, or phrase to search for across past sessions."
         },
         "session": {
           "type": "string",
@@ -169,10 +181,42 @@
         },
         "limit": {
           "type": "integer",
-          "description": "Max number of matching snippets to return per session. Default: 20."
+          "description": "Max number of sessions to return (1-5). Default: 3."
         }
       },
       "required": ["query"]
+    }
+  },
+  {
+    "name": "memory",
+    "description": "Manage persistent curated memory across two stores: 'memory' (your own notes, facts, learnings) and 'user' (what you know about the user). These are injected into every session as a frozen snapshot. Use add/replace/remove to maintain them. Do NOT store sensitive data, credentials, or large blobs.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": ["add", "replace", "remove", "read"],
+          "description": "add: append a new fact. replace: find old_text and swap it. remove: delete entry containing old_text. read: show all entries."
+        },
+        "target": {
+          "type": "string",
+          "enum": ["memory", "user"],
+          "description": "Which store: 'memory' for agent notes (3000 char limit), 'user' for user profile (2000 char limit). Defaults to 'memory'."
+        },
+        "content": {
+          "type": "string",
+          "description": "The new fact/entry to add (required for action=add)."
+        },
+        "old_text": {
+          "type": "string",
+          "description": "Unique substring of the entry to replace or remove (required for action=replace and action=remove)."
+        },
+        "new_content": {
+          "type": "string",
+          "description": "Replacement text (required for action=replace)."
+        }
+      },
+      "required": ["action"]
     }
   },
   {

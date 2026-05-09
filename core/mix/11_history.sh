@@ -5,11 +5,25 @@ append_text() {
     local content="$2"
     local media_json="$3" # Optional JSON array for multi-modal [{type: "image_url", ...}]
     
-    if [[ -n "$media_json" && "$media_json" != "null" ]]; then
-        # Multi-modal content
-        local combined_content=$(jq -n --arg text "$content" --argjson media "$media_json" \
-            '[{"type": "text", "text": $text}] + $media')
-        HISTORY=$(echo "$HISTORY" | jq -c --arg role "$role" --argjson content "$combined_content" '. + [{role: $role, content: $content}]')
+    if [[ -n "$media_json" && "$media_json" != "null" && "$media_json" != "[]" ]]; then
+        # Multi-modal: use Python + tempfiles to avoid ARG_MAX with large base64 data.
+        # jq --argjson passes content as a command-line arg, hitting the kernel 2MB limit.
+        local _h_file _m_file
+        _h_file=$(mktemp)
+        _m_file=$(mktemp)
+        printf '%s' "$HISTORY" > "$_h_file"
+        printf '%s' "$media_json" > "$_m_file"
+        HISTORY=$(ROLE="$role" TEXT="$content" H_FILE="$_h_file" M_FILE="$_m_file" python3 -c '
+import json, os
+h = json.load(open(os.environ["H_FILE"]))
+media = json.load(open(os.environ["M_FILE"]))
+text = os.environ["TEXT"]
+role = os.environ["ROLE"]
+parts = [{"type": "text", "text": text}] + media
+h.append({"role": role, "content": parts})
+print(json.dumps(h, separators=(",", ":")))
+')
+        rm -f "$_h_file" "$_m_file"
     else
         HISTORY=$(echo "$HISTORY" | jq -c --arg role "$role" --arg content "$content" '. + [{role: $role, content: $content}]')
     fi
@@ -48,7 +62,7 @@ compact_history() {
     compress_history "$session_id"
     
     # Fallback to hard truncation if still over max limit
-    local count=$(echo "$HISTORY" | jq 'length')
+    local count; count=$(echo "$HISTORY" | jq 'length' 2>/dev/null); count=${count:-0}
     if [ "$count" -gt "$MAX_HIST_MSGS" ]; then
         local remove_count=$((count - MAX_HIST_MSGS))
         local removed=$(echo "$HISTORY" | jq -c "limit($remove_count; .)")
