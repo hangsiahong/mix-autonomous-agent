@@ -60,32 +60,49 @@ headers = {
 headers.update(extra_headers)
 
 tg_url = f"https://api.telegram.org/bot{tg_token}/editMessageText"
+tg_action_url = f"https://api.telegram.org/bot{tg_token}/sendChatAction"
+
+import threading
+
+_typing_stop = threading.Event()
+
+def _typing_loop():
+    while not _typing_stop.wait(4):
+        try:
+            requests.post(tg_action_url, json={"chat_id": chat_id, "action": "typing"}, timeout=3)
+        except Exception:
+            pass
+
+_typing_thread = threading.Thread(target=_typing_loop, daemon=True)
+_typing_thread.start()
 
 def md_to_html(text):
     result = []
-    parts = re.split(r'(```[\w]*\n?[\s\S]*?```|`[^`\n]+`)', text)
+    FENCE_RE = re.compile(r"(```[\w]*\n?[\s\S]*?```|`[^`\n]+`)")
+    parts = FENCE_RE.split(text)
     for i, part in enumerate(parts):
         if i % 2 == 1:
-            if part.startswith('```'):
-                code = re.sub(r'^```\w*\n?', '', part)
-                code = re.sub(r'\n?```$', '', code)
-                code = code.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
-                result.append(f'<pre><code>{code}</code></pre>')
+            if part.startswith("```"):
+                code = re.sub(r"^```\w*\n?", "", part)
+                code = re.sub(r"\n?```$", "", code)
+                code = code.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+                result.append("<pre><code>" + code + "</code></pre>")
             else:
                 code = part[1:-1]
-                code = code.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
-                result.append(f'<code>{code}</code>')
+                code = code.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+                result.append("<code>" + code + "</code>")
         else:
-            p = part.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
-            p = re.sub(r'^#{1,6} +(.+)$', r'<b>\1</b>', p, flags=re.MULTILINE)
-            p = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', p, flags=re.DOTALL)
-            p = re.sub(r'__(.+?)__', r'<b>\1</b>', p, flags=re.DOTALL)
-            p = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\s)\*(?!\*)', r'<i>\1</i>', p)
-            p = re.sub(r'_([^_\n]+?)_', r'<i>\1</i>', p)
-            p = re.sub(r'~~(.+?)~~', r'<s>\1</s>', p)
-            p = re.sub(r'\[([^\]]+)\]\((https?://[^)]+)\)', r'<a href="\2">\1</a>', p)
+            p = part.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+            p = re.sub(r"^#{1,6} +(.+)$", r"<b>\1</b>", p, flags=re.MULTILINE)
+            p = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", p, flags=re.DOTALL)
+            p = re.sub(r"__(.+?)__", r"<b>\1</b>", p, flags=re.DOTALL)
+            p = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\s)\*(?!\*)", r"<i>\1</i>", p)
+            p = re.sub(r"_([^_\n]+?)_", r"<i>\1</i>", p)
+            p = re.sub(r"~~(.+?)~~", r"<s>\1</s>", p)
+            href_repl = "<a href=\"" + "\\2" + "\">" + "\\1" + "</a>"
+            p = re.sub(r"\[([^\]]+)\]\((https?://[^)]+)\)", href_repl, p)
             result.append(p)
-    return ''.join(result)
+    return "".join(result)
 
 def update_tg(text):
     if not text: return
@@ -100,7 +117,8 @@ def update_tg(text):
             "text": html,
             "parse_mode": "HTML"
         }, timeout=5)
-    except: pass
+    except Exception:
+        pass
 
 content = ""
 thought_active = False
@@ -120,7 +138,8 @@ try:
 
             try:
                 data = json.loads(data_str)
-            except: continue
+            except Exception:
+                continue
 
             # Check for usage info
             if "usage" in data:
@@ -165,6 +184,8 @@ try:
                 last_update = time.time()
 except Exception as e:
     sys.stderr.write(f"Error: {e}\n")
+finally:
+    _typing_stop.set()
 
 # Final update
 clean_final = re.sub(r"<(think|thinking|reasoning|thought)>.*?(</\1>|$)", "", content, flags=re.DOTALL | re.IGNORECASE)
