@@ -10,6 +10,17 @@ tg_handle_update() {
     # Ignore empty messages
     [[ "$text" == "null" ]] && return
 
+    # Whitelist Check
+    if ! is_whitelisted "$chat_id" && ! is_whitelisted "$user_id"; then
+        # Check if it's the admin trying to whitelist this chat
+        if [[ "$user_id" == "${TG_ADMIN}" && "$text" == "/whitelist"* ]]; then
+             : # Allow admin to use /whitelist even if not whitelisted (though admin should be)
+        else
+            echo "Access denied for chat_id $chat_id / user_id $user_id"
+            return
+        fi
+    fi
+
     # Handle Slash Commands
     if [[ "$text" == /* ]]; then
         local cmd=$(echo "$text" | cut -d' ' -f1)
@@ -20,7 +31,7 @@ tg_handle_update() {
                 tg_send "$chat_id" "AMA (Autonomous Minimalist Agent) ready. Use /help for commands."
                 ;;
             /help)
-                tg_send "$chat_id" "Commands: /start, /help, /reset, /status"
+                tg_send "$chat_id" "Commands: /start, /help, /reset, /status, /sethome, /whitelist <id>"
                 ;;
             /reset)
                 rm -f "${DIR}/brain/state/history_${chat_id}.json"
@@ -28,6 +39,18 @@ tg_handle_update() {
                 ;;
             /status)
                 tg_send "$chat_id" "Provider: ${PROVIDER:-openai (default)}\nModel: ${MODEL:-gpt-4o-mini}"
+                ;;
+            /sethome)
+                set_home_chat "$chat_id"
+                tg_send "$chat_id" "🏠 Home chat set to this chat ($chat_id)."
+                ;;
+            /whitelist)
+                if [[ -n "$args" ]]; then
+                    add_to_whitelist "$args"
+                    tg_send "$chat_id" "✅ Whitelisted ID: $args"
+                else
+                    tg_send "$chat_id" "Usage: /whitelist <id>"
+                fi
                 ;;
             /login)
                 if [[ "${PROVIDER}" == "copilot" ]]; then

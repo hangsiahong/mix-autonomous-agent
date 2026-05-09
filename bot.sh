@@ -5,6 +5,7 @@
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 source "${DIR}/core/mix/init.sh"
+source "${DIR}/core/config.sh"
 source "${DIR}/core/telegram/init.sh"
 source "${DIR}/core/ui.sh"
 

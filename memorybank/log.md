@@ -25,3 +25,8 @@
     - Created **Skill Manager** (\`tools/custom_tool_manager.sh\`) for autonomous tool generation.
     - Refactored API layer (\`core/mix/16_api.sh\`) to support specialized system prompt overrides.
     - Updated identity layer with self-modification and proactive skill-building mandates.
+- **2023-10-27**: Vertex AI Optimization & Security.
+    - Enhanced \`tools/memory_helper.py\` to support Google Vertex AI Gemini Embeddings (text-embedding-004) with automatic gcloud OAuth token/API key switching.
+    - Implemented dynamic whitelist system to control bot access (users, groups, channels) without restarts.
+    - Added \`/sethome\` command (Hermes style) to define the primary operations chat.
+    - Added \`/whitelist <id>\` for on-the-fly access management.
