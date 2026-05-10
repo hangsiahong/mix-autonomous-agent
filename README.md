@@ -1,51 +1,123 @@
 # AMA: Autonomous Mix Agent
 
-AMA is a self-evolving, autonomous agent built with a pure Bash harness. It lives in Telegram, creates its own tools, fixes its own bugs, and maintains its own knowledge base.
+A self-evolving autonomous agent that lives in Telegram. Pure Bash harness, 24 tools, Playwright browser, vector memory, and a self-improvement loop.
 
-## 🚀 Quick Start
+---
 
-### 1. Prerequisites
-- **Linux/macOS**
-- **bash**, **curl**, **jq**, **python3**
-- **Telegram Bot Token** (from [@BotFather](https://t.me/BotFather))
-- **LLM API Key** (Gemini, OpenAI, or OpenRouter)
+## Setup
 
-### 2. Configuration
-Create a `.env` file in the root directory:
+### Prerequisites
+- Linux / macOS
+- `bash`, `curl`, `jq`, `python3`
+- A Telegram bot token from [@BotFather](https://t.me/BotFather)
+- An LLM API key (Google Vertex AI, Gemini API, Anthropic, or OpenAI)
+
+### Install Python dependencies
 ```bash
-TG_TOKEN="your_telegram_bot_token"
-TG_ADMIN="your_telegram_user_id"
-API_KEY="your_llm_api_key"
-PROVIDER="google" # google, openai, copilot, or openrouter
-MODEL="gemini-2.0-flash-exp"
-BASE_URL="https://generativelanguage.googleapis.com/v1beta"
+pip install -r requirements.txt
+python3 -m playwright install chromium
 ```
 
-### 3. Running AMA
-Simply execute the entry point:
+### Configure
 ```bash
-./bot.sh
+cp .env.example .env
+# Edit .env with your values
 ```
 
-## 🧠 Core Features
-- **Self-Modification**: AMA can read and edit its own source code using `edit_code`.
-- **Skill Management**: Dynamic loading of prompts and tools bound to Telegram Forum Topics.
-- **Vision**: Sees and processes images sent via Telegram.
-- **Resilience**: Integrated exponential backoff, jitter, and model fallback.
-- **Memory**: Persistent episodic/semantic memory via LanceDB.
-
-## 🛠 Project Structure
-- `bot.sh`: Entry point & Telegram polling.
-- `core/`: Agent logic, history, and provider adapters.
-- `tools/`: Built-in and custom tools.
-- `brain/`: System prompt, tools definition, and state.
-- `memorybank/`: Project-specific wiki and decision logs.
-
-## 🧪 Testing (Coming Soon)
-Run the test suite to ensure core invariants:
-```bash
-# ./scripts/run_tests.sh
+Minimum required in `.env`:
+```env
+TG_TOKEN=your-telegram-bot-token
+TG_ADMIN=your-telegram-user-id
+PROVIDER=google
+GOOGLE_CLOUD_PROJECT=your-gcp-project-id
 ```
 
 ---
-*Built with ❤️ by AMA (using itself).*
+
+## Run
+
+### Directly
+```bash
+bash bot.sh
+```
+
+### With pm2 (recommended — auto-restarts on crash)
+```bash
+npm install -g pm2
+pm2 start pm2.config.js
+pm2 save          # persist across reboots
+pm2 startup       # generate boot hook
+```
+
+Useful pm2 commands:
+```bash
+pm2 logs ama-bot   # live logs
+pm2 restart ama-bot
+pm2 stop ama-bot
+```
+
+---
+
+## Run with Docker
+
+```bash
+docker build -t ama-bot .
+docker run -d --env-file .env --name ama ama-bot
+```
+
+Logs:
+```bash
+docker logs -f ama
+```
+
+---
+
+## Telegram Commands
+
+| Command | Description |
+|---------|-------------|
+| `/help` | Show all commands |
+| `/new` | Reset conversation |
+| `/status` | Agent status |
+| `/skill <name>` | Activate a skill |
+| `/skills` | List available skills |
+| `/insights` | Token & tool usage stats |
+| `/restart` | Restart bot (admin) |
+| `/stop` | Shut down bot (admin) |
+
+---
+
+## Project Structure
+
+```
+bot.sh              Entry point & Telegram polling
+pm2.config.js       pm2 process config
+Dockerfile          Container definition
+requirements.txt    Python deps
+brain/
+  system_prompt.md  Agent personality & rules
+  tools.json        Tool registry (24 tools)
+  config.json       Toolsets & whitelist config
+core/
+  mix/              Agent loop, API, history, compression
+  telegram/         Polling, routing, formatting
+tools/
+  _lib/             Python core (fuzzy edit, patch, browser)
+  bash.sh           Hardened shell executor
+  browser.sh        Playwright browser automation
+  fetch_url.sh      Web fetching (Jina + fallback)
+  memory_helper.py  LanceDB vector memory (chunked)
+  edit_code.sh      9-strategy fuzzy file editor
+  patch.sh          V4A atomic multi-file patcher
+extensions/
+  cron/             Background maintenance (log trim, memory prune)
+```
+
+---
+
+## Tests
+
+```bash
+bash scripts/run_all_tests.sh
+```
+

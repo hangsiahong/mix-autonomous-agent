@@ -1,36 +1,62 @@
 # Active Context
 
 ## Current Status
-- **Self-Learning System Complete**: Vector memory (LanceDB) + Identity (AGENT/SOUL) integrated.
-- **Modular SDK & Engine**: Fully restructured with conflict-free growth paths.
-- **Streaming UI**: Live Telegram updates via Python SSE shim.
-- **Professional Self-Modification Subsystem**: Ported Hermes-agent patterns (fuzzy match, V4A patch, path safety) into the AMA Bash harness. All 19 end-to-end tests pass (2026-05-10).
+- **Production-ready**: Running under pm2 with auto-restart. All systems stable.
+- **24 tools** across 6 toolsets (core, search, memory, meta, inspect, media).
+- **Browser automation**: Playwright Chromium headless added (`browser` tool in `search` toolset).
+- **Memory system**: Chunked indexing, access tracking, monthly auto-pruning via cron.
+- **Containerized**: Dockerfile + pm2.config.js for clean deployment.
 
-## Recent Changes (2026-05-10 — Harness Professionalization)
-- **`tools/_lib/` Python core**: `fuzzy_match.py` (9-strategy chain), `patch_parser.py` (V4A two-phase validate→apply), `path_safety.py`, `file_backend.py`, `cli.py` dispatcher.
-- **`edit_code`**: Full multi-line fuzzy edits, unified diff output, syntax gate (bash/python/json), auto-revert on failure.
-- **`patch`** (new tool): V4A multi-file/multi-hunk atomic patches — validates ALL hunks before touching disk.
-- **`write_file`**: Path safety + syntax validation on overwrite.
-- **`read_code`**: Pagination (offset/limit), line numbers, large-file refusal (>5 MB).
-- **`bash`**: Comprehensive danger-pattern blocklist (exfil, reverse shell, credential reads, destructive ops), invisible-Unicode rejection, configurable timeout.
-- **`custom_tool_manager`**: Name regex, `bash -n` syntax gate, danger-pattern scan, refuses to shadow built-ins.
-- **Harness bug fixed**: `local args="$args_json"` in `13_tool_execution.sh`.
-- **`SENSITIVE_TOOLS`** expanded: bash, patch, write_file, edit_code, custom_tool_manager, skill_manager.
-- **`brain/tools.json`** updated: 21 tools, new `patch` schema, `edit_code` old_string/new_string/replace_all schema, `bash` timeout param.
-- **`brain/system_prompt.txt`**: Added "File Editing — Choose the Right Tool" section.
+## Recent Changes (2026-05-10 — Capabilities & Polish)
 
-## Earlier Changes
-- **Smart History Compression**: Implemented LLM-based summarization of middle turns to preserve context.
-- **Robustness Layer**: Added API error classification, retries, and tool loop guardrails.
-- **Observability**: Implemented usage tracking (tokens/tools) and the `insights` command.
-- **Repo Mapping**: Added global project awareness via `repo_map` tool.
+### Infrastructure
+- **`pm2.config.js`**: Bot now runs under pm2 (`autorestart: true`). Logs to `logs/bot.log`.
+- **`Dockerfile`**: Debian slim, installs all deps + Playwright Chromium, runs via `pm2-runtime`.
+- **`requirements.txt`**: `requests`, `duckduckgo-search`, `lancedb`, `playwright`.
+- **`.env.example`**: Template for all required env vars.
+- **`/restart` command**: Admin Telegram command; delegates to `pm2 restart ama-bot`.
 
-## Immediate Tasks
-- [x] Implement Telegram topic isolation, skill binding, and automated testing.
-- [x] Add Subdirectory Context Discovery and Permission Management.
-- [x] Support Gemini 3 thinking/reasoning levels.
-- [x] Professionalize self-modification subsystem (multi-line edit, V4A patch, hardened bash, safety layer).
-- [ ] Implement **Curator** background task for skill maintenance and state cleanup.
-- [ ] Add **Trajectory Logging** for fine-tuning/debugging dataset collection.
-- [ ] Implement **Rate Limit Tracker** to handle multi-provider quota management.
-- [ ] Enhance **Reflection Core** to proactively optimize the system prompt based on usage insights.
+### Toolset System
+- All 24 tools tagged with `toolset` field in `brain/tools.json`.
+- Default toolsets (loaded every turn): `core`, `search`, `memory`, `meta`.
+- On-demand: `inspect` (repo_map, sys_info, read_error_log, insights), `media` (image_generate).
+- `brain/config.json`: `default_toolsets` field drives filtering in `16_api.sh`.
+- Skill `_enabled_toolsets` mechanism for per-topic expansion.
+
+### Browser Automation
+- **`tools/_lib/browser.py`**: Playwright Chromium headless. SSRF guard, aria-snapshot text output, interactive element listing.
+- **`tools/browser.sh`**: Shell wrapper. Actions: navigate, click, type, scroll, snapshot.
+- Registered in `search` toolset — always loaded alongside `web_search` and `fetch_url`.
+
+### Memory Improvements
+- **Chunking**: `save_memory` splits texts >400 words into overlapping chunks (50-word overlap). Each chunk gets its own embedding.
+- **Access tracking**: `search_memory` stamps `last_accessed` + increments `access_count` on every recall.
+- **`saved_at`**: Injected automatically by `memory_remember.sh` at save time.
+- **`prune_memory(days=30)`**: Removes entries unused for N days (keeps if recently saved or used >2x).
+- **Monthly cron pruning**: `extensions/cron/run.sh` runs `prune 30` once a month via marker file.
+- **New CLI modes**: `stats`, `prune [days] [--dry-run]`.
+
+### Skill & Command UX
+- `/skill` (no args): lists all skills with [core]/[user] labels.
+- `/skills`: alias.
+- `/skill <name>`: validates existence before activating; rejects unknown names.
+- `/skill off`: clears active skill.
+- `skill_manager create`: writes `prompt.md` + `tools.json`.
+- `skill_manager list`: shows both `core/skills/` and `brain/skills/`.
+- **Telegram command menu**: All 12 commands registered via `tg_set_commands`.
+
+### File Format
+- `brain/system_prompt.txt` → `brain/system_prompt.md`.
+- All skill prompts use `.md`. Backward-compatible `.txt` fallback in `16_api.sh`.
+
+### System Prompt Additions
+- "Toolset System" section (6 toolsets, expansion mechanism).
+- "Resilience & Retry Strategy" section (per-tool fallback rules).
+- "Browser automation" rule (fetch_url first, then browser).
+- Memory hygiene guidance (selective saving, pruning awareness).
+
+## Immediate Next
+- [ ] Enhance **Reflection Core** to optimize system prompt from usage insights.
+- [ ] **Trajectory Logging** for fine-tuning dataset collection.
+- [ ] File watcher extension for cron-triggered summarization tasks.
+

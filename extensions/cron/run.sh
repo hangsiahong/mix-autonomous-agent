@@ -36,4 +36,19 @@ for logfile in "${DIR}/brain/state/trajectories.jsonl" \
     fi
 done
 
+# 3. Monthly memory pruning — remove memories unused for 30+ days
+MEMORY_PRUNE_MARKER="${DIR}/brain/state/.memory_last_pruned"
+_now=$(date +%s)
+_last_prune=0
+if [[ -f "$MEMORY_PRUNE_MARKER" ]]; then
+    _last_prune=$(cat "$MEMORY_PRUNE_MARKER" 2>/dev/null || echo 0)
+fi
+_days_since=$(( (_now - _last_prune) / 86400 ))
+if [[ $_days_since -ge 30 ]]; then
+    echo "[$(date)] Running monthly memory pruning (${_days_since} days since last prune)..."
+    _prune_result=$(python3 "${DIR}/tools/memory_helper.py" prune 30 2>/dev/null)
+    echo "[$(date)] $_prune_result"
+    echo "$_now" > "$MEMORY_PRUNE_MARKER"
+fi
+
 echo "[$(date)] Maintenance complete."

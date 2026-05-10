@@ -106,12 +106,17 @@ tg_download() {
 tg_set_commands() {
     local commands='[
         {"command": "start", "description": "Start the bot"},
-        {"command": "help", "description": "Show help"},
+        {"command": "help", "description": "Show available commands"},
         {"command": "new", "description": "Reset conversation history"},
         {"command": "reset", "description": "Reset conversation history"},
         {"command": "status", "description": "Show agent status"},
-        {"command": "skill", "description": "View or set active skill"},
-        {"command": "insights", "description": "Show usage insights"}
+        {"command": "skill", "description": "View or set active skill (/skill <name> or /skill off)"},
+        {"command": "skills", "description": "List all available skills"},
+        {"command": "insights", "description": "Show usage stats and tool frequency"},
+        {"command": "sethome", "description": "Set this chat as the home chat (admin)"},
+        {"command": "whitelist", "description": "Whitelist a user or chat ID (admin)"},
+        {"command": "restart", "description": "Restart the bot (admin)"},
+        {"command": "stop", "description": "Shut down the bot (admin)"}
     ]'
     tg_api "setMyCommands" "$(CMDS="$commands" python3 -c "import json,os; print(json.dumps({'commands':json.loads(os.environ['CMDS'])}))")" > /dev/null
 }

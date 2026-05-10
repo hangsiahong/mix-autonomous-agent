@@ -363,7 +363,7 @@
   },
   {
     "name": "memory_remember",
-    "description": "Save an important fact or note to long-term memory for future recall.",
+    "description": "Save an important fact or note to long-term vector memory (LanceDB). Long texts are automatically chunked for precise retrieval. Always include a 'topic' in metadata_json for better search and deduplication. Access timestamps are tracked automatically for pruning.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -384,7 +384,7 @@
   },
   {
     "name": "memory_recall",
-    "description": "Search long-term memory for relevant information using a query.",
+    "description": "Search long-term vector memory (LanceDB) using semantic similarity. Returns top matches with topic, access count, and relevance score. Chunks from the same topic are deduplicated automatically. Try 2-3 different phrasings if results are empty.",
     "parameters": {
       "type": "object",
       "properties": {
