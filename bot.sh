@@ -53,6 +53,20 @@ fi
 unset _DRAIN _DRAIN_LAST _DRAIN_COUNT
 
 while true; do
+    # Check for background autonomy jobs
+    mkdir -p "${DIR}/brain/jobs"
+    for job in "${DIR}/brain/jobs"/job_*.env; do
+        if [ -f "$job" ]; then
+            # Load job parameters
+            source "$job"
+            echo "AMA: Triggering autonomous continuation for session $session_id..."
+            # Run agent in background group
+            ( set -m; run_agent "$chat_id" "$text" "$user_id" "[]" "$thread_id" "$session_id" "" "AMA_AUTONOMOUS" "" ) &
+            # Remove job file so it doesn't loop
+            rm -f "$job"
+        fi
+    done
+
     OFFSET=$(cat "$OFFSET_FILE")
     UPDATES=$(tg_poll "$OFFSET")
     

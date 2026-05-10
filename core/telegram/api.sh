@@ -27,6 +27,33 @@ try: d['message_thread_id'] = int(os.environ['TID'])
 except: d['message_thread_id'] = os.environ['TID']
 print(json.dumps(d))" <<< "$payload")
     fi
+    _tg_send_payload "$payload" > /dev/null
+}
+
+# Like tg_send but prints the message_id to stdout (for callers that need it for later edits)
+tg_send_r() {
+    local chat_id="$1"
+    local text="$2"
+    local thread_id="$3"
+    local parse_mode="${4:-Markdown}"
+    local payload
+    payload=$(TG_CID="$chat_id" TG_TXT="$text" TG_PM="$parse_mode" python3 -c "
+import json, os
+d = {'chat_id': os.environ['TG_CID'], 'text': os.environ['TG_TXT'], 'parse_mode': os.environ['TG_PM']}
+print(json.dumps(d))")
+    if [[ -n "$thread_id" && "$thread_id" != "null" ]]; then
+        payload=$(TID="$thread_id" python3 -c "
+import json, os, sys
+d = json.load(sys.stdin)
+try: d['message_thread_id'] = int(os.environ['TID'])
+except: d['message_thread_id'] = os.environ['TID']
+print(json.dumps(d))" <<< "$payload")
+    fi
+    _tg_send_payload "$payload"
+}
+
+_tg_send_payload() {
+    local payload="$1"
     tg_api "sendMessage" "$payload" | python3 -c "import json,sys
 try: print(json.load(sys.stdin).get('result',{}).get('message_id','') or '')
 except: pass"

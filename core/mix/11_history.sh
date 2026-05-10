@@ -66,6 +66,16 @@ load_history() {
     local session_id="$1"
     if [[ -f "brain/state/history_${session_id}.json" ]]; then
         HISTORY=$(cat "brain/state/history_${session_id}.json")
+        # Sanity check: if history ends with consecutive user messages (no assistant reply),
+        # the conversation is in an invalid state — trim the orphaned user messages.
+        HISTORY=$(python3 -c "
+import json, sys
+h = json.load(sys.stdin)
+# Remove trailing user-only messages that have no assistant reply after them
+while h and h[-1].get('role') == 'user':
+    h.pop()
+print(json.dumps(h, separators=(',',':')))
+" <<< "$HISTORY" 2>/dev/null || echo "$HISTORY")
     else
         HISTORY="[]"
     fi

@@ -34,25 +34,42 @@ else:
     # Create a hidden reflection prompt
     local reflection_sys_prompt="You are the Reflection Core of AMA. 
 Review the conversation above.
-Is there anything you should proactively do to improve yourself or help the user better?
-You have full access to tools. 
+Is there anything you should proactively do to help the user?
 
-Possibilities:
-1. Create a new custom tool using 'custom_tool_manager' if the user is asking for something you can automate.
-2. Update your SOUL.md or AGENT.md if you've learned something about your identity.
-3. Save an important fact to memory using 'memory_remember'.
-4. Fix a bug in your core logic using 'edit_code'.
-5. Check 'read_error_log' if you suspect issues with API or tools.
-6. Propose a new feature to the user.
+You are LIMITED to read-only and memory tools ONLY:
+1. Save an important fact about the user using 'memory_remember'.
+2. Search memory with 'memory_search' or 'memory_recall'.
+3. Check error log with 'read_error_log' if you suspect issues.
 
-If no action is needed, respond with 'NO_ACTION'.
-If you decide to take action, execute the tools and explain why in the thought.
+DO NOT use: edit_code, write_file, bash, process, custom_tool_manager, skill_manager, or any tool that modifies files or runs code.
+DO NOT propose code changes or improvements to your own source files.
+
+If no memory-worthy observation exists, respond with 'NO_ACTION'.
 "
 
     # Save current history
     local temp_history="$HISTORY"
 
+    # Override HISTORY to only include safe/read-only tools for reflection
+    local _safe_tools
+    _safe_tools=$(python3 -c "
+import json, sys
+try:
+    tools = json.load(open('brain/tools.json'))
+    blocked = {'bash','process','edit_code','write_file','patch','delete_file',
+               'custom_tool_manager','skill_manager','skill_install','image_generate'}
+    safe = [t for t in tools if t.get('name','') not in blocked]
+    print(json.dumps(safe, separators=(',',':')))
+except:
+    print('[]')
+" 2>/dev/null)
+
     # Call API (Non-streaming for reflection)
+    # Temporarily use only safe read-only tools during reflection
+    # Use a file-based backup so it survives crashes (variable would be lost)
+    cp brain/tools.json brain/tools.json.bak 2>/dev/null || true
+    printf '%s' "$_safe_tools" > brain/tools.json
+
     local turn=0
     while [ "$turn" -lt 5 ]; do
         turn=$((turn + 1))
@@ -96,6 +113,13 @@ for tc in json.load(sys.stdin):
             while IFS= read -r _line; do
                 local name args tc_json
                 IFS=$'\x1f' read -r name args tc_json <<< "$_line"
+                # Hard block: never allow mutating tools in reflection
+                case "$name" in
+                    bash|process|edit_code|write_file|patch|delete_file|custom_tool_manager|skill_manager|skill_install)
+                        echo "Reflection: Blocked unsafe tool '$name'" >&2
+                        continue
+                        ;;
+                esac
                 echo "Reflection: Executing $name"
                 log_tool_usage "$session_id" "$name"
                 local output
@@ -110,6 +134,9 @@ for tc in json.load(sys.stdin):
         break
     done
     
-    # Restore history (reflection turns are hidden from the user session history)
+    # Restore full tools.json and history
+    if [[ -f brain/tools.json.bak ]]; then
+        mv brain/tools.json.bak brain/tools.json
+    fi
     HISTORY="$temp_history"
 }

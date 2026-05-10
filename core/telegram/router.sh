@@ -71,8 +71,8 @@ for k, v in vals.items():
 
     # Handle Slash Commands
     if [[ "$text" == /* ]]; then
-        local cmd=$(echo "$text" | cut -d' ' -f1)
-        local args=$(echo "$text" | cut -d' ' -f2-)
+        local cmd=$(echo "$text" | awk '{print $1}')
+        local args=$(echo "$text" | sed "s|^$cmd||" | sed 's|^[[:space:]]*||')
         
         case "$cmd" in
             /start)
@@ -122,30 +122,33 @@ except: print('Untitled')" 2>/dev/null)
                     local _skill_list
                     _skill_list=$(python3 -c "
 import os, json
-roots = ['core/skills', 'brain/skills']
-seen = set()
+roots = [('core/skills', 'core'), ('brain/skills', 'user')]
 lines = []
-for root in roots:
+for root, label in roots:
     if not os.path.isdir(root): continue
     for name in sorted(os.listdir(root)):
-        path = os.path.join(root, name)
-        if os.path.isdir(path) and name not in seen:
-            seen.add(name)
-            src = 'core' if root.startswith('core') else 'user'
-            lines.append(f'  • {name} [{src}]')
-print('\\n'.join(lines) if lines else '  (none)')
+        if os.path.isdir(os.path.join(root, name)):
+            lines.append(f'• <b>{name}</b> ({label})')
+print('\n'.join(lines) if lines else '  (none)')
 " 2>/dev/null)
-                    tg_send "$chat_id" "<b>Available skills</b>\n${_skill_list}\n\nActive: <code>${skill:-none}</code>\nUse /skill <name> to activate, /skill off to clear." "$thread_id"
+                    local msg="<b>Available Skills</b>
+${_skill_list}
+
+Active: <code>${skill:-none}</code>
+
+Use <code>/skill &lt;name&gt;</code> to activate.
+Use <code>/skill off</code> to clear."
+                    tg_send "$chat_id" "$msg" "$thread_id" "HTML"
                 elif [[ "$sname" == "off" || "$sname" == "none" ]]; then
                     set_topic_config "$chat_id" "$thread_id" "skill" ""
-                    tg_send "$chat_id" "Skill cleared. Running in default mode." "$thread_id"
+                    tg_send "$chat_id" "Skill cleared. Running in default mode." "$thread_id" "HTML"
                 else
                     # Validate skill exists
                     if [[ -d "core/skills/$sname" || -d "brain/skills/$sname" ]]; then
                         set_topic_config "$chat_id" "$thread_id" "skill" "$sname"
-                        tg_send "$chat_id" "Skill set to: <code>$sname</code>" "$thread_id"
+                        tg_send "$chat_id" "Skill set to: <code>$sname</code>" "$thread_id" "HTML"
                     else
-                        tg_send "$chat_id" "Skill '<code>$sname</code>' not found. Use /skills to list available skills." "$thread_id"
+                        tg_send "$chat_id" "Skill '<code>$sname</code>' not found. Use /skills to list available skills." "$thread_id" "HTML"
                     fi
                 fi
                 ;;

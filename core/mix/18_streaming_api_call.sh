@@ -111,14 +111,16 @@ def update_tg(text):
     if not clean_text.strip(): return
     html = md_to_html(clean_text.strip())
     try:
-        requests.post(tg_url, json={
+        resp = requests.post(tg_url, json={
             "chat_id": chat_id,
             "message_id": message_id,
             "text": html,
             "parse_mode": "HTML"
         }, timeout=5)
-    except Exception:
-        pass
+        if not resp.ok:
+            sys.stderr.write(f"TG edit failed {resp.status_code}: {resp.text[:300]}\n")
+    except Exception as e:
+        sys.stderr.write(f"TG edit error: {e}\n")
 
 content = ""
 thought_active = False
@@ -181,9 +183,9 @@ try:
                         if "arguments" in f: tool_calls[idx]["function"]["arguments"] += f["arguments"]
 
             if time.time() - last_update > 2.0:
-                display_text = content if content else "..."
+                display_text = content if content else "⏳"
                 if tool_calls:
-                    display_text += "\n\n(Thinking: tool calls pending...)"
+                    display_text += "\n\n🔧 <i>Running tools…</i>"
                 update_tg(display_text)
                 last_update = time.time()
 except Exception as e:
@@ -193,9 +195,15 @@ finally:
 
 # Final update
 clean_final = re.sub(r"<(think|thinking|reasoning|thought)>.*?(</\1>|$)", "", content, flags=re.DOTALL | re.IGNORECASE)
+sys.stderr.write(f"DBG18: content_len={len(content)} clean_final_len={len(clean_final.strip())} msg_id={message_id} chat_id={chat_id}\n")
 if tool_calls:
-    clean_final += "\n\n(Running tools...)"
-update_tg(clean_final if clean_final.strip() else "(done)")
+    if clean_final.strip():
+        clean_final += "\n\n🔧 <i>Running tools…</i>"
+    # else: leave message as "⏳ Thinking..." — agent_loop will edit it with results
+else:
+    if not clean_final.strip():
+        clean_final = ""  # nothing to show; agent_loop handles final edit
+update_tg(clean_final)
 
 # Output for bash parsing (TC: list of tool calls)
 tc_list = []
@@ -215,6 +223,7 @@ EOF
         local result=$(cat "$tmp_out")
         local err_out=$(cat "$tmp_err")
         rm -f "$tmp_out" "$tmp_err"
+        [[ -n "$err_out" ]] && echo "DBG_ERR: $err_out"
 
         # Check for errors in err_out or status
         if [[ $status -ne 0 || "$result" != *"TC:"* ]]; then

@@ -3,7 +3,7 @@ parse_resp() {
     local resp="$1"
 
     if [[ "$resp" != "{"* ]]; then
-        printf 'RAW:%s\nTC:null\nTEXT:\n' "$resp"
+        printf 'TC:null\nTEXT:\n'
         return
     fi
 
@@ -40,7 +40,7 @@ print('TC:' + (json.dumps(tool_calls, separators=(',',':')) if tool_calls is not
 " 2>/dev/null)
 
     if [[ "$_parsed" == "PARSE_ERROR" || -z "$_parsed" ]]; then
-        printf 'RAW:%s\nTC:null\nTEXT:\n' "$resp"
+        printf 'TC:null\nTEXT:\n'
         return
     fi
 
@@ -49,18 +49,5 @@ print('TC:' + (json.dumps(tool_calls, separators=(',',':')) if tool_calls is not
     tool_calls=$(echo "$_parsed" | grep "^TC:" | cut -c4-)
     [ -z "$tool_calls" ] && tool_calls="null"
 
-    printf 'RAW:%s\nTC:%s\nTEXT:%s\n' "$resp" "$tool_calls" "$text"
-}
-
-    if [[ "$_parsed" == "PARSE_ERROR" || -z "$_parsed" ]]; then
-        printf 'RAW:%s\nTC:null\nTEXT:\n' "$resp"
-        return
-    fi
-
-    local text tool_calls
-    text=$(echo "$_parsed" | grep "^TEXT:" | cut -c6-)
-    tool_calls=$(echo "$_parsed" | grep "^TC:" | cut -c4-)
-    [ -z "$tool_calls" ] && tool_calls="null"
-
-    printf 'RAW:%s\nTC:%s\nTEXT:%s\n' "$resp" "$tool_calls" "$text"
+    printf 'TC:%s\nTEXT:%s\n' "$tool_calls" "$text"
 }

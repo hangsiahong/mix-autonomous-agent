@@ -2,9 +2,9 @@
 # core/mix/30_compression.sh - Summary-based context compression
 
 # Thresholds
-COMPRESSION_THRESHOLD=50  # Start compressing if messages > 50
-KEEP_LAST_N=12            # Always keep the last 12 messages as-is
-KEEP_FIRST_N=2            # Always keep the first 2 messages (usually intro/setup)
+COMPRESSION_THRESHOLD=200 # Start compressing if messages > 200 (modern LLMs have 1M+ context)
+KEEP_LAST_N=40            # Keep the last 40 messages as-is for better continuity
+KEEP_FIRST_N=5            # Keep more of the initial setup
 
 compress_history() {
     local session_id="$1"
@@ -139,6 +139,14 @@ PYEOF
     local summary_response
     summary_response=$(call_api "You are a conversation summarizer. Respond ONLY with a concise bulleted summary. No preamble.")
 
+    # Check for failure early
+    if [[ -z "$summary_response" || "$summary_response" == "FAIL:"* ]]; then
+        echo "AMA: Compression API call failed. Response: ${summary_response:-'Empty'}"
+        printf '%s' "$_saved_tools" > brain/tools.json
+        HISTORY="$saved_history"
+        return 1
+    fi
+
     # Always restore tools and history
     printf '%s' "$_saved_tools" > brain/tools.json
     HISTORY="$saved_history"
@@ -166,11 +174,8 @@ except: pass
     fi
 
     if [[ -z "$summary_text" ]]; then
-        echo "AMA: Compression failed (empty summary)."
-        if [[ -n "$chat_id" && -n "$msg_id" ]]; then
-            tg_edit "$chat_id" "$msg_id" "⏳ Thinking..." "" 2>/dev/null || true
-        fi
-        return
+        echo "AMA: Compression failed (empty summary). Falling back to truncation."
+        summary_text="[AUTO-TRUNCATION] Summarization failed. Some intermediate conversation history was removed to prevent context overflow."
     fi
 
     # 4. Build new history
