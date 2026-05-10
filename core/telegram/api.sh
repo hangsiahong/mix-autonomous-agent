@@ -136,3 +136,24 @@ print(json.dumps(d))" <<< "$payload")
     
     tg_api "sendChatAction" "$payload" > /dev/null
 }
+
+tg_send_document() {
+    local chat_id="$1"
+    local document="$2"  # local file path
+    local caption="$3"
+    local thread_id="$4"
+
+    local curl_args=(
+        -s
+        -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendDocument"
+        -F "chat_id=${chat_id}"
+        -F "document=@${document}"
+    )
+    if [[ -n "$caption" ]]; then
+        curl_args+=(-F "caption=${caption}")
+    fi
+    if [[ -n "$thread_id" && "$thread_id" != "null" ]]; then
+        curl_args+=(-F "message_thread_id=${thread_id}")
+    fi
+    curl "${curl_args[@]}"
+}
