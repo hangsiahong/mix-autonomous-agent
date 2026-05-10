@@ -17,7 +17,8 @@
       "required": [
         "query"
       ]
-    }
+    },
+    "toolset": "search"
   },
   {
     "name": "fetch_url",
@@ -41,7 +42,8 @@
       "required": [
         "url"
       ]
-    }
+    },
+    "toolset": "search"
   },
   {
     "name": "bash",
@@ -61,7 +63,8 @@
       "required": [
         "command"
       ]
-    }
+    },
+    "toolset": "core"
   },
   {
     "name": "write_file",
@@ -86,7 +89,8 @@
         "path",
         "content"
       ]
-    }
+    },
+    "toolset": "core"
   },
   {
     "name": "search_files",
@@ -114,7 +118,8 @@
       "required": [
         "pattern"
       ]
-    }
+    },
+    "toolset": "search"
   },
   {
     "name": "todo",
@@ -149,7 +154,8 @@
       "required": [
         "action"
       ]
-    }
+    },
+    "toolset": "meta"
   },
   {
     "name": "clarify",
@@ -165,7 +171,8 @@
       "required": [
         "question"
       ]
-    }
+    },
+    "toolset": "core"
   },
   {
     "name": "process",
@@ -195,7 +202,8 @@
       "required": [
         "action"
       ]
-    }
+    },
+    "toolset": "meta"
   },
   {
     "name": "session_search",
@@ -219,7 +227,8 @@
       "required": [
         "query"
       ]
-    }
+    },
+    "toolset": "memory"
   },
   {
     "name": "memory",
@@ -261,7 +270,8 @@
       "required": [
         "action"
       ]
-    }
+    },
+    "toolset": "memory"
   },
   {
     "name": "image_generate",
@@ -285,7 +295,8 @@
       "required": [
         "prompt"
       ]
-    }
+    },
+    "toolset": "media"
   },
   {
     "name": "edit_code",
@@ -315,7 +326,8 @@
         "old_string",
         "new_string"
       ]
-    }
+    },
+    "toolset": "core"
   },
   {
     "name": "patch",
@@ -331,7 +343,8 @@
       "required": [
         "patch"
       ]
-    }
+    },
+    "toolset": "core"
   },
   {
     "name": "repo_map",
@@ -345,7 +358,8 @@
         }
       },
       "required": []
-    }
+    },
+    "toolset": "inspect"
   },
   {
     "name": "memory_remember",
@@ -365,7 +379,8 @@
       "required": [
         "text"
       ]
-    }
+    },
+    "toolset": "memory"
   },
   {
     "name": "memory_recall",
@@ -385,7 +400,8 @@
       "required": [
         "query"
       ]
-    }
+    },
+    "toolset": "memory"
   },
   {
     "name": "sys_info",
@@ -394,7 +410,8 @@
       "type": "object",
       "properties": {},
       "required": []
-    }
+    },
+    "toolset": "inspect"
   },
   {
     "name": "read_error_log",
@@ -403,7 +420,8 @@
       "type": "object",
       "properties": {},
       "required": []
-    }
+    },
+    "toolset": "inspect"
   },
   {
     "name": "custom_tool_manager",
@@ -440,7 +458,8 @@
       "required": [
         "action"
       ]
-    }
+    },
+    "toolset": "meta"
   },
   {
     "name": "skill_manager",
@@ -460,7 +479,8 @@
       "required": [
         "action"
       ]
-    }
+    },
+    "toolset": "meta"
   },
   {
     "name": "insights",
@@ -469,6 +489,7 @@
       "type": "object",
       "properties": {},
       "required": []
-    }
+    },
+    "toolset": "inspect"
   }
 ]

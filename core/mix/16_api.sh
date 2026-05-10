@@ -78,7 +78,49 @@ _api_build_payload() {
     fi
   fi
 
-  local tools=$(cat brain/tools.json)
+  # Load all tools then filter to active toolsets.
+  # Default toolsets come from brain/config.json:default_toolsets.
+  # A skill can expand by listing extra toolsets in its tools.json as:
+  #   {"_enabled_toolsets": ["inspect", "media"]}
+  # TOOL_EXTRA_TOOLSETS env var also accepted (space-separated) for ad-hoc expansion.
+  local _all_tools
+  _all_tools=$(cat brain/tools.json)
+  local _default_ts
+  _default_ts=$(python3 -c "
+import json, sys
+try:
+    cfg = json.load(open('brain/config.json'))
+    ts = cfg.get('default_toolsets', ['core','search','memory','meta'])
+    print(' '.join(ts))
+except:
+    print('core search memory meta')
+" 2>/dev/null)
+  local _active_ts="${TOOL_EXTRA_TOOLSETS:-} $_default_ts"
+  local tools
+  tools=$(TS="$_active_ts" python3 -c "
+import json, os, sys
+raw = sys.stdin.read()
+try:
+    all_tools = json.loads(raw)
+except:
+    print(raw); sys.exit(0)
+active = set(os.environ.get('TS','').split())
+# Always include tools with no toolset field (legacy/custom tools)
+filtered = [t for t in all_tools if t.get('toolset','core') in active or 'toolset' not in t]
+# Strip internal 'toolset' field before sending to API
+for t in filtered:
+    t.pop('toolset', None)
+print(json.dumps(filtered, separators=(',',':')))
+" <<< "$_all_tools" 2>/dev/null)
+  # Fallback: if filter fails, send all tools (minus toolset field)
+  if [[ -z "$tools" || "$tools" == "null" ]]; then
+    tools=$(python3 -c "
+import json,sys
+t=json.load(sys.stdin)
+for x in t: x.pop('toolset',None)
+print(json.dumps(t,separators=(',',':')))
+" < brain/tools.json 2>/dev/null || cat brain/tools.json)
+  fi
 
   # Skill-specific prompt injection
   if [[ -n "$skill" ]]; then
@@ -122,7 +164,46 @@ print(content.replace("$(pwd)", os.environ["PWD_VAL"]))
     if [[ -n "$skill_prompt" ]]; then
         system_prompt="${system_prompt}\n\n## ACTIVE SKILL: ${skill}\n${skill_prompt}"
     fi
+    # If skill_tools contains "_enabled_toolsets", pull in additional toolsets from all_tools
     if [[ "$skill_tools" != "[]" ]]; then
+        local _extra_ts
+        _extra_ts=$(python3 -c "
+import json,os,sys
+try:
+    st=json.loads(sys.stdin.read())
+    extra=[x for x in st if isinstance(x,dict) and '_enabled_toolsets' in x]
+    if extra:
+        ts=extra[0]['_enabled_toolsets']
+        print(' '.join(ts) if isinstance(ts,list) else str(ts))
+except:
+    pass
+" <<< "$skill_tools" 2>/dev/null)
+        if [[ -n "$_extra_ts" ]]; then
+            # Re-filter all_tools with expanded toolset list
+            local _expanded_ts="$_active_ts $_extra_ts"
+            local _extra_tool_defs
+            _extra_tool_defs=$(TS="$_expanded_ts" python3 -c "
+import json,os,sys
+all_tools=json.load(sys.stdin)
+already=set(t.get('name') for t in json.loads(os.environ.get('CURRENT_TOOLS','[]')))
+active=set(os.environ.get('TS','').split())
+extra=[t for t in all_tools if t.get('toolset','core') in active and t.get('name') not in already]
+for t in extra: t.pop('toolset',None)
+print(json.dumps(extra,separators=(',',':')))
+" < brain/tools.json 2>/dev/null || echo "[]")
+            tools=$(AT="$_extra_tool_defs" python3 -c "
+import json,os,sys
+base=json.load(sys.stdin)
+extra=json.loads(os.environ.get('AT','[]'))
+print(json.dumps(base+extra,separators=(',',':')))
+" <<< "$tools" 2>/dev/null || echo "$tools")
+            # Remove the meta _enabled_toolsets entry from skill_tools before merge
+            skill_tools=$(python3 -c "
+import json,sys
+st=json.load(sys.stdin)
+print(json.dumps([x for x in st if not (isinstance(x,dict) and '_enabled_toolsets' in x)],separators=(',',':')))
+" <<< "$skill_tools" 2>/dev/null || echo "$skill_tools")
+        fi
         tools=$(ST="$skill_tools" python3 -c "import json,os,sys; a=json.load(sys.stdin); b=json.loads(os.environ['ST']); print(json.dumps(a+b,separators=(',',':')))" <<< "$tools")
     fi
   fi
