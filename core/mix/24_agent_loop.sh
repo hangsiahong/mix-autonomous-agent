@@ -106,14 +106,6 @@ run_agent() {
                     tg_edit "$chat_id" "$msg_id" "$_esc_reason" "HTML" > /dev/null 2>&1
                 fi
                 append_tool_call "$tool_calls"
-                
-                local py_script="import sys, json; \
-try: \
-    calls = json.loads(sys.argv[1]); \
-    for tc in calls: \
-        name = tc.get('function', {}).get('name') or tc.get('name', '') or 'unknown_tool'; \
-        print(f'{name.strip()}|{tc.get(\"id\", \"\").strip()}') \
-except: pass"
 
                 local batch_names=$(echo "$tool_calls" | python3 -c "import sys, json; calls = json.load(sys.stdin); print(', '.join(c.get('function', {}).get('name', '?') for c in calls))" 2>/dev/null || echo "")
                 local batch_count=$(echo "$tool_calls" | python3 -c "import sys, json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
@@ -129,7 +121,12 @@ except: pass"
                         local single_tc=$(echo "$tool_calls" | python3 -c "import json, sys, os; calls = json.load(sys.stdin); target_id = os.environ.get('TC_ID',''); match = next((t for t in calls if t.get('id') == target_id), None); print(json.dumps(match or calls[0], separators=(',',':')) if calls else '')" TC_ID="$tc_id" 2>/dev/null)
                         local output=$(process_tc "$chat_id" "$msg_id" "$single_tc" "$thread_id")
                         append_tool_result "$tc_id" "$name" "$output"
-                    done < <(python3 -c "$py_script" "$tool_calls")
+                    done < <(echo "$tool_calls" | python3 -c "
+import sys, json
+for tc in json.load(sys.stdin):
+    name = tc.get('function', {}).get('name') or tc.get('name', '') or 'unknown_tool'
+    print(f'{name.strip()}|{tc.get(\"id\", \"\").strip()}')
+")
                 fi
                 tg_edit "$chat_id" "$msg_id" "⏳ <i>Thinking…</i>" "HTML" > /dev/null 2>&1
                 export _AMA_REASONING_HTML=""
