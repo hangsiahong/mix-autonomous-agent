@@ -79,7 +79,7 @@ for k, v in vals.items():
                 tg_send "$chat_id" "AMA (Autonomous Mix Agent) ready. Use /help for commands." "$thread_id"
                 ;;
             /help)
-                tg_send "$chat_id" "Commands: /start, /help, /reset, /status, /sethome, /whitelist <id>, /stop" "$thread_id"
+                tg_send "$chat_id" "Commands: /start, /help, /reset, /status, /sethome, /whitelist <id>, /stop, /restart" "$thread_id"
                 ;;
             /whitelist)
                 local target_id=$(echo "$args" | awk '{print $1}')
@@ -152,6 +152,28 @@ print('\\n'.join(lines) if lines else '  (none)')
                     _bot_pid=$(cat "${DIR}/brain/state/bot.pid" 2>/dev/null)
                     rm -f "${DIR}/brain/state/bot.pid"
                     # Kill the whole process group so running agents are also stopped
+                    if [[ -n "$_bot_pid" ]]; then
+                        kill -TERM "-$_bot_pid" 2>/dev/null || kill -TERM "$_bot_pid" 2>/dev/null
+                    fi
+                    kill -TERM "$$" 2>/dev/null
+                    exit 0
+                else
+                    tg_send "$chat_id" "Admin only." "$thread_id"
+                fi
+                ;;
+            /restart)
+                if [[ "$user_id" == "${TG_ADMIN}" ]]; then
+                    tg_send "$chat_id" "Restarting via pm2... be right back." "$thread_id"
+                    # If running under pm2, let it handle the restart
+                    if pm2 restart ama-bot >> "${DIR}/logs/bot.log" 2>&1; then
+                        exit 0
+                    fi
+                    # Fallback: not under pm2 — manual restart
+                    nohup bash "${DIR}/bot.sh" >> "${DIR}/logs/bot.log" 2>&1 &
+                    local _bot_pid
+                    _bot_pid=$(cat "${DIR}/brain/state/bot.pid" 2>/dev/null)
+                    sleep 1
+                    rm -f "${DIR}/brain/state/bot.pid"
                     if [[ -n "$_bot_pid" ]]; then
                         kill -TERM "-$_bot_pid" 2>/dev/null || kill -TERM "$_bot_pid" 2>/dev/null
                     fi

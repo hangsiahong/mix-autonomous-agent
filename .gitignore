@@ -4,3 +4,4 @@ reference
 .env
 brain/last_offset
 brain/state
+logs
