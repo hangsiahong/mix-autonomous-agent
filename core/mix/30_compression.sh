@@ -143,20 +143,19 @@ PYEOF
     printf '%s' "$_saved_tools" > brain/tools.json
     HISTORY="$saved_history"
 
-    # Extract text from either OpenAI format or Gemini native format
-    # Handle function_call-only responses (model tried to use a tool) by filtering to text parts only
+    # Extract text from OpenAI format (all providers normalize to this)
     local summary_text
     summary_text=$(echo "$summary_response" | python3 -c "
 import sys, json
 try:
     r = json.load(sys.stdin)
-    # OpenAI format
-    t = r.get('choices',[{}])[0].get('message',{}).get('content','')
+    msg = r.get('choices',[{}])[0].get('message',{})
+    t = msg.get('content') or ''
+    # Also collect from tool_calls text parts if content is null
     if not t:
-        # Gemini native format — collect all text parts (skip functionCall parts)
-        parts = r.get('candidates',[{}])[0].get('content',{}).get('parts',[])
-        texts = [p.get('text','') for p in parts if p.get('text')]
-        t = '\n'.join(texts)
+        for tc in (msg.get('tool_calls') or []):
+            fn = tc.get('function',{})
+            if fn.get('name') == 'text': t = fn.get('arguments','')
     print(t.strip(), end='')
 except: pass
 " 2>/dev/null)

@@ -533,7 +533,57 @@ print(json.dumps(body))
     return 1
   fi
 
-  echo "$resp"
+  # Normalize Gemini response to OpenAI format so all consumers speak one language
+  echo "$resp" | python3 -c "
+import json, sys, time
+
+r = json.load(sys.stdin)
+candidate = (r.get('candidates') or [{}])[0]
+parts = candidate.get('content', {}).get('parts', [])
+finish = candidate.get('finishReason', 'STOP')
+
+# Map Gemini finishReason → OpenAI finish_reason
+finish_map = {'STOP': 'stop', 'MAX_TOKENS': 'length', 'SAFETY': 'stop', 'TOOL_CODE_EXECUTION': 'tool_calls'}
+oai_finish = finish_map.get(finish, 'stop')
+
+text_parts = [p['text'] for p in parts if 'text' in p]
+text = '\n'.join(text_parts)
+
+func_parts = [p['functionCall'] for p in parts if 'functionCall' in p]
+tool_calls = None
+if func_parts:
+    oai_finish = 'tool_calls'
+    tool_calls = [
+        {
+            'id': 'call_' + str(int(time.time() * 1000) % 10**9 + i),
+            'type': 'function',
+            'function': {
+                'name': fc.get('name', ''),
+                'arguments': json.dumps(fc.get('args', {}))
+            }
+        }
+        for i, fc in enumerate(func_parts)
+    ]
+
+usage = r.get('usageMetadata', {})
+out = {
+    'choices': [{
+        'index': 0,
+        'finish_reason': oai_finish,
+        'message': {
+            'role': 'assistant',
+            'content': text if text else None,
+            'tool_calls': tool_calls
+        }
+    }],
+    'usage': {
+        'prompt_tokens': usage.get('promptTokenCount', 0),
+        'completion_tokens': usage.get('candidatesTokenCount', 0),
+        'total_tokens': usage.get('totalTokenCount', 0)
+    }
+}
+print(json.dumps(out))
+"
 }
 
 google_call_api_stream() {
