@@ -9,6 +9,12 @@ run_agent() {
     local chat_title="$7"
     local username="$8"
     local skill="${9}" # Skill passed from router
+
+    # Save PID to allow interruption (set-pgid is handled by the shell '&' usually, 
+    # but we want to be able to kill the whole group)
+    local pid_file="${DIR}/brain/state/run_${session_id}.pid"
+    echo "$$" > "$pid_file"
+    trap 'rm -f "$pid_file"' EXIT INT TERM
     
     load_history "$session_id"
     

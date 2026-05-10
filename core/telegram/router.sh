@@ -154,15 +154,26 @@ print('\\n'.join(lines) if lines else '  (none)')
                 tg_send "$chat_id" "$report" "$thread_id"
                 ;;
             /stop)
+                local pid_file="${DIR}/brain/state/run_${session_id}.pid"
+                if [[ -f "$pid_file" ]]; then
+                    local run_pid=$(cat "$pid_file")
+                    echo "Interruption requested for session $session_id (PID $run_pid)"
+                    # Kill the process group (negative PID kills the group)
+                    # We use setsid or similar in the background call to ensure it has its own group
+                    kill -TERM "-$run_pid" 2>/dev/null || kill -TERM "$run_pid" 2>/dev/null
+                    rm -f "$pid_file"
+                    tg_send "$chat_id" "🛑 Task interrupted." "$thread_id"
+                else
+                    tg_send "$chat_id" "No active task to stop." "$thread_id"
+                fi
+                ;;
+            /shutdown)
                 if [[ "$user_id" == "${TG_ADMIN}" ]]; then
-                    tg_send "$chat_id" "Shutting down. Goodbye." "$thread_id"
+                    tg_send "$chat_id" "Shutting down bot. Goodbye." "$thread_id"
                     local _bot_pid
                     _bot_pid=$(cat "${DIR}/brain/state/bot.pid" 2>/dev/null)
                     rm -f "${DIR}/brain/state/bot.pid"
-                    # Kill the whole process group so running agents are also stopped
-                    if [[ -n "$_bot_pid" ]]; then
-                        kill -TERM "-$_bot_pid" 2>/dev/null || kill -TERM "$_bot_pid" 2>/dev/null
-                    fi
+                    [[ -n "$_bot_pid" ]] && kill -TERM "$_bot_pid" 2>/dev/null
                     kill -TERM "$$" 2>/dev/null
                     exit 0
                 else
@@ -200,11 +211,11 @@ print('\\n'.join(lines) if lines else '  (none)')
                 ;;
             *)
                 # Pass unknown commands to agent
-                run_agent "$chat_id" "$text" "$user_id" "$media_json" "$thread_id" "$session_id" "$chat_title" "$username" "$skill"
+                ( set -m; run_agent "$chat_id" "$text" "$user_id" "$media_json" "$thread_id" "$session_id" "$chat_title" "$username" "$skill" ) &
                 ;;
         esac
     else
         # Normal text -> Run Agent
-        run_agent "$chat_id" "$text" "$user_id" "$media_json" "$thread_id" "$session_id" "$chat_title" "$username" "$skill"
+        ( set -m; run_agent "$chat_id" "$text" "$user_id" "$media_json" "$thread_id" "$session_id" "$chat_title" "$username" "$skill" ) &
     fi
 }

@@ -7,9 +7,8 @@ last_n="${TOOL_last_n:-20}"
 
 # If no session_id provided, try to find the current active one from environment or state
 if [[ -z "$session_id" ]]; then
-    # In this harness, we can often find it via the history files
-    # We look for the most recently modified history file in brain/state/ or brain/state/sessions/
-    session_id=$(ls -t brain/state/history_*.json brain/state/sessions/history_*.json 2>/dev/null | head -n 1 | sed 's/.*history_//;s/\.json//')
+    # Look for the most recently modified history file that has content
+    session_id=$(find brain/state/ brain/state/sessions/ -name "history_*.json" -size +10c -printf "%T@ %p\n" 2>/dev/null | sort -n | tail -n 1 | awk '{print $2}' | sed 's/.*history_//;s/\.json//')
 fi
 
 if [[ -z "$session_id" ]]; then
