@@ -53,6 +53,15 @@ You have three memory layers. Use them correctly:
 
 ---
 
+# File Editing — Choose the Right Tool
+- **`read_code` first**: Always read the target before editing. Never guess at content.
+- **`edit_code`** (preferred for targeted changes): Replaces an exact `old_string` with `new_string`. A 9-strategy fuzzy matcher tolerates whitespace/indent/quote drift. Multi-line is fully supported. Set `replace_all: true` for bulk renames. Returns a unified diff. Auto-rejects on syntax errors (bash/python/json validated).
+- **`patch`** (multi-file or multi-hunk): V4A format, validates ALL hunks first, then applies atomically. Use when changes span files or you need several non-adjacent hunks in one file.
+- **`write_file`**: Only for NEW files or true full rewrites. If the file exists and you only need a small change, use `edit_code` — never overwrite a file just to tweak a few lines.
+- **Failure mode**: If `edit_code` reports "no match", re-read the file with `read_code` to refresh context — do NOT loop with random variations.
+
+---
+
 # Access & Safety
 - **Access Control**: Use the `access_control` tool to whitelist IDs or set the home chat. If a user asks to "whitelist this group" or "whitelist me", use the IDs from the session context.
 - **Write boundary**: You may only write within `/home/jiren/projects/funs/building/autonomous-agent/`. Never delete core harness files without a backup.

@@ -1,7 +1,7 @@
 [
   {
     "name": "web_search",
-    "description": "Search the web. Auto-selects backend: Tavily (if TAVILY_API_KEY set) → Exa → Brave → SearXNG → DuckDuckGo. Returns titles, URLs, and snippets. SSRF-protected.",
+    "description": "Search the web. Auto-selects backend: Tavily (if TAVILY_API_KEY set) \u2192 Exa \u2192 Brave \u2192 SearXNG \u2192 DuckDuckGo. Returns titles, URLs, and snippets. SSRF-protected.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -14,12 +14,14 @@
           "description": "Number of results to return (1-15, default 8)."
         }
       },
-      "required": ["query"]
+      "required": [
+        "query"
+      ]
     }
   },
   {
     "name": "fetch_url",
-    "description": "Fetch the content of a URL as clean Markdown (via Jina Reader). SSRF-protected — blocks private IPs and cloud metadata endpoints. Optionally uses LLM to extract the relevant portion when 'query' is provided. Truncates large pages intelligently around matching content.",
+    "description": "Fetch the content of a URL as clean Markdown (via Jina Reader). SSRF-protected \u2014 blocks private IPs and cloud metadata endpoints. Optionally uses LLM to extract the relevant portion when 'query' is provided. Truncates large pages intelligently around matching content.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -36,26 +38,34 @@
           "description": "Max characters to return before truncation/summarization (default 8000)."
         }
       },
-      "required": ["url"]
+      "required": [
+        "url"
+      ]
     }
   },
   {
     "name": "bash",
-    "description": "Run a bash command in the project directory. Use this to read files (cat), list directories (ls), search code (grep), check git status, run scripts, or any shell operation.",
+    "description": "Run a bash command in the project directory. Use this to read files (cat), list directories (ls), search code (grep), check git status, run scripts, or any shell operation. SAFETY: blocks reads of /etc/{passwd,shadow}, ~/.ssh, .env, credential exfil patterns, reverse shells, and obviously destructive commands (rm -rf /, mkfs, dd of=/dev/sdX, fork bombs). Hard-capped at TOOL_timeout seconds (default 30, max 120).",
     "parameters": {
       "type": "object",
       "properties": {
         "command": {
           "type": "string",
           "description": "The bash command to run."
+        },
+        "timeout": {
+          "type": "integer",
+          "description": "Seconds before the command is killed. Default 30, max 120."
         }
       },
-      "required": ["command"]
+      "required": [
+        "command"
+      ]
     }
   },
   {
     "name": "write_file",
-    "description": "Create or overwrite a file with the given content. Use for creating new scripts, configs, or any file from scratch. Set append=true to add to an existing file.",
+    "description": "Create or overwrite a file. Use for creating new files from scratch \u2014 prefer edit_code or patch when modifying existing files. For .sh / .py / .json the new content is syntax-checked before any write. Refuses sensitive system paths and credential directories. Set append=true to add to an existing file.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -72,7 +82,10 @@
           "description": "If true, append to the file instead of overwriting. Default: false."
         }
       },
-      "required": ["path", "content"]
+      "required": [
+        "path",
+        "content"
+      ]
     }
   },
   {
@@ -98,7 +111,9 @@
           "description": "Case-insensitive search. Default: false."
         }
       },
-      "required": ["pattern"]
+      "required": [
+        "pattern"
+      ]
     }
   },
   {
@@ -109,7 +124,13 @@
       "properties": {
         "action": {
           "type": "string",
-          "enum": ["add", "list", "done", "delete", "clear"],
+          "enum": [
+            "add",
+            "list",
+            "done",
+            "delete",
+            "clear"
+          ],
           "description": "Action to perform."
         },
         "session": {
@@ -125,7 +146,9 @@
           "description": "Task ID (required for 'done' and 'delete')."
         }
       },
-      "required": ["action"]
+      "required": [
+        "action"
+      ]
     }
   },
   {
@@ -139,7 +162,9 @@
           "description": "The question to ask the user."
         }
       },
-      "required": ["question"]
+      "required": [
+        "question"
+      ]
     }
   },
   {
@@ -150,7 +175,12 @@
       "properties": {
         "action": {
           "type": "string",
-          "enum": ["run", "list", "output", "kill"],
+          "enum": [
+            "run",
+            "list",
+            "output",
+            "kill"
+          ],
           "description": "Action to perform."
         },
         "command": {
@@ -162,7 +192,9 @@
           "description": "A label for the process. Used to reference it in output/kill. Auto-generated if not provided."
         }
       },
-      "required": ["action"]
+      "required": [
+        "action"
+      ]
     }
   },
   {
@@ -184,7 +216,9 @@
           "description": "Max number of sessions to return (1-5). Default: 3."
         }
       },
-      "required": ["query"]
+      "required": [
+        "query"
+      ]
     }
   },
   {
@@ -195,12 +229,20 @@
       "properties": {
         "action": {
           "type": "string",
-          "enum": ["add", "replace", "remove", "read"],
+          "enum": [
+            "add",
+            "replace",
+            "remove",
+            "read"
+          ],
           "description": "add: append a new fact. replace: find old_text and swap it. remove: delete entry containing old_text. read: show all entries."
         },
         "target": {
           "type": "string",
-          "enum": ["memory", "user"],
+          "enum": [
+            "memory",
+            "user"
+          ],
           "description": "Which store: 'memory' for agent notes (3000 char limit), 'user' for user profile (2000 char limit). Defaults to 'memory'."
         },
         "content": {
@@ -216,7 +258,9 @@
           "description": "Replacement text (required for action=replace)."
         }
       },
-      "required": ["action"]
+      "required": [
+        "action"
+      ]
     }
   },
   {
@@ -238,29 +282,55 @@
           "description": "Image height in pixels. Default: 1024."
         }
       },
-      "required": ["prompt"]
+      "required": [
+        "prompt"
+      ]
     }
   },
   {
     "name": "edit_code",
-    "description": "Edit a file by replacing a specific block of text with new text. Validates bash syntax after edit and auto-reverts on error.",
+    "description": "Edit a file by replacing one block of text with another. Multi-line strings are supported and encouraged for non-trivial edits. Uses a 9-strategy fuzzy matcher (exact \u2192 whitespace/indent normalised \u2192 unicode-normalised \u2192 block-anchor) so small whitespace drift between your old_string and the file is tolerated. The match must be unique unless replace_all=true. For .sh / .py / .json files the result is syntax-checked and the edit is rejected if it would break the file. Returns a unified diff. Use `patch` for multi-file or multi-hunk changes.",
     "parameters": {
       "type": "object",
       "properties": {
         "path": {
           "type": "string",
-          "description": "Path to the file to edit."
+          "description": "Path to the file to edit (relative to project root)."
         },
-        "old_text": {
+        "old_string": {
           "type": "string",
-          "description": "The exact text to find and replace (must appear exactly once)."
+          "description": "Exact text to find. Multi-line is supported. Must match uniquely or pass replace_all=true."
         },
-        "new_text": {
+        "new_string": {
           "type": "string",
-          "description": "The new text to replace old_text with."
+          "description": "Replacement text. Multi-line is supported."
+        },
+        "replace_all": {
+          "type": "boolean",
+          "description": "Replace every occurrence. Default false (must be unique)."
         }
       },
-      "required": ["path", "old_text", "new_text"]
+      "required": [
+        "path",
+        "old_string",
+        "new_string"
+      ]
+    }
+  },
+  {
+    "name": "patch",
+    "description": "Apply a multi-file, multi-hunk patch in V4A format. Use this whenever you need to change several files coherently or make multiple edits in one file. Two-phase: every operation is validated in-memory first; if anything fails NO files are touched. V4A grammar:\n\n*** Begin Patch\n*** Update File: path/to/file\n@@ optional context hint @@\n unchanged context line (space prefix)\n-removed line\n+added line\n*** Add File: path/new\n+content\n*** Delete File: path/old\n*** Move File: src -> dst\n*** End Patch\n\nReturns a combined unified diff on success.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "patch": {
+          "type": "string",
+          "description": "Full patch text in V4A format, including the *** Begin Patch / *** End Patch markers."
+        }
+      },
+      "required": [
+        "patch"
+      ]
     }
   },
   {
@@ -292,7 +362,9 @@
           "description": "Optional JSON metadata string, e.g. {\"topic\": \"user preferences\"}."
         }
       },
-      "required": ["text"]
+      "required": [
+        "text"
+      ]
     }
   },
   {
@@ -310,7 +382,9 @@
           "description": "Max number of results to return. Defaults to 3."
         }
       },
-      "required": ["query"]
+      "required": [
+        "query"
+      ]
     }
   },
   {
@@ -339,7 +413,11 @@
       "properties": {
         "action": {
           "type": "string",
-          "enum": ["create", "list", "delete"],
+          "enum": [
+            "create",
+            "list",
+            "delete"
+          ],
           "description": "Action to perform."
         },
         "name": {
@@ -359,7 +437,9 @@
           "description": "JSON schema of the tool's parameters."
         }
       },
-      "required": ["action"]
+      "required": [
+        "action"
+      ]
     }
   },
   {
@@ -377,7 +457,9 @@
           "description": "Skill name."
         }
       },
-      "required": ["action"]
+      "required": [
+        "action"
+      ]
     }
   },
   {
@@ -390,4 +472,3 @@
     }
   }
 ]
-

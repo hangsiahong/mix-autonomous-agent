@@ -22,7 +22,11 @@ This document tracks unique features implemented in AMA to prevent duplication a
 
 ## 🛡 Stability & Safety
 - **Subdirectory Context Discovery**: `read_code` and `list_files` automatically inject `README.md` or `HINTS.md` from the target directory up to 3 levels deep.
-- **Self-Healing Edit**: `tools/edit_code.sh` automatically validates Bash syntax (`bash -n`) after every edit. If the edit breaks the script, it reverts to a backup and reports the error, preventing the agent from "bricking" itself.
+- **Multi-Line Fuzzy Edit (`tools/edit_code.sh`)**: 9-strategy fuzzy matcher (exact → ws_normalized → indent_flexible → escape_normalized → unicode_normalized → context_aware…). Returns unified diff. Auto-rejects on syntax errors (bash/python/json), reverts on failure. Multi-line, multi-strategy. Backed by `tools/_lib/fuzzy_match.py`.
+- **V4A Atomic Patch (`tools/patch.sh`)**: Multi-file/multi-hunk patches — Phase 1 validates all hunks in memory, Phase 2 applies atomically. Safe for coordinated cross-file edits. Backed by `tools/_lib/patch_parser.py`.
+- **Path Safety Library (`tools/_lib/path_safety.py`)**: Blocks writes outside project root, sensitive system paths (/etc, /boot, /usr, /sys, /proc), home dotfiles (.ssh, .aws, .gnupg, .netrc, .kube/config), and device files (/dev/std*, /dev/tty).
+- **Hardened Bash Executor (`tools/bash.sh`)**: Comprehensive danger-pattern blocklist covering credential exfil, reverse shells (/dev/tcp/, nc -e, bash -i >), destructive ops (rm -rf, dd of=/dev/sd*, mkfs, shutdown), invisible Unicode rejection, and configurable timeout (default 30s, max 120s).
+- **Validated Custom Tool Manager (`tools/custom_tool_manager.sh`)**: Name regex `^[a-z][a-z0-9_]{1,40}$`, refuses to shadow built-ins, `bash -n` syntax gate, danger-pattern scan before registering.
 - **Smart History Compaction**: `core/mix/30_compression.sh` summarizes middle turns to save context while preserving head/tail. Handles OpenAI + Gemini native response formats.
 - **Tool Loop Guardrails**: `core/mix/22_process_one_tool_call.sh` detects identical tool calls AND caps same tool at 3 calls/turn with a hard stop message to the LLM.
 - **ARG_MAX-safe media handling**: Image base64 passed via env var to `jq` (`B64DATA=... jq -n 'env.B64DATA'`) — avoids kernel argument size limit.

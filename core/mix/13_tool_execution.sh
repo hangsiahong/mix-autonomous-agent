@@ -21,14 +21,16 @@ run_tool() {
         echo "Error: Tool $name not found."
         return 1
     fi
-    
-    # If args is a JSON string containing an escaped JSON object, parse it
+
+    # Normalize args: if it's a JSON-encoded string of JSON (double-encoded),
+    # unwrap it so downstream parsing always sees a JSON object literal.
+    local args="$args_json"
     local _args_type
     _args_type=$(echo "$args" | python3 -c "import json,sys; v=json.load(sys.stdin); print('string' if isinstance(v,str) else 'other')" 2>/dev/null)
     if [[ "$_args_type" == "string" ]]; then
         args=$(echo "$args" | python3 -c "import json,sys; print(json.load(sys.stdin))")
     fi
-    
+
     # Export args as TOOL_ vars
     eval "$(echo "$args" | python3 -c "
 import json, sys, shlex

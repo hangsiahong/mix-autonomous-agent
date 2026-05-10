@@ -2,8 +2,14 @@
 # core/access_control.sh - Tool execution permissions
 source "${_CONFIG_DIR:-core}/config.sh"
 
-# Sensitive tools that require explicit approval
-SENSITIVE_TOOLS=("edit_code" "create_code" "delete_file" "execute_bash")
+# Sensitive tools that require explicit approval. Anything that mutates
+# the filesystem, executes arbitrary shell, modifies the agent itself, or
+# changes registered tool definitions belongs here.
+SENSITIVE_TOOLS=(
+    "bash" "process"
+    "write_file" "edit_code" "patch" "delete_file"
+    "custom_tool_manager" "skill_manager"
+)
 PERMISSION_STORE="brain/state/permissions.json"
 
 check_tool_permission() {

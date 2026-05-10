@@ -13,8 +13,27 @@ AMA is a Bash-based autonomous agent that uses modular components inspired by th
 
 ## Key Features
 - **Real-time Streaming**: Edits the initial "Thinking..." message in Telegram as tokens arrive.
-- **Self-Modification**: Has access to `edit_code`, `read_code`, and `list_files` to alter its own logic.
+- **Self-Modification**: Full toolchain — `read_code` (paginated), `edit_code` (fuzzy multi-line), `patch` (V4A atomic multi-file), `write_file` (path-safe + syntax-validated), `bash` (hardened, timeout), `custom_tool_manager` (validated).
+- **Hybrid Bash+Python Pattern**: Bash wrappers marshal `TOOL_*` env vars → JSON → pipe to `tools/_lib/cli.py` Python dispatcher. Keeps Bash thin and Python unit-testable.
 - **Native Gemini Support**: Uses Google AI Studio's native REST API for tool calling and streaming.
+- **Expanded SENSITIVE_TOOLS**: `bash`, `process`, `write_file`, `edit_code`, `patch`, `delete_file`, `custom_tool_manager`, `skill_manager` all require explicit access control.
+
+## Self-Modification Subsystem (as of 2026-05-10)
+```
+tools/
+  _lib/
+    cli.py           # Dispatcher: edit | patch | write | read commands
+    fuzzy_match.py   # 9-strategy chain fuzzy replace
+    patch_parser.py  # V4A parse → validate → apply
+    path_safety.py   # Root confinement + sensitive path blocklist
+    file_backend.py  # FileOps: read/write/syntax-validate
+  edit_code.sh       # Single-location fuzzy edit → unified diff
+  patch.sh           # Multi-file V4A atomic patch
+  write_file.sh      # New-file creation with path safety
+  read_code.sh       # Paginated read with line numbers
+  bash.sh            # Hardened command executor
+  custom_tool_manager.sh  # Validated tool registration
+```
 
 ## Future Directions
 - **Skills System**: Shifting from hardcoded tools to dynamic skill loading (Hermes style).

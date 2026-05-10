@@ -1,30 +1,34 @@
 #!/bin/bash
-# Tool: write_file
-# Create or overwrite a file with the given content.
+# tools/write_file.sh — Create or overwrite a file with safety checks.
+#
+# Inputs:
+#   TOOL_path     — relative path within project root (required)
+#   TOOL_content  — content to write (default empty)
+#   TOOL_append   — "true" to append instead of overwrite (default false)
+#
+# For .sh / .py / .json files, the new content is syntax-checked before
+# the file is touched. Sensitive system paths and credential directories
+# are refused.
 
-path="${TOOL_path}"
-content="${TOOL_content}"
-append="${TOOL_append:-false}"
+set -u
 
-if [[ -z "$path" ]]; then
-    echo "Error: path is required."
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+if [[ -z "${TOOL_path:-}" ]]; then
+    echo "Error: 'path' is required."
     exit 1
 fi
 
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-RESOLVED_PATH="$(realpath -m "$path")"
+cd "$ROOT" || { echo "Error: cannot enter project root"; exit 1; }
 
-if [[ "$RESOLVED_PATH" != "$PROJECT_ROOT"* ]]; then
-    echo "Error: Access denied. Path must be within the project directory."
-    exit 1
-fi
-
-mkdir -p "$(dirname "$RESOLVED_PATH")"
-
-if [[ "$append" == "true" ]]; then
-    printf '%s' "$content" >> "$RESOLVED_PATH"
-    echo "Appended to $path ($(wc -c < "$RESOLVED_PATH") bytes total)"
-else
-    printf '%s' "$content" > "$RESOLVED_PATH"
-    echo "Written: $path ($(wc -c < "$RESOLVED_PATH") bytes)"
-fi
+PATH_VAL="${TOOL_path}" \
+CONTENT_VAL="${TOOL_content:-}" \
+APPEND_VAL="${TOOL_append:-false}" \
+python3 -c "
+import json, os, sys
+ap = os.environ['APPEND_VAL'].lower() in ('true','1','yes')
+sys.stdout.write(json.dumps({
+    'path': os.environ['PATH_VAL'],
+    'content': os.environ['CONTENT_VAL'],
+    'append': ap,
+}))" | python3 "$ROOT/tools/_lib/cli.py" write
