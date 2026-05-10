@@ -61,7 +61,7 @@ _DANGER_PATTERNS=(
 )
 
 for pat in "${_DANGER_PATTERNS[@]}"; do
-    if echo "$cmd" | grep -qE "$pat"; then
+    if echo "$cmd" | LC_ALL=C grep -qE "$pat"; then
         echo "Error: command blocked for safety (pattern: ${pat:0:60}...)"
         echo "If this is a legitimate need, ask the user to perform it manually."
         exit 1

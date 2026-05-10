@@ -30,7 +30,7 @@ if session_filter:
     files = [os.path.join(state_dir, f"history_{session_filter}.json")]
 else:
     # Search both active sessions and archived ones (post-/new)
-    files = sorted(glob.glob(os.path.join(state_dir, "history_*.json")))
+    files = sorted(sorted(glob.glob(os.path.join(state_dir, "history_*.json")), key=os.path.getmtime, reverse=True))
     files += sorted(glob.glob(os.path.join(state_dir, "sessions", "history_*.json")))
 
 if not files:

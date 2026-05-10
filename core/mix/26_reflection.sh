@@ -68,9 +68,19 @@ If you decide to take action, execute the tools and explain why in the thought.
             break
         fi
 
-        # If it generated a message for the user, we should send it
-        if [[ -n "$text" && "$text" != "null" && "$text" != "" && "$text" != "NO_ACTION" ]]; then
-            tg_send "$chat_id" "[Proactive] $text" "$thread_id"
+        # Only send to user if there's real value AND it's not just a narrated plan.
+        # Suppress messages that are pure intentions without tool results yet.
+        local _has_tools=false
+        [[ "$tool_calls" != "[]" && "$tool_calls" != "null" && -n "$tool_calls" ]] && _has_tools=true
+
+        if [[ -n "$text" && "$text" != "null" && "$text" != "" && "$text" != "NO_ACTION" && "$_has_tools" == false ]]; then
+            # Only send text-only proactive messages if they contain actual findings/fixes,
+            # not just descriptions of what the agent "will" do next.
+            if echo "$text" | grep -qiE "I('ll| will| would| am going to)|Let me |I'll check|I should|Next,|First,"; then
+                : # suppress — it's narrating a plan, not reporting a result
+            else
+                tg_send "$chat_id" "[Proactive] $text" "$thread_id"
+            fi
         fi
 
         if [[ "$tool_calls" != "[]" && "$tool_calls" != "null" && -n "$tool_calls" ]]; then

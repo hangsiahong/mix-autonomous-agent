@@ -506,7 +506,7 @@
   },
   {
     "name": "skill_install",
-    "description": "Install an external skill from a git repo in one shot — clones the repo, reads SKILL.md to build the prompt, and writes brain/skills/<name>/. Use this instead of manually cloning + creating files. Requires a public https:// git URL.",
+    "description": "Install an external skill from a git repo in one shot \u2014 clones the repo, reads SKILL.md to build the prompt, and writes brain/skills/<name>/. Use this instead of manually cloning + creating files. Requires a public https:// git URL.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -523,7 +523,10 @@
           "description": "Optional space-separated extra toolsets to enable, e.g. 'inspect media'."
         }
       },
-      "required": ["skill", "repo"]
+      "required": [
+        "skill",
+        "repo"
+      ]
     },
     "toolset": "meta"
   },
@@ -572,5 +575,24 @@
       ]
     },
     "toolset": "search"
+  },
+  {
+    "name": "recap",
+    "description": "Quickly summarize the current session or a specific session by reading raw logs directly. Use this instead of session_search when you need a summary of what just happened in the current chat.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "description": "Specific session ID (e.g. \"tg_670967877\"). Auto-detected if omitted."
+        },
+        "last_n": {
+          "type": "integer",
+          "description": "Number of recent messages to include in the recap. Default: 20."
+        }
+      },
+      "required": []
+    },
+    "toolset": "memory"
   }
 ]

@@ -23,8 +23,8 @@ fi
 flags="-rn"
 [[ "$ignore_case" == "true" ]] && flags="$flags -i"
 
-results=$(grep $flags --include="$file_glob" -- "$pattern" "$RESOLVED_PATH" 2>/dev/null \
-    | grep -v '/\.git/' \
+results=$(LC_ALL=C grep $flags --include="$file_glob" -- "$pattern" "$RESOLVED_PATH" 2>/dev/null \
+    | LC_ALL=C grep -v '/\.git/' \
     | head -60)
 
 if [[ -z "$results" ]]; then
