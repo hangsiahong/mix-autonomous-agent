@@ -49,6 +49,12 @@ _api_build_payload() {
     system_prompt=$(cat brain/system_prompt.md)
     _scan_for_injection "$system_prompt" "brain/system_prompt.md" || system_prompt="[System prompt blocked due to injection pattern detected]"
 
+    # Inject current date/time and working directory so the agent always knows "today"
+    local _now _cwd
+    _now=$(date '+%A, %B %-d, %Y at %H:%M %Z')
+    _cwd=$(pwd)
+    system_prompt="Current date and time: ${_now}\nCurrent directory: ${_cwd}\n\n${system_prompt}"
+
     # Inject SOUL.md persona (user-editable, loaded fresh each session — hermes pattern)
     if [[ -f "SOUL.md" && -s "SOUL.md" ]]; then
         local _soul_raw

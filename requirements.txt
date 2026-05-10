@@ -5,7 +5,7 @@
 requests>=2.31.0
 
 # Web search (web_search.sh)
-duckduckgo-search>=6.0.0
+ddgs>=0.1.0
 
 # Vector memory (memory_helper.py)
 lancedb>=0.6.0

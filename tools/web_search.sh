@@ -122,9 +122,9 @@ def search_searxng(query, limit):
         out.append({"title": item.get("title",""), "url": item.get("url",""), "snippet": item.get("content","")[:300]})
     return out
 
-# ── Backend: DuckDuckGo (duckduckgo_search package) ───────────────────────
+# ── Backend: DuckDuckGo (ddgs package) ────────────────────────────────────
 def search_ddgs(query, limit):
-    from duckduckgo_search import DDGS
+    from ddgs import DDGS
     out = []
     with DDGS() as ddgs:
         for r in ddgs.text(query, max_results=limit):
@@ -158,7 +158,7 @@ def get_backend():
     if os.environ.get("BRAVE_SEARCH_API_KEY","").strip(): return "brave"
     if os.environ.get("SEARXNG_URL","").strip(): return "searxng"
     try:
-        from duckduckgo_search import DDGS  # noqa
+        from ddgs import DDGS  # noqa
         return "ddgs"
     except ImportError:
         return "ddg_html"
