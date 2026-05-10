@@ -124,7 +124,11 @@ def save_memory(text, metadata=None):
     row = {"vector": embedding, "text": text, "metadata": json.dumps(metadata or {})}
 
     model_changed = meta.get("model") != cur_model
-    table_exists = TABLE_NAME in db.list_tables()
+    try:
+        db.open_table(TABLE_NAME)
+        table_exists = True
+    except Exception:
+        table_exists = False
 
     if not table_exists or model_changed:
         # overwrite clears old data with incompatible embeddings then creates fresh
@@ -138,10 +142,11 @@ def search_memory(query, limit=5):
     embedding = get_embedding(query)
     db = lancedb.connect(DB_PATH)
 
-    if TABLE_NAME not in db.list_tables():
+    try:
+        table = db.open_table(TABLE_NAME)
+    except Exception:
         return []
 
-    table = db.open_table(TABLE_NAME)
     results = table.search(embedding).limit(limit).to_list()
     return results
 
@@ -156,4 +161,17 @@ if __name__ == "__main__":
         query = sys.argv[2]
         limit = int(sys.argv[3]) if len(sys.argv) > 3 else 5
         results = search_memory(query, limit)
-        print(json.dumps(results, indent=2))
+        if not results:
+            print("No memories found.")
+        else:
+            lines = []
+            for i, r in enumerate(results, 1):
+                score = r.get("_distance", r.get("score", ""))
+                score_str = f" (score: {score:.3f})" if isinstance(score, float) else ""
+                try:
+                    meta = json.loads(r.get("metadata") or "{}")
+                except Exception:
+                    meta = {}
+                topic = f" [{meta['topic']}]" if meta.get("topic") else ""
+                lines.append(f"{i}.{topic}{score_str} {r.get('text', '')}")
+            print("\n".join(lines))
