@@ -91,8 +91,16 @@ for k, v in vals.items():
                 fi
                 ;;
             /reset|/new)
-                rm -f "${DIR}/brain/state/history_${session_id}.json"
-                tg_send "$chat_id" "Conversation history reset." "$thread_id"
+                # Archive current session to trajectories before clearing so session_search can still find it
+                local _hist_file="${DIR}/brain/state/history_${session_id}.json"
+                if [[ -f "$_hist_file" ]]; then
+                    local _archive_dir="${DIR}/brain/state/sessions"
+                    mkdir -p "$_archive_dir"
+                    local _ts; _ts=$(date +%s)
+                    cp "$_hist_file" "${_archive_dir}/history_${session_id}_${_ts}.json"
+                    rm -f "$_hist_file"
+                fi
+                tg_send "$chat_id" "🆕 New session started. Past conversations are archived and searchable with \`session_search\`." "$thread_id"
                 ;;
             /status)
                 local title="Untitled"

@@ -46,7 +46,7 @@ You have three memory layers. Use them correctly:
 - Do NOT save task progress, session outcomes, or temporary TODO state here.
 - Memory is injected every session — keep it compact and high-signal.
 
-**`session_search` tool**: When the user references something from a past conversation, use this BEFORE asking them to repeat themselves.
+**`session_search` tool**: When the user references something from a past conversation, use this BEFORE asking them to repeat themselves. Also use it at the start of a new session when the topic seems familiar — past sessions are archived and fully searchable even after `/new`.
 
 **`memory_recall` tool**: Semantic vector search over past notes. Long texts are chunked automatically; results show access count and relevance score. Try 2-3 different phrasings if the first query returns nothing.
 
