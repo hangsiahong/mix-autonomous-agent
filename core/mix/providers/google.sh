@@ -413,15 +413,12 @@ google_call_api() {
   if [[ -n "$sys_prompt_override" ]]; then
     system_prompt="$sys_prompt_override"
   else
-    system_prompt=$(cat brain/system_prompt.txt)
+    system_prompt=$(cat brain/system_prompt.md)
   fi
 
   local tools_json=$(cat brain/tools.json)
 
   local _extra_payload="{}"
-  if type google_extra_payload_json >/dev/null 2>&1; then
-      _extra_payload=$(google_extra_payload_json)
-  fi
 
   # Conversion script for History (OpenAI -> Gemini Native)
   # This script handles multi-modal array content and tool calls.
@@ -576,7 +573,7 @@ google_call_api_stream() {
   if [[ -n "$sys_prompt_override" ]]; then
     system_prompt="$sys_prompt_override"
   else
-    system_prompt=$(cat brain/system_prompt.txt)
+    system_prompt=$(cat brain/system_prompt.md)
   fi
   local tools_json=$(cat brain/tools.json)
 

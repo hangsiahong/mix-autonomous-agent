@@ -23,9 +23,9 @@ HISTORY="[]"
 # We need to simulate _api_build_payload
 source "${DIR}/core/mix/16_api.sh"
 
-# Mock brain/system_prompt.txt
-if [ ! -f brain/system_prompt.txt ]; then
-    echo "BASE SYSTEM PROMPT" > brain/system_prompt.txt
+# Mock brain/system_prompt.md
+if [ ! -f brain/system_prompt.md ]; then
+    echo "BASE SYSTEM PROMPT" > brain/system_prompt.md
 fi
 if [ ! -f brain/tools.json ]; then
     echo "[]" > brain/tools.json

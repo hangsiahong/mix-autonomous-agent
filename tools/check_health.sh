@@ -7,7 +7,7 @@ echo "Time: $(date)"
 echo "Uptime: $(uptime -p)"
 
 echo -e "\n[Files]"
-REQUIRED_FILES=("bot.sh" "core/mix/init.sh" "brain/tools.json" "brain/system_prompt.txt")
+REQUIRED_FILES=("bot.sh" "core/mix/init.sh" "brain/tools.json" "brain/system_prompt.md")
 for f in "${REQUIRED_FILES[@]}"; do
     if [[ -f "$f" ]]; then
         echo "OK: $f"

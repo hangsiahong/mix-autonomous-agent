@@ -46,8 +46,8 @@ _api_build_payload() {
   if [[ -n "$sys_prompt_override" ]]; then
     system_prompt="$sys_prompt_override"
   else
-    system_prompt=$(cat brain/system_prompt.txt)
-    _scan_for_injection "$system_prompt" "brain/system_prompt.txt" || system_prompt="[System prompt blocked due to injection pattern detected]"
+    system_prompt=$(cat brain/system_prompt.md)
+    _scan_for_injection "$system_prompt" "brain/system_prompt.md" || system_prompt="[System prompt blocked due to injection pattern detected]"
 
     # Inject SOUL.md persona (user-editable, loaded fresh each session — hermes pattern)
     if [[ -f "SOUL.md" && -s "SOUL.md" ]]; then
