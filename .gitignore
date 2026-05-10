@@ -6,3 +6,11 @@ brain/last_offset
 brain/state
 logs
 __pycache__
+
+# User-installed skills (git clones + their brain/ configs)
+# These are runtime user data — persist via Docker volume or commit to your own fork
+skills/
+brain/skills/
+
+# Agent-generated output files
+max_agent_site*.html

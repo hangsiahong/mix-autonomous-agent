@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AMA — The Autonomous Minimalist Agent</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=DM+Sans:wght@400;500&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,100..900;1,9..144,100..900&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        :root {
+            --bg: #fcfcfc;
+            --accent: #000000;
+            --surface: #ffffff;
+            --text: #000000;
+            --muted: #888888;
+            --border: #eeeeee;
+            --hero-font: 'Fraunces', serif;
+            --body-font: 'Plus Jakarta Sans', sans-serif;
+        }
+        body { 
+            font-family: var(--body-font); 
+            background-color: var(--bg);
+            color: var(--text);
+            overflow-x: hidden;
+        }
+        h1, h2, h3, h4, .font-heading {
+            font-family: var(--hero-font);
+            letter-spacing: -0.03em;
+        }
+        .noise {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none;
+            opacity: 0.03;
+            z-index: 9999;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+        }
+        .aggressive-scale { font-size: clamp(4rem, 12vw, 10rem); line-height: 0.8; font-weight: 800; }
+        .gradient-accent {
+            background: linear-gradient(135deg, #000 0%, #444 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .marquee {
+            display: flex;
+            overflow: hidden;
+            user-select: none;
+            gap: 4rem;
+            mask-image: linear-gradient(to right, transparent, black 20%, black 80%, transparent);
+        }
+        .marquee-content {
+            flex-shrink: 0;
+            display: flex;
+            justify-content: space-around;
+            gap: 4rem;
+            min-width: 100%;
+            animation: scroll 40s linear infinite;
+        }
+        @keyframes scroll {
+            from { transform: translateX(0); }
+            to { transform: translateX(-100%); }
+        }
+        @keyframes float {
+            0% { transform: translateY(0px); }
+            50% { transform: translateY(-10px); }
+            100% { transform: translateY(0px); }
+        }
+        .float { animation: float 6s ease-in-out infinite; }
+        .reveal { animation: reveal 1s cubic-bezier(0.19, 1, 0.22, 1) forwards; }
+        @keyframes reveal {
+            from { opacity: 0; transform: translateY(30px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body class="antialiased selection:bg-black selection:text-white">
+    <div class="noise"></div>
+
+    <!-- Nav -->
+    <nav class="fixed top-0 w-full z-50 px-8 py-8 bg-white/80 backdrop-blur-md border-b border-zinc-100">
+        <div class="max-w-7xl mx-auto flex justify-between items-center">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 bg-black rounded-full flex items-center justify-center font-bold text-white">A</div>
+                <span class="font-heading font-black text-xl tracking-tighter">AMA.</span>
+            </div>
+            <div class="hidden md:flex gap-12 text-[13px] font-bold uppercase tracking-[0.2em] text-muted">
+                <a href="#core" class="hover:text-black transition">Capabilities</a>
+                <a href="#system" class="hover:text-black transition">System</a>
+                <a href="https://github.com/openclaw/openclaw" class="hover:text-black transition">GitHub</a>
+            </div>
+            <button class="bg-black text-white px-8 py-4 rounded-full font-bold text-xs uppercase tracking-widest hover:invert transition duration-500">
+                Get Early Access
+            </button>
+        </div>
+    </nav>
+
+    <main>
+        <section class="pt-64 pb-48 px-8">
+            <div class="max-w-7xl mx-auto">
+                <div class="reveal">
+                    <span class="text-black font-bold tracking-[0.3em] uppercase text-[10px] mb-12 block border-l-2 border-black pl-4">V2.0 — Autonomous Minimalist Agent</span>
+                    <h1 class="aggressive-scale mb-16">
+                        Intelligence <br>that <span class="italic font-light">evolves.</span>
+                    </h1>
+                    <p class="text-3xl text-black max-w-2xl leading-tight mb-20 font-medium tracking-tight">
+                        AMA isn't a chatbot. It's a self-improving bash-native agent that writes its own tools, navigates the web, and modifies its core logic in real-time.
+                    </p>
+                    <div class="flex gap-8 border-t border-zinc-100 pt-12">
+                        <div class="flex items-center gap-3">
+                            <span class="text-4xl font-heading font-bold italic">98%</span>
+                            <span class="text-[10px] font-bold uppercase tracking-widest text-muted leading-tight">Autonomous<br>Success Rate</span>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <span class="text-4xl font-heading font-bold italic">50+</span>
+                            <span class="text-[10px] font-bold uppercase tracking-widest text-muted leading-tight">Internal<br>Bash Tools</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Marquee Ticker -->
+        <section class="py-24 border-y border-zinc-100 bg-white">
+            <div class="marquee">
+                <div class="marquee-content grayscale opacity-30 hover:opacity-100 transition duration-500">
+                    <img src="https://svgl.app/library/openai.svg" class="h-8" alt="OpenAI">
+                    <img src="https://svgl.app/library/google_cloud.svg" class="h-8" alt="GCP">
+                    <img src="https://svgl.app/library/bash.svg" class="h-8" alt="Bash">
+                    <img src="https://svgl.app/library/playwright.svg" class="h-8" alt="Playwright">
+                    <img src="https://svgl.app/library/lancedb.svg" class="h-8" alt="LanceDB">
+                    <img src="https://svgl.app/library/docker.svg" class="h-8" alt="Docker">
+                    <img src="https://svgl.app/library/github.svg" class="h-8" alt="GitHub">
+                    <!-- Duplicate for infinite scroll -->
+                    <img src="https://svgl.app/library/openai.svg" class="h-8" alt="OpenAI">
+                    <img src="https://svgl.app/library/google_cloud.svg" class="h-8" alt="GCP">
+                    <img src="https://svgl.app/library/bash.svg" class="h-8" alt="Bash">
+                    <img src="https://svgl.app/library/playwright.svg" class="h-8" alt="Playwright">
+                    <img src="https://svgl.app/library/lancedb.svg" class="h-8" alt="LanceDB">
+                    <img src="https://svgl.app/library/docker.svg" class="h-8" alt="Docker">
+                    <img src="https://svgl.app/library/github.svg" class="h-8" alt="GitHub">
+                </div>
+            </div>
+        </section>
+
+        <section id="core" class="py-48 bg-black text-white px-8">
+            <div class="max-w-7xl mx-auto">
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-32">
+                    <div class="space-y-16">
+                        <h2 class="text-7xl font-bold tracking-tight leading-none italic">The<br>Core.</h2>
+                        <p class="text-xl text-zinc-400 max-w-md leading-relaxed">A minimalist core built on the premise that agents should be builders, not just talkers.</p>
+                        <div class="pt-8 grid grid-cols-2 gap-8">
+                           <div class="border-t border-zinc-800 pt-8">
+                               <div class="text-3xl font-heading italic mb-2">01.</div>
+                               <div class="text-xs font-bold uppercase tracking-widest text-zinc-500">Autonomous</div>
+                           </div>
+                           <div class="border-t border-zinc-800 pt-8">
+                               <div class="text-3xl font-heading italic mb-2">02.</div>
+                               <div class="text-xs font-bold uppercase tracking-widest text-zinc-500">Minimalist</div>
+                           </div>
+                           <div class="border-t border-zinc-800 pt-8">
+                               <div class="text-3xl font-heading italic mb-2">03.</div>
+                               <div class="text-xs font-bold uppercase tracking-widest text-zinc-500">Evolving</div>
+                           </div>
+                           <div class="border-t border-zinc-800 pt-8">
+                               <div class="text-3xl font-heading italic mb-2">04.</div>
+                               <div class="text-xs font-bold uppercase tracking-widest text-zinc-500">Infinite</div>
+                           </div>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 gap-12">
+                        <div class="group border-b border-zinc-800 pb-12 hover:border-white transition duration-500">
+                            <i data-lucide="terminal" class="w-10 h-10 mb-8"></i>
+                            <h3 class="text-3xl font-bold mb-4 italic">Bash Runtime</h3>
+                            <p class="text-zinc-400 leading-relaxed">Native integration with Linux environments. AMA executes commands, reads logs, and builds systems with absolute precision.</p>
+                        </div>
+                        <div class="group border-b border-zinc-800 pb-12 hover:border-white transition duration-500">
+                            <i data-lucide="edit-3" class="w-10 h-10 mb-8"></i>
+                            <h3 class="text-3xl font-bold mb-4 italic">Self-Modification</h3>
+                            <p class="text-zinc-400 leading-relaxed">The agent has write access to its own codebase. It identifies inefficiencies, writes fixes, and evolves its logic autonomously.</p>
+                        </div>
+                        <div class="group border-b border-zinc-800 pb-12 hover:border-white transition duration-500">
+                            <i data-lucide="database" class="w-10 h-10 mb-8"></i>
+                            <h3 class="text-3xl font-bold mb-4 italic">Semantic Memory</h3>
+                            <p class="text-zinc-400 leading-relaxed">High-performance vector memory stores experiences, user preferences, and learned behaviors for cross-session intelligence.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="py-64 px-8 text-center bg-white border-b border-zinc-100">
+             <h2 class="text-8xl md:text-[12rem] font-bold mb-16 tracking-tighter leading-none italic">Think. Act.<br>Repeat.</h2>
+             <button class="bg-black text-white px-16 py-8 rounded-full font-bold text-xs uppercase tracking-[0.4em] hover:scale-105 transition duration-500">
+                 Join the Protocol
+             </button>
+        </section>
+    </main>
+
+    <footer class="py-32 px-8 bg-zinc-50 border-t border-zinc-200">
+        <div class="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-24 items-end">
+            <div>
+                <div class="w-12 h-12 bg-black rounded-full flex items-center justify-center font-bold text-white mb-8">A</div>
+                <span class="text-4xl font-heading font-bold italic tracking-tighter">AMA. Intelligence without limits.</span>
+            </div>
+            <div class="text-right">
+                <p class="text-[10px] font-bold uppercase tracking-widest text-muted mb-4">OpenClaw Ecosystem</p>
+                <p class="text-xs text-muted">A collaborative project by KOOMPI & open source contributors. &copy; 2025.</p>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        lucide.createIcons();
+    </script>
+</body>
+</html>

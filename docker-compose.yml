@@ -1,0 +1,15 @@
+version: "3.9"
+
+services:
+  ama-bot:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      # Persist all user data (installed skills, conversation history,
+      # state, usage logs) across image rebuilds and container restarts.
+      # Core code comes from the image; only brain/ is user-mutable.
+      - ./brain:/opt/ama/brain
+      - ./logs:/opt/ama/logs
+      # Skill repos cloned by the agent (cache — can be deleted freely)
+      - ./skills:/opt/ama/skills

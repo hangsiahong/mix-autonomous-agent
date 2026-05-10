@@ -108,24 +108,63 @@ CONVERSATION TO SUMMARIZE:
 $middle_msgs"
 
     # Call API with a fresh single-user-message history (no full conversation context)
+    # Temporarily disable tools so the model produces text, not a tool call
     local saved_history="$HISTORY"
-    HISTORY=$(SP="$summary_prompt" python3 -c "import json,os; print(json.dumps([{'role':'user','content':os.environ['SP']}]))")
+    local _saved_tools; _saved_tools=$(cat brain/tools.json 2>/dev/null || echo '[]')
+    printf '[]' > brain/tools.json
+
+    # Write summary_prompt to a tempfile to handle large content and special chars safely
+    local _sp_tmp; _sp_tmp=$(mktemp)
+    printf '%s' "$summary_prompt" > "$_sp_tmp"
+    local _new_hist
+    _new_hist=$(python3 - "$_sp_tmp" <<'PYEOF' 2>/dev/null
+import json, sys
+sp = open(sys.argv[1]).read()
+print(json.dumps([{"role": "user", "content": sp}]))
+PYEOF
+)
+    rm -f "$_sp_tmp"
+
+    if [[ -z "$_new_hist" ]]; then
+        printf '%s' "$_saved_tools" > brain/tools.json
+        HISTORY="$saved_history"
+        echo "AMA: Compression skipped — failed to build summary request."
+        if [[ -n "$chat_id" && -n "$msg_id" ]]; then
+            tg_edit "$chat_id" "$msg_id" "⏳ Thinking..." "" 2>/dev/null || true
+        fi
+        return
+    fi
+
+    HISTORY="$_new_hist"
     local summary_response
     summary_response=$(call_api "You are a conversation summarizer. Respond ONLY with a concise bulleted summary. No preamble.")
+
+    # Always restore tools and history
+    printf '%s' "$_saved_tools" > brain/tools.json
     HISTORY="$saved_history"
 
     # Extract text from either OpenAI format or Gemini native format
+    # Handle function_call-only responses (model tried to use a tool) by filtering to text parts only
     local summary_text
     summary_text=$(echo "$summary_response" | python3 -c "
 import sys, json
 try:
     r = json.load(sys.stdin)
+    # OpenAI format
     t = r.get('choices',[{}])[0].get('message',{}).get('content','')
     if not t:
-        t = r.get('candidates',[{}])[0].get('content',{}).get('parts',[{}])[0].get('text','')
+        # Gemini native format — collect all text parts (skip functionCall parts)
+        parts = r.get('candidates',[{}])[0].get('content',{}).get('parts',[])
+        texts = [p.get('text','') for p in parts if p.get('text')]
+        t = '\n'.join(texts)
     print(t.strip(), end='')
 except: pass
 " 2>/dev/null)
+
+    # Log response on failure for easier debugging
+    if [[ -z "$summary_text" ]]; then
+        echo "AMA: Compression debug — raw response: ${summary_response:0:300}"
+    fi
 
     if [[ -z "$summary_text" ]]; then
         echo "AMA: Compression failed (empty summary)."

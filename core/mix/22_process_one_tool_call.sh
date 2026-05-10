@@ -43,7 +43,7 @@ except Exception as e:
 
     # 2. Per-tool call cap: idempotent (read-only) tools get 6, mutating tools get 2, others get 3
     local _idempotent_tools="read_code list_files web_search fetch_url memory_recall check_health sys_info context_discovery repo_map read_error_log insights search_files session_search"
-    local _mutating_tools="edit_code patch write_file memory_remember custom_tool_manager skill_manager image_generate bash"
+    local _mutating_tools="edit_code patch write_file memory_remember custom_tool_manager skill_manager skill_install image_generate bash"
     local tool_cap=3
     if echo " $_idempotent_tools " | grep -qw "$name"; then
         tool_cap=6

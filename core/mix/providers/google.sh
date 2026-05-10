@@ -481,35 +481,35 @@ for msg in h:
     if parts:
         contents.append({"role": role, "parts": parts})
 
-    # Gemini native payload
-    body = {
-        "contents": contents,
-        "system_instruction": {"parts": [{"text": s}]},
-    }
-    if t:
-        decls = []
-        for tool in t:
-            if "function" in tool:
-                # OpenAI format: {"type": "function", "function": {...}}
-                f = tool["function"]
-            else:
-                # Raw format: {"name": "...", "description": "...", "parameters": {...}}
-                f = tool
-            decls.append({
-                "name": f.get("name"),
-                "description": f.get("description", ""),
-                "parameters": f.get("parameters", {"type": "object", "properties": {}})
-            })
-        body["tools"] = [{"function_declarations": decls}]
+# Gemini native payload (built once, after the loop)
+body = {
+    "contents": contents,
+    "system_instruction": {"parts": [{"text": s}]},
+}
+if t:
+    decls = []
+    for tool in t:
+        if "function" in tool:
+            # OpenAI format: {"type": "function", "function": {...}}
+            f = tool["function"]
+        else:
+            # Raw format: {"name": "...", "description": "...", "parameters": {...}}
+            f = tool
+        decls.append({
+            "name": f.get("name"),
+            "description": f.get("description", ""),
+            "parameters": f.get("parameters", {"type": "object", "properties": {}})
+        })
+    body["tools"] = [{"function_declarations": decls}]
 
-    try:
-        ex = json.loads(os.environ.get("EXTRA_PAYLOAD", "{}"))
-        if ex:
-            if "thinking_level" not in ex:
-                body.update(ex)
-    except: pass
+try:
+    ex = json.loads(os.environ.get("EXTRA_PAYLOAD", "{}"))
+    if ex:
+        if "thinking_level" not in ex:
+            body.update(ex)
+except: pass
 
-    print(json.dumps(body))
+print(json.dumps(body))
 ')
   rm -f "$_g_hist_file" "$_g_sys_file"
 

@@ -505,6 +505,29 @@
     "toolset": "meta"
   },
   {
+    "name": "skill_install",
+    "description": "Install an external skill from a git repo in one shot — clones the repo, reads SKILL.md to build the prompt, and writes brain/skills/<name>/. Use this instead of manually cloning + creating files. Requires a public https:// git URL.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "skill": {
+          "type": "string",
+          "description": "Short name for the skill (used as directory name and /skill activation key)."
+        },
+        "repo": {
+          "type": "string",
+          "description": "Public https:// git URL to clone, e.g. https://github.com/org/repo"
+        },
+        "toolsets": {
+          "type": "string",
+          "description": "Optional space-separated extra toolsets to enable, e.g. 'inspect media'."
+        }
+      },
+      "required": ["skill", "repo"]
+    },
+    "toolset": "meta"
+  },
+  {
     "name": "insights",
     "description": "Show token usage statistics and tool usage frequency.",
     "parameters": {
