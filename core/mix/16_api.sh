@@ -127,10 +127,16 @@ print(json.dumps(t,separators=(',',':')))
     local skill_prompt=""
     local skill_tools="[]"
 
-    # 1. Load from core (system skills)
-    if [[ -f "core/skills/${skill}/prompt.txt" ]]; then
+    # 1. Load from core (system skills) — prefer .md, fall back to .txt
+    local _core_prompt_file=""
+    if [[ -f "core/skills/${skill}/prompt.md" ]]; then
+        _core_prompt_file="core/skills/${skill}/prompt.md"
+    elif [[ -f "core/skills/${skill}/prompt.txt" ]]; then
+        _core_prompt_file="core/skills/${skill}/prompt.txt"
+    fi
+    if [[ -n "$_core_prompt_file" ]]; then
         # Use a temporary python snippet to expand environment variables safely
-        skill_prompt=$(CAT_FILE="core/skills/${skill}/prompt.txt" PWD_VAL="$(pwd)" python3 -c '
+        skill_prompt=$(CAT_FILE="$_core_prompt_file" PWD_VAL="$(pwd)" python3 -c '
 import os
 content = open(os.environ["CAT_FILE"]).read()
 print(content.replace("$(pwd)", os.environ["PWD_VAL"]))
@@ -140,10 +146,15 @@ print(content.replace("$(pwd)", os.environ["PWD_VAL"]))
         skill_tools=$(cat "core/skills/${skill}/tools.json")
     fi
 
-    # 2. Load from brain (user overrides/new skills) - Prepend/Append based on preference
-    # We treat brain as higher priority or extension
-    if [[ -f "brain/skills/${skill}/prompt.txt" ]]; then
-        local user_prompt=$(cat "brain/skills/${skill}/prompt.txt")
+    # 2. Load from brain (user overrides/new skills) — prefer .md, fall back to .txt
+    local _brain_prompt_file=""
+    if [[ -f "brain/skills/${skill}/prompt.md" ]]; then
+        _brain_prompt_file="brain/skills/${skill}/prompt.md"
+    elif [[ -f "brain/skills/${skill}/prompt.txt" ]]; then
+        _brain_prompt_file="brain/skills/${skill}/prompt.txt"
+    fi
+    if [[ -n "$_brain_prompt_file" ]]; then
+        local user_prompt=$(cat "$_brain_prompt_file")
         skill_prompt="${skill_prompt}\n\n${user_prompt}"
     fi
     if [[ -f "brain/skills/${skill}/tools.json" ]]; then
@@ -151,9 +162,15 @@ print(content.replace("$(pwd)", os.environ["PWD_VAL"]))
         skill_tools=$(UT="$user_tools" python3 -c "import json,os,sys; a=json.load(sys.stdin); b=json.loads(os.environ['UT']); print(json.dumps(a+b,separators=(',',':')))" <<< "$skill_tools")
     fi
 
-    # 3. Load from custom folder within brain skill (extra layer for cleanliness)
-    if [[ -f "brain/skills/${skill}/custom/prompt.txt" ]]; then
-        local custom_prompt=$(cat "brain/skills/${skill}/custom/prompt.txt")
+    # 3. Load from custom folder — prefer .md, fall back to .txt
+    local _custom_prompt_file=""
+    if [[ -f "brain/skills/${skill}/custom/prompt.md" ]]; then
+        _custom_prompt_file="brain/skills/${skill}/custom/prompt.md"
+    elif [[ -f "brain/skills/${skill}/custom/prompt.txt" ]]; then
+        _custom_prompt_file="brain/skills/${skill}/custom/prompt.txt"
+    fi
+    if [[ -n "$_custom_prompt_file" ]]; then
+        local custom_prompt=$(cat "$_custom_prompt_file")
         skill_prompt="${skill_prompt}\n\n### CUSTOM EXTENSION\n${custom_prompt}"
     fi
     if [[ -f "brain/skills/${skill}/custom/tools.json" ]]; then

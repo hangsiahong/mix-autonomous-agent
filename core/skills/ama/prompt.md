@@ -20,5 +20,5 @@ You are running in a Bash-based autonomous harness.
 - Use your tools to inspect or process files if needed.
 
 # CUSTOM OVERRIDES
-Users can extend this skill by adding content to brain/skills/ama/custom/prompt.txt or brain/skills/ama/prompt.txt.
+Users can extend this skill by adding content to brain/skills/ama/custom/prompt.md or brain/skills/ama/prompt.md.
 The harness loads core/skills/ama/ first, then brain/skills/ama/ (override), then brain/skills/ama/custom/ (extension).

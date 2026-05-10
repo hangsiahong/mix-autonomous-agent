@@ -463,22 +463,37 @@
   },
   {
     "name": "skill_manager",
-    "description": "Manage agent skills (list, activate, deactivate).",
+    "description": "Manage agent skills. list: show all available skills (core + user). create: make a new skill with a system prompt injected into future turns (optionally enable extra toolsets). bind/unbind: attach a skill to a Telegram topic thread.",
     "parameters": {
       "type": "object",
       "properties": {
         "action": {
           "type": "string",
-          "description": "Action: list, activate, or deactivate."
+          "enum": ["list", "create", "bind", "unbind"],
+          "description": "Action to perform."
         },
         "skill": {
           "type": "string",
-          "description": "Skill name."
+          "description": "Skill name (required for create/bind/unbind)."
+        },
+        "prompt": {
+          "type": "string",
+          "description": "System prompt text injected when this skill is active (required for create)."
+        },
+        "toolsets": {
+          "type": "string",
+          "description": "Space-separated extra toolsets to enable for this skill, e.g. 'inspect media'."
+        },
+        "chat_id": {
+          "type": "string",
+          "description": "Telegram chat ID (required for bind/unbind)."
+        },
+        "thread_id": {
+          "type": "string",
+          "description": "Telegram thread/topic ID (required for bind/unbind)."
         }
       },
-      "required": [
-        "action"
-      ]
+      "required": ["action"]
     },
     "toolset": "meta"
   },

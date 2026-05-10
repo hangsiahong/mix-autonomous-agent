@@ -107,13 +107,38 @@ except: print('Untitled')" 2>/dev/null)
                 local sysinfo=$(bash tools/sys_info.sh)
                 tg_send "$chat_id" "Title: $title\nProvider: ${PROVIDER:-openai (default)}\nModel: ${MODEL:-gpt-4o-mini}\nSession: $session_id\nUser: ${username:-$user_id}\nType: $chat_type\nSkill: ${skill:-none}\n\n$sysinfo" "$thread_id"
                 ;;
-            /skill)
+            /skills|/skill)
                 local sname=$(echo "$args" | awk '{print $1}')
                 if [[ -z "$sname" ]]; then
-                    tg_send "$chat_id" "Current skill: ${skill:-none}\nUsage: /skill <name>" "$thread_id"
+                    # List all available skills from core + brain
+                    local _skill_list
+                    _skill_list=$(python3 -c "
+import os, json
+roots = ['core/skills', 'brain/skills']
+seen = set()
+lines = []
+for root in roots:
+    if not os.path.isdir(root): continue
+    for name in sorted(os.listdir(root)):
+        path = os.path.join(root, name)
+        if os.path.isdir(path) and name not in seen:
+            seen.add(name)
+            src = 'core' if root.startswith('core') else 'user'
+            lines.append(f'  • {name} [{src}]')
+print('\\n'.join(lines) if lines else '  (none)')
+" 2>/dev/null)
+                    tg_send "$chat_id" "<b>Available skills</b>\n${_skill_list}\n\nActive: <code>${skill:-none}</code>\nUse /skill <name> to activate, /skill off to clear." "$thread_id"
+                elif [[ "$sname" == "off" || "$sname" == "none" ]]; then
+                    set_topic_config "$chat_id" "$thread_id" "skill" ""
+                    tg_send "$chat_id" "Skill cleared. Running in default mode." "$thread_id"
                 else
-                    set_topic_config "$chat_id" "$thread_id" "skill" "$sname"
-                    tg_send "$chat_id" "Skill set to: $sname" "$thread_id"
+                    # Validate skill exists
+                    if [[ -d "core/skills/$sname" || -d "brain/skills/$sname" ]]; then
+                        set_topic_config "$chat_id" "$thread_id" "skill" "$sname"
+                        tg_send "$chat_id" "Skill set to: <code>$sname</code>" "$thread_id"
+                    else
+                        tg_send "$chat_id" "Skill '<code>$sname</code>' not found. Use /skills to list available skills." "$thread_id"
+                    fi
                 fi
                 ;;
             /insights)

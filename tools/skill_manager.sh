@@ -43,9 +43,40 @@ elif [[ "$action" == "unbind" ]]; then
      fi
 
 elif [[ "$action" == "list" ]]; then
-    if [[ -d "${_ROOT_DIR}/brain/skills" ]]; then
-        ls "${_ROOT_DIR}/brain/skills"
-    else
-        echo "No skills found."
+    python3 -c "
+import os, json
+roots = [('core/skills', 'core'), ('brain/skills', 'user')]
+seen = set()
+rows = []
+for root, src in roots:
+    if not os.path.isdir(root): continue
+    for name in sorted(os.listdir(root)):
+        path = os.path.join(root, name)
+        if os.path.isdir(path) and name not in seen:
+            seen.add(name)
+            has_prompt = os.path.exists(os.path.join(path, 'prompt.txt'))
+            has_tools  = os.path.exists(os.path.join(path, 'tools.json'))
+            rows.append(f'  {name} [{src}]' + (' +tools' if has_tools and open(os.path.join(path,'tools.json')).read().strip() not in ('[]','') else ''))
+print('\n'.join(rows) if rows else '  (no skills found)')
+"
+
+elif [[ "$action" == "create" ]]; then
+    if [[ -z "$skill" || -z "${TOOL_prompt:-}" ]]; then
+        echo "Error: 'skill' (name) and 'prompt' are required for create."
+        exit 1
     fi
+    skill_dir="${_ROOT_DIR}/brain/skills/${skill}"
+    mkdir -p "$skill_dir"
+    echo "${TOOL_prompt}" > "$skill_dir/prompt.md"
+    # Write tools.json if extra toolsets requested
+    if [[ -n "${TOOL_toolsets:-}" ]]; then
+        TS="${TOOL_toolsets}" python3 -c "
+import json, os
+ts = os.environ['TS'].split()
+print(json.dumps([{'_enabled_toolsets': ts}], indent=2))
+" > "$skill_dir/tools.json"
+    else
+        echo "[]" > "$skill_dir/tools.json"
+    fi
+    echo "Skill '${skill}' created at brain/skills/${skill}/. Activate with /skill ${skill} in Telegram."
 fi
