@@ -469,7 +469,12 @@
       "properties": {
         "action": {
           "type": "string",
-          "enum": ["list", "create", "bind", "unbind"],
+          "enum": [
+            "list",
+            "create",
+            "bind",
+            "unbind"
+          ],
           "description": "Action to perform."
         },
         "skill": {
@@ -493,7 +498,9 @@
           "description": "Telegram thread/topic ID (required for bind/unbind)."
         }
       },
-      "required": ["action"]
+      "required": [
+        "action"
+      ]
     },
     "toolset": "meta"
   },
@@ -506,5 +513,41 @@
       "required": []
     },
     "toolset": "inspect"
+  },
+  {
+    "name": "browser",
+    "description": "Control a headless Chromium browser for JS-heavy pages. Use when fetch_url fails or the page requires interaction (login forms, SPAs, infinite scroll). Returns page text and interactive elements.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "navigate",
+            "snapshot",
+            "click",
+            "type",
+            "scroll"
+          ],
+          "description": "navigate: open URL. snapshot: re-read page. click: by CSS selector or visible text. type: fill input. scroll: up or down."
+        },
+        "url": {
+          "type": "string",
+          "description": "URL to navigate to (required for navigate)"
+        },
+        "selector": {
+          "type": "string",
+          "description": "CSS selector or visible text for click/type/scroll"
+        },
+        "text": {
+          "type": "string",
+          "description": "Text to type (required for type action)"
+        }
+      },
+      "required": [
+        "action"
+      ]
+    },
+    "toolset": "search"
   }
 ]

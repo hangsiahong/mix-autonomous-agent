@@ -1,0 +1,14 @@
+# AMA - Autonomous Mix Agent
+# Python dependencies for the harness and tools
+
+# Web fetching
+requests>=2.31.0
+
+# Web search (web_search.sh)
+duckduckgo-search>=6.0.0
+
+# Vector memory (memory_helper.py)
+lancedb>=0.6.0
+
+# Browser automation (browser.sh)
+playwright>=1.40.0
