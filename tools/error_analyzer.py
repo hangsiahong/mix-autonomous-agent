@@ -44,16 +44,21 @@ def _load_jsonl(path, since_ts=0):
 
 def _fingerprint(body: str) -> str:
     """Collapse an error body to a short canonical key for grouping."""
-    b = body[:300]
-    # Extract core message
-    m = re.search(r'"message"\s*:\s*"([^"]{10,100})"', b)
+    b = body[:600]
+    # Extract core message field — no length limit on match, message can be long
+    m = re.search(r'"message"\s*:\s*"([^"]+)"', b)
     if m:
         msg = m.group(1)
-        # Remove variable parts (IDs, numbers, timestamps)
+        # Remove variable parts (ordinal numbers like "4. content block", UUIDs)
+        msg = re.sub(r'\b\d+\.\s+content block\b', 'N. content block', msg)
         msg = re.sub(r'\b\d+\b', 'N', msg)
         msg = re.sub(r'[0-9a-f]{8,}', 'HASH', msg)
-        return msg[:80]
-    # Fallback: first 80 chars of body stripped of whitespace
+        return msg[:100]
+    # Fallback: extract status if present
+    m2 = re.search(r'"status"\s*:\s*"([^"]+)"', b)
+    if m2:
+        return m2.group(1)[:80]
+    # Last resort: first 80 chars stripped of whitespace
     return re.sub(r'\s+', ' ', b)[:80]
 
 def analyze(hours=24):
