@@ -1,72 +1,108 @@
 # Active Context
 
 ## Current Status (2026-05-13)
-- **Branch**: `improve` — comprehensive harness upgrade in progress
-- **Stable under pm2** — all features tested against Google Vertex AI Gemini 3 Flash
-- **30+ tools**, 6 toolsets, Playwright browser, SQLite session DB, LanceDB vector memory
+- **Branch**: `improve` — comprehensive harness upgrade, all major features landed
+- **Running under pm2** against Google Vertex AI (Gemini 3 Flash Preview, global region)
+- **30 tools**, SQLite session DB, LanceDB vector memory, self-healing loop active
 
-## Major Changes Landed (improve branch — May 2026)
+---
 
-### Vertex AI / Gemini 3 Fixes
-- **`thought_signature`**: Captured from stream deltas and restored in API payloads — fixes 400 errors on Gemini 3 thinking models
-- **`google_filter_history`**: Fixed stdin bug (was reading `sys.argv[1]` instead of `sys.stdin`) — filter was silently a no-op
-- **Native payload builders**: Both `google_call_api` and `google_call_api_stream` now restore `thoughtSignature` in `function_call` parts
+## Everything landed on `improve` branch (chronological)
 
-### Telegram UX (openclaw patterns)
-- **Reactions** (`TG_REACTIONS=1`): 👀 on receive, ✅ on done, 👎 on max-turns/error via `tg_react()`
-- **Reply-to threading**: All bot responses are `reply_to_message_id` of user's original message
-- **Tool progress display**: `_Working…_` header + individual tool lines in backtick code blocks
-- **Photo album batching**: Detects `media_group_id`, buffers 1s, coalesces into one agent call
-- **Group @mention gate**: `REQUIRE_MENTION=1` env var — only respond when @mentioned in groups
-- **Stream retry**: Auto-reconnects once on network drop before showing error
+### 1. Vertex AI / Gemini 3 — thought_signature fix
+- Captured `thoughtSignature` in stream deltas (OpenAI-compat + native Gemini)
+- Fixed `google_filter_history` stdin bug (was silently a no-op)
+- Native payload builders now restore `thoughtSignature` on subsequent turns
 
-### New Slash Commands
-| Command | What it does |
-|---------|-------------|
-| `/retry` | Trim history to before last user message, re-run it |
-| `/undo` | Remove last exchange from history |
-| `/model <name>` | Per-session model override (stored in `brain/state/model_<sid>`) |
-| `/usage` | Token counts for this session from usage_log.jsonl |
-| `/steer <note>` | Inject guidance mid-run after next tool call |
-| `/queue <text>` | FIFO queue — processed after current turn |
-| `/history [n]` | Show last N conversation turns |
-| `/topic <name>` | Name this Telegram thread/topic |
-| `/sessions [n]` | List recent sessions with lineage and token counts |
-| `/stop all` | Kill every running session + edit all dangling messages |
+### 2. Openclaw-style tool streaming UX
+- Each tool shown as `` `🛠️ bash: command` `` during streaming (code block format)
+- `_Working…_` italic header above tool lines
+- `google_stream.py` and `18_streaming_api_call.sh` both updated
 
-### /stop race condition fix
-- PID file now written **inside** the flock (always points to running process, not queued)
+### 3. Hermes patterns ported
+- **Reactions**: `tg_react()` → 👀 receive, ✅ done, 👎 error/max-turns (`TG_REACTIONS=1`)
+- **Reply-to threading**: every bot response threads to user's original message
+- **Photo album batching**: 1s buffer, coalesces `media_group_id` albums into one call
+- **Group @mention gate**: `REQUIRE_MENTION=1` — only respond when @mentioned
+- **Stream retry**: auto-reconnect once on network drop before showing error
+- **10 new commands**: `/retry`, `/undo`, `/model`, `/usage`, `/steer`, `/queue`, `/history`, `/topic`, `/sessions`, `/stop all`
+- **`/steer`**: queued in `brain/state/steer_<sid>`, drained into last tool result after batch; if no tools called, injects as user guidance and continues loop
+- **`/queue`**: FIFO file, popped one-per-turn after current completes (outside flock)
+- **`/model`**: per-session override in `brain/state/model_<sid>`, cleared on `/new`
+
+### 4. /stop race condition — fully fixed
+- PID file written **inside** flock (always points to running process)
 - Stop flag file (`brain/state/stop_<sid>`) catches queued processes after kill
-- `/stop` edits the dangling message to "Stopped."
+- `/stop` edits dangling "⏳ Thinking…" to "🛑 Stopped."
 
-### Memory and Sessions (hermes patterns)
-- **Memory auto-prefetch**: Every API call queries LanceDB with current user input (3s timeout), injects `<memory-context>` fence into last user message (not system prompt — preserves prefix cache)
-- **Session recaps**: End-of-session structured summary saved to `session_recaps.jsonl` + LanceDB
-- **Recent recaps in context**: Last 3 session recaps injected into system prompt
-- **Session idle auto-reset**: `SESSION_IDLE_HOURS` env var (0=disabled)
-- **`tools/session_db.py`**: Full SQLite session manager — FTS5 message search, compression lineage, token tracking
-- **Compression lineage**: `parent_session_id` recorded in SQLite on context compression
-
-### Compression Improvements (hermes patterns)
-- **Structured summary**: 7 sections — Active Task, Goal, Completed Actions, Current State, Key Context, Remaining Work, Important Facts
-- **Token-based trigger**: ~80K tokens instead of naive message count
-- **Pre-compression pruning**: Tool results >400 chars truncated before feeding to LLM summarizer
-- **Tool result cap**: `append_tool_result` truncates outputs >6000 chars (head 4K + tail 1K)
-
-### Reliability Fixes
-- **Stream error recovery**: Shows partial content + warning instead of leaving "Thinking…" stuck
-- **Agent process cap**: `MAX_CONCURRENT_AGENTS=10` rejects new messages when overloaded
-- **Max-turns notification**: Shows warning + retry instructions instead of silent exit
-- **tools.json race in reflection**: Uses unique `mktemp` backup + `trap` to always restore
+### 5. Hermes-pattern memory & sessions
+- **Memory auto-prefetch (async)**: pre-warmed after each turn into `brain/state/prefetch_<sid>`, consumed at 0 latency next turn
+- **SQLite session DB** (`tools/session_db.py`): FTS5 search, compression lineage, token counts
+- **Session recaps**: structured summary → `session_recaps.jsonl` + LanceDB after tool-heavy turns
+- **Recent recaps injected at TOP of system prompt** (clearly labeled "READ THIS FIRST")
+- **Session idle auto-reset**: `SESSION_IDLE_HOURS` (default 0=disabled)
 - **Atomic writes**: `save_history`, `save_config` use `mktemp + mv`
-- **Provider fallback chain**: `FALLBACK_PROVIDER=provider:model` activates on 2nd retry
-- **Media download timeout**: 30s timeout + 10MB/s rate limit on `tg_download`
+- **Provider fallback chain**: `FALLBACK_PROVIDER=provider:model`
+- **Agent process cap**: `MAX_CONCURRENT_AGENTS=10`
+- **Media download timeout**: 30s + 10MB/s rate limit
 
-## Architecture Patterns in Use
-- **hermes-agent**: Session state machine, compression lineage, memory prefetch, steer/queue, reactions, structured summaries
-- **openclaw**: Tool progress display (backtick code blocks), reply-to threading, photo batching, @mention gate
+### 6. Compression improvements (hermes-style)
+- 7-section structured summary (Active Task, Goal, Completed Actions, etc.)
+- Token-based trigger (~80K) instead of message count
+- Pre-compression pruning of large tool results
+- Tool result cap: `append_tool_result` truncates >6000 chars (head 4K + tail 1K)
 
-## Immediate Next (if continuing)
-- `/branch` + `/rollback` — snapshot history before risky work, restore on failure
+### 7. Self-healing loop
+- **`tools/error_analyzer.py`**: FTS pattern detection, 3+ hits in 24h = create `heal_request.json`
+- **`core/mix/27_self_heal.sh`**: picked up at session start, runs diagnostic loop
+  - Has write access to `tools/` — can fix tool scripts directly
+  - Core files (`core/`, `bot.sh`) blocked — sends description via `clarify` to admin
+- **Reflection** now calls `read_error_log` automatically; breaks on FAIL responses
+- **Cron**: error pattern detection → alert (max once/hour) → heal request creation
+- **`error_analyzer.py clear <hours>`**: archives acknowledged errors so alerts stop
+
+### 8. Level 4 harness — reduce LLM cognitive load
+- **Smart folding**: 200-line outputs → `--- [142 lines folded | 3 error(s) | git: +15/-8] ---`
+- **Error hints in bash**: on non-zero exit, 💡 hint injected (pip install, chmod, port in use, etc.)
+- **Plan/todo injection**: `brain/state/todo_default.json` injected as `## Active Plan` at top of every turn
+- **`tools/ast_edit.py`**: AST-aware Python editor (validate, list_symbols, get_symbol, replace_func, add_import, rename) — structurally impossible to produce syntax errors
+
+### 9. Session recall fix
+- **Memory priority order** in system prompt: context first → `last_session` tool → `session_search` (slow, last resort)
+- **`tools/last_session.sh`**: instant recall from `session_recaps.jsonl` (~0.1s, no embeddings)
+- **Session recaps injected at TOP** with "READ THIS FIRST" label — agent no longer over-searches
+
+### 10. Bug fixes
+- `reflect_turn`: break on FAIL response (was looping 5x, each generating "Model input cannot be empty" errors)
+- `_api_build_payload`: guard against empty history (sys.exit(2) if no user messages)
+- `34_error_classifier.sh`: "cannot be empty" and "thought_signature" → `bad_request_permanent` (non-retryable)
+- FutureWarning suppressed in `memory_helper.py`
+- `/usage` command: fixed session_id filter (was comparing wrong values)
+- Cron: `_now` now defined at top (was used before definition), `needs_attention` only fires for error patterns (not normal tool usage), flock dedup prevents multiple parallel cron instances on bot restart
+
+### 11. Fork-safe architecture
+- `brain/config.json` → **gitignored** (copy from `brain/config.example.json`)
+- `brain/tools_extra.json` → **gitignored** (agent custom tools, merged at runtime)
+- `tools/custom/` → **gitignored** (agent tool scripts)
+- `SOUL.md` → **gitignored** (persona, copy from `SOUL.md.example`)
+- `custom_tool_manager` now writes to `brain/tools_extra.json` (not base `brain/tools.json`)
+- `git pull` never conflicts — agent writes only to gitignored paths
+
+---
+
+## Key files added in this branch
+```
+core/mix/27_self_heal.sh         — self-healing diagnostic loop
+tools/error_analyzer.py          — error pattern detection + archiving
+tools/session_db.py              — SQLite session manager CLI
+tools/ast_edit.py                — AST-aware Python editor
+tools/last_session.sh            — instant session recap recall
+brain/config.example.json        — setup template
+SOUL.md.example                  — persona template
+```
+
+## What's still left (future work)
+- `/branch` + `/rollback` — snapshot history before risky work
 - `/approve` / `/deny` — Telegram confirmation gate for dangerous tools
 - Memory dreaming / background consolidation (openclaw pattern)
+- Per-session `require_mention` toggle
