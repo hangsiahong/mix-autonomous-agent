@@ -102,7 +102,10 @@ def analyze(hours=24):
             {"ts": h.get("ts"), "action": h.get("action"), "result": h.get("result")}
             for h in heals[-5:]
         ],
-        "needs_attention": len(recurring) > 0 or any(v >= 10 for v in frequent_tools.values()),
+        # needs_attention ONLY fires for actual API error patterns, NOT tool frequency.
+        # High tool usage (bash: 40 calls) is normal — not an error condition.
+        # Tool frequency is informational only.
+        "needs_attention": len(recurring) > 0,
     }
 
 def format_report(data: dict) -> str:

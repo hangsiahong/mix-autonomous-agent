@@ -2,11 +2,23 @@
 # extensions/cron/run.sh
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+# Dedup lock: prevent multiple concurrent cron instances (happens on bot restart)
+_CRON_LOCK="${DIR}/brain/state/.cron.lock"
+if ! flock -n 9 2>/dev/null; then
+    exit 0  # Another cron is already running, skip silently
+fi
+exec 9>"$_CRON_LOCK"
+flock -n 9 || exit 0
+
 source "${DIR}/core/mix/00_header.sh"
 source "${DIR}/core/mix/16_api.sh"
 source "${DIR}/core/mix/34_error_classifier.sh"
 source "${DIR}/core/mix/38_rate_limit.sh"
 source "${DIR}/core/mix/01_config.sh"
+
+# _now must be defined FIRST — used in every cooldown calculation below
+_now=$(date +%s)
 
 echo "[$(date)] Running background maintenance..."
 
@@ -65,7 +77,6 @@ done
 
 # 3. Monthly memory pruning — remove memories unused for 30+ days
 MEMORY_PRUNE_MARKER="${DIR}/brain/state/.memory_last_pruned"
-_now=$(date +%s)
 _last_prune=0
 if [[ -f "$MEMORY_PRUNE_MARKER" ]]; then
     _last_prune=$(cat "$MEMORY_PRUNE_MARKER" 2>/dev/null || echo 0)
