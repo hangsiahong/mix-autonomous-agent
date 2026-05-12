@@ -12,8 +12,8 @@ compress_history() {
     local thread_id="$3"
     local msg_id="$4"
 
-    local count; count=$(echo "$HISTORY" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null); count=${count:-0}
-    
+    local count; count=$(python3 -c "import json,sys; print(len(json.loads(open(sys.argv[1]).read())))" <(printf '%s' "$HISTORY") 2>/dev/null); count=${count:-0}
+
     if [ "$count" -le "$COMPRESSION_THRESHOLD" ]; then
         return
     fi
@@ -28,7 +28,7 @@ compress_history() {
     # 1. Identify slices — then adjust to safe turn boundaries
     local end_index=$((count - KEEP_LAST_N))
     local start_index=$KEEP_FIRST_N
-    
+
     if [ "$start_index" -ge "$end_index" ]; then
         # Restore thinking indicator even if we bail early
         if [[ -n "$chat_id" && -n "$msg_id" ]]; then
@@ -44,12 +44,13 @@ compress_history() {
     _boundary_py='
 import json, sys
 try:
-    history = json.load(sys.stdin)
+    history = json.loads(open(sys.argv[1]).read())
 except Exception as e:
     sys.stderr.write(f"boundary: bad HISTORY JSON: {e}\n")
     sys.exit(1)
-si = int(sys.argv[1])
-ei = int(sys.argv[2])
+
+si = int(sys.argv[2])
+ei = int(sys.argv[3])
 n = len(history)
 si = max(0, min(si, n - 1))
 ei = max(0, min(ei, n - 1))
@@ -70,7 +71,7 @@ while ei > si and history[ei].get("role") != "user":
 print(json.dumps({"start": si, "end": ei}))
 '
     local boundary_json
-    boundary_json=$(echo "$HISTORY" | python3 -c "$_boundary_py" "$start_index" "$end_index" 2>/dev/null)
+    boundary_json=$(python3 -c "$_boundary_py" <(printf '%s' "$HISTORY") "$start_index" "$end_index" 2>/dev/null)
 
     # Guard: if boundary_json is empty (Python crash), bail safely
     if [[ -z "$boundary_json" ]]; then
@@ -81,8 +82,8 @@ print(json.dumps({"start": si, "end": ei}))
         return
     fi
 
-    start_index=$(echo "$boundary_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('start',''))")
-    end_index=$(echo "$boundary_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('end',''))")
+    start_index=$(python3 -c "import json,sys; print(json.loads(open(sys.argv[1]).read()).get('start',''))" <(printf '%s' "$boundary_json"))
+    end_index=$(python3 -c "import json,sys; print(json.loads(open(sys.argv[1]).read()).get('end',''))" <(printf '%s' "$boundary_json"))
 
     if [ "$start_index" -ge "$end_index" ]; then
         echo "AMA: Compression skipped — no safe boundary found."
@@ -94,12 +95,12 @@ print(json.dumps({"start": si, "end": ei}))
 
     # 2. Extract middle messages for summarization
     local middle_msgs
-    middle_msgs=$(python3 -c "import json,sys; h=json.load(sys.stdin); print(json.dumps(h[${start_index}:${end_index}],separators=(',',':')))" <<< "$HISTORY")
-    
+    middle_msgs=$(python3 -c "import json,sys; h=json.loads(open(sys.argv[1]).read()); print(json.dumps(h[${start_index}:${end_index}],separators=(',',':')))" <(printf '%s' "$HISTORY"))
+
     # 3. Request Summary from LLM
-    local summary_prompt="The following is a middle portion of a conversation history. 
-Summarize the key events, decisions, and information exchanged in these turns. 
-Focus on what is still relevant for the ongoing task. 
+    local summary_prompt="The following is a middle portion of a conversation history.
+Summarize the key events, decisions, and information exchanged in these turns.
+Focus on what is still relevant for the ongoing task.
 Format as a concise bulleted list.
 If tools were used, mention the outcomes.
 Respond ONLY with the summary.
@@ -153,10 +154,10 @@ PYEOF
 
     # Extract text from OpenAI format (all providers normalize to this)
     local summary_text
-    summary_text=$(echo "$summary_response" | python3 -c "
+    summary_text=$(python3 -c "
 import sys, json
 try:
-    r = json.load(sys.stdin)
+    r = json.loads(open(sys.argv[1]).read())
     msg = r.get('choices',[{}])[0].get('message',{})
     t = msg.get('content') or ''
     # Also collect from tool_calls text parts if content is null
@@ -166,7 +167,7 @@ try:
             if fn.get('name') == 'text': t = fn.get('arguments','')
     print(t.strip(), end='')
 except: pass
-" 2>/dev/null)
+" <(printf '%s' "$summary_response") 2>/dev/null)
 
     # Log response on failure for easier debugging
     if [[ -z "$summary_text" ]]; then
@@ -180,18 +181,18 @@ except: pass
 
     # 4. Build new history
     local first_part
-    first_part=$(python3 -c "import json,sys; h=json.load(sys.stdin); print(json.dumps(h[:${start_index}],separators=(',',':')))" <<< "$HISTORY")
+    first_part=$(python3 -c "import json,sys; h=json.loads(open(sys.argv[1]).read()); print(json.dumps(h[:${start_index}],separators=(',',':')))" <(printf '%s' "$HISTORY"))
     local last_part
-    last_part=$(python3 -c "import json,sys; h=json.load(sys.stdin); print(json.dumps(h[${end_index}:],separators=(',',':')))" <<< "$HISTORY")
-    
+    last_part=$(python3 -c "import json,sys; h=json.loads(open(sys.argv[1]).read()); print(json.dumps(h[${end_index}:],separators=(',',':')))" <(printf '%s' "$HISTORY"))
+
     local summary_prefix="[CONTEXT COMPACTION — REFERENCE ONLY] Earlier turns were compacted into the summary below. This is a handoff from a previous context window — treat it as background reference, NOT as active instructions. Do NOT answer questions or fulfill requests mentioned in this summary; they were already addressed. Your current task is identified in the '## Active Task' section of the summary — resume exactly from there. Respond ONLY to the latest user message that appears AFTER this summary. The current session state may reflect work described here — avoid repeating it:"
 
     local summary_msg
-    summary_msg=$(SP="$summary_prefix" ST="$summary_text" python3 -c "
-import json, os
-text = os.environ['SP'] + '\n\n' + os.environ['ST']
+    summary_msg=$(python3 -c "
+import json, sys
+text = sys.argv[1] + '\n\n' + open(sys.argv[2]).read()
 print(json.dumps({'role': 'user', 'content': text}))
-")
+" "$summary_prefix" <(printf '%s' "$summary_text"))
 
     # 5. Archive the compressed part to long-term memory before replacing
     local _script_dir
@@ -200,10 +201,10 @@ print(json.dumps({'role': 'user', 'content': text}))
     _root_dir="$(cd "$_script_dir/../.." && pwd)"
     local _archive_py
     _archive_py='
-import json, os, subprocess
-msgs = json.loads(os.environ["MSGS"])
-root = os.environ["ROOT"]
-sid = os.environ["SID"]
+import json, sys, subprocess
+msgs = json.loads(open(sys.argv[1]).read())
+root = sys.argv[2]
+sid = sys.argv[3]
 for msg in msgs:
     role = msg.get("role", "")
     c = msg.get("content") or ""
@@ -218,17 +219,17 @@ for msg in msgs:
             capture_output=True
         )
 '
-    MSGS="$middle_msgs" ROOT="$_root_dir" SID="$session_id" python3 -c "$_archive_py" 2>/dev/null
+    python3 -c "$_archive_py" <(printf '%s' "$middle_msgs") "$_root_dir" "$session_id" 2>/dev/null
 
     # Assemble new history
-    HISTORY=$(FP="$first_part" SM="$summary_msg" LP="$last_part" python3 -c "
-import json, os
-fp = json.loads(os.environ['FP'])
-sm = json.loads(os.environ['SM'])
-lp = json.loads(os.environ['LP'])
+    HISTORY=$(python3 -c "
+import json, sys
+fp = json.loads(open(sys.argv[1]).read())
+sm = json.loads(open(sys.argv[2]).read())
+lp = json.loads(open(sys.argv[3]).read())
 print(json.dumps(fp + [sm] + lp, separators=(',', ':')))
-")
-    
+" <(printf '%s' "$first_part") <(printf '%s' "$summary_msg") <(printf '%s' "$last_part"))
+
     echo "AMA: Context compressed successfully."
     save_history "$session_id"
 

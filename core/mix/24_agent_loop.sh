@@ -53,8 +53,8 @@ run_agent() {
         if [[ -z "$skill" ]]; then
             local topic_config=$(get_topic_config "$chat_id" "$thread_id")
             if [[ -n "$topic_config" && "$topic_config" != "null" ]]; then
-                skill=$(echo "$topic_config" | python3 -c "import json,sys; print(json.load(sys.stdin).get('skill',''))" 2>/dev/null)
-                local topic_name=$(echo "$topic_config" | python3 -c "import json,sys; print(json.load(sys.stdin).get('name',''))" 2>/dev/null)
+                skill=$(python3 -c "import json,sys; print(json.loads(open(sys.argv[1]).read()).get('skill',''))" <(printf '%s' "$topic_config") 2>/dev/null)
+                local topic_name=$(python3 -c "import json,sys; print(json.loads(open(sys.argv[1]).read()).get('name',''))" <(printf '%s' "$topic_config") 2>/dev/null)
                 [[ -n "$topic_name" ]] && context_prompt+="- **Topic Name**: $topic_name\n"
             fi
         fi
@@ -68,7 +68,7 @@ run_agent() {
         # Emergency Safety Truncation
         local char_count=${#HISTORY}
         if [[ "$char_count" -gt 200000 ]]; then
-            HISTORY=$(python3 -c "import json,sys; h=json.load(sys.stdin); print(json.dumps(h[:5] + [{'role':'system','content':'[Safety: Mid-history purged due to size]'}]+ h[-10:],separators=(',',':')))" <<< "$HISTORY")
+            HISTORY=$(python3 -c "import json,sys; h=json.loads(open(sys.argv[1]).read()); print(json.dumps(h[:5] + [{'role':'system','content':'[Safety: Mid-history purged due to size]'}]+ h[-10:],separators=(',',':')))" <(printf '%s' "$HISTORY"))
             save_history "$session_id"
         fi
 
@@ -107,8 +107,8 @@ run_agent() {
                 fi
                 append_tool_call "$tool_calls"
 
-                local batch_names=$(echo "$tool_calls" | python3 -c "import sys, json; calls = json.load(sys.stdin); print(', '.join(c.get('function', {}).get('name', '?') for c in calls))" 2>/dev/null || echo "")
-                local batch_count=$(echo "$tool_calls" | python3 -c "import sys, json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
+                local batch_names=$(python3 -c "import sys, json; calls = json.loads(open(sys.argv[1]).read()); print(', '.join(c.get('function', {}).get('name', '?') for c in calls))" <(printf '%s' "$tool_calls") 2>/dev/null || echo "")
+                local batch_count=$(python3 -c "import sys, json; print(len(json.loads(open(sys.argv[1]).read())))" <(printf '%s' "$tool_calls") 2>/dev/null || echo 0)
                 total_tool_calls=$((total_tool_calls + batch_count))
                 [[ -n "$batch_names" ]] && all_tool_names+="${all_tool_names:+, }$batch_names"
 
@@ -118,15 +118,15 @@ run_agent() {
                     while IFS='|' read -r name tc_id; do
                         [[ -z "$name" ]] && continue
                         [[ -z "$tc_id" ]] && tc_id="tc_$(date +%s%N)"
-                        local single_tc=$(echo "$tool_calls" | python3 -c "import json, sys, os; calls = json.load(sys.stdin); target_id = os.environ.get('TC_ID',''); match = next((t for t in calls if t.get('id') == target_id), None); print(json.dumps(match or calls[0], separators=(',',':')) if calls else '')" TC_ID="$tc_id" 2>/dev/null)
+                        local single_tc=$(python3 -c "import json, sys, os; calls = json.loads(open(sys.argv[1]).read()); target_id = os.environ.get('TC_ID',''); match = next((t for t in calls if t.get('id') == target_id), None); print(json.dumps(match or calls[0], separators=(',',':')) if calls else '')" <(printf '%s' "$tool_calls") TC_ID="$tc_id" 2>/dev/null)
                         local output=$(process_tc "$chat_id" "$msg_id" "$single_tc" "$thread_id")
                         append_tool_result "$tc_id" "$name" "$output"
-                    done < <(echo "$tool_calls" | python3 -c "
+                    done < <(python3 -c "
 import sys, json
-for tc in json.load(sys.stdin):
+for tc in json.loads(open(sys.argv[1]).read()):
     name = tc.get('function', {}).get('name') or tc.get('name', '') or 'unknown_tool'
     print(f'{name.strip()}|{tc.get(\"id\", \"\").strip()}')
-")
+" <(printf '%s' "$tool_calls"))
                 fi
                 tg_edit "$chat_id" "$msg_id" "⏳ <i>Thinking…</i>" "HTML" > /dev/null 2>&1
                 export _AMA_REASONING_HTML=""

@@ -51,7 +51,7 @@ api_key = os.environ.get("API_KEY")
 extra_headers = json.loads(os.environ.get("EXTRA_HEADERS", "{}"))
 
 url = f"{base_url}/chat/completions"
-payload = json.load(sys.stdin)
+payload = json.loads(sys.stdin.read())
 
 headers = {
     "Authorization": f"Bearer {api_key}",
@@ -172,11 +172,18 @@ try:
                 for tc in delta["tool_calls"]:
                     idx = tc.get("index", 0)
                     if idx not in tool_calls:
-                        tool_calls[idx] = {"id": "", "type": "function", "function": {"name": "", "arguments": ""}}
-                    
+                        tool_calls[idx] = {"id": "", "type": "function", "function": {"name": "", "arguments": ""}, "thought_signature": ""}
+
                     if "id" in tc:
                         tool_calls[idx]["id"] += tc["id"]
-                    
+
+                    # Capture thought_signature for Google thinking models (Vertex OpenAI-compat)
+                    _ts = tc.get("thought_signature") or ""
+                    if not _ts:
+                        _ts = (tc.get("extra_content") or {}).get("google", {}).get("thought_signature", "")
+                    if _ts:
+                        tool_calls[idx]["thought_signature"] += _ts
+
                     if "function" in tc:
                         f = tc["function"]
                         if "name" in f: tool_calls[idx]["function"]["name"] += f["name"]
@@ -210,7 +217,10 @@ tc_list = []
 for k, v in sorted(tool_calls.items()):
     if not v.get("id"):
         v["id"] = f"call_{int(time.time() * 1000)}"
-    tc_list.append(v)
+    tc = {"id": v["id"], "type": v.get("type", "function"), "function": v["function"]}
+    if v.get("thought_signature"):
+        tc["thought_signature"] = v["thought_signature"]
+    tc_list.append(tc)
 
 print(f"TC:{json.dumps(tc_list)}")
 print(f"TEXT:{content}")

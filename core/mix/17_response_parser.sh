@@ -8,11 +8,10 @@ parse_resp() {
     fi
 
     local _parsed
-    _parsed=$(RESP="$resp" python3 -c "
-import json, os
-resp_str = os.environ['RESP']
+    _parsed=$(python3 -c "
+import json, sys
 try:
-    r = json.loads(resp_str)
+    r = json.loads(open(sys.argv[1]).read())
 except Exception:
     print('PARSE_ERROR')
     raise SystemExit(0)

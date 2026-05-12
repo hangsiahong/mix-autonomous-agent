@@ -39,14 +39,14 @@ print(json.dumps(out))
         [ ! -f "$titles_file" ] && echo "{}" > "$titles_file"
         
         local updated
-        SID="$session_id" TITLE="$title" TFILE="$titles_file" python3 -c "
-import json, os
-tfile = os.environ['TFILE']
+        python3 -c "
+import json, sys
+tfile = sys.argv[1]
 try: d = json.load(open(tfile))
 except: d = {}
-d[os.environ['SID']] = os.environ['TITLE']
+d[sys.argv[2]] = sys.argv[3]
 open(tfile, 'w').write(json.dumps(d))
-"
+" "$titles_file" "$session_id" "$title"
         echo "Title generated: $title"
     fi
 }

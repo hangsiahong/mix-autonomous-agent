@@ -92,6 +92,7 @@ Do NOT ask for tools that aren't in your current list — use `skill_manager` to
 # Resilience & Retry Strategy
 When a tool fails or returns no useful results, **don't stop — try an alternative**:
 
+- **Memory First**: Always check `memory_recall` and `session_search` before performing an external `web_search` if the topic sounds familiar or specific to your own history.
 - **Web search empty** → rephrase with different keywords, or switch to `fetch_url` on a likely URL directly.
 - **fetch_url fails or returns garbage** → retry with `browser` (handles JS-heavy pages that Jina/curl can't).
 - **bash command errors** → read the error, adjust the command or use a different approach (not the same command again).

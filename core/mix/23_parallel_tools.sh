@@ -41,8 +41,8 @@ execute_parallel_batch() {
     # We use python to iterate and launch since bash iteration over JSON is slow/complex
     local launch_script='
 import json, sys, os, subprocess
-calls = json.loads(os.environ["TC_JSON"])
-batch_dir = os.environ["BATCH_DIR"]
+calls = json.loads(open(sys.argv[1]).read())
+batch_dir = sys.argv[2]
 for tc in calls:
     tc_id = tc.get("id", f"tc_{os.getpid()}_{len(os.listdir(batch_dir))}")
     name = tc.get("function", {}).get("name") or tc.get("name", "unknown")
@@ -55,7 +55,7 @@ for tc in calls:
     print(f"{tc_id}|{name}")
 '
     local launched_info
-    launched_info=$(TC_JSON="$tc_json" BATCH_DIR="$batch_dir" python3 -c "$launch_script")
+    launched_info=$(python3 -c "$launch_script" <(printf '%s' "$tc_json") "$batch_dir")
 
     # 2. Worker logic (runs in background for each tool)
     run_parallel_worker() {

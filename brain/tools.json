@@ -594,5 +594,107 @@
       "required": []
     },
     "toolset": "memory"
+  },
+  {
+    "name": "kanban_show",
+    "description": "Read a task's full state and dependencies.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "type": "string",
+          "description": "Task ID"
+        }
+      },
+      "required": [
+        "task_id"
+      ]
+    },
+    "toolset": "kanban"
+  },
+  {
+    "name": "kanban_create",
+    "description": "Create a new kanban task.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "Short task title"
+        },
+        "assignee": {
+          "type": "string",
+          "description": "Profile to execute this task"
+        },
+        "body": {
+          "type": "string",
+          "description": "Full spec / opening post"
+        },
+        "parents": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Parent task IDs"
+        },
+        "priority": {
+          "type": "integer",
+          "description": "Tiebreaker priority"
+        }
+      },
+      "required": [
+        "title",
+        "assignee"
+      ]
+    },
+    "toolset": "kanban"
+  },
+  {
+    "name": "kanban_complete",
+    "description": "Mark your current task done.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "type": "string",
+          "description": "Task ID"
+        },
+        "summary": {
+          "type": "string",
+          "description": "1-3 sentence handoff summary"
+        },
+        "metadata": {
+          "type": "object",
+          "description": "Structured facts/results"
+        }
+      },
+      "required": [
+        "task_id",
+        "summary"
+      ]
+    },
+    "toolset": "kanban"
+  },
+  {
+    "name": "kanban_block",
+    "description": "Stop work and ask for human input.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "type": "string",
+          "description": "Task ID"
+        },
+        "reason": {
+          "type": "string",
+          "description": "What you need answered"
+        }
+      },
+      "required": [
+        "task_id",
+        "reason"
+      ]
+    },
+    "toolset": "kanban"
   }
 ]

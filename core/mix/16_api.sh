@@ -103,29 +103,29 @@ except:
 " 2>/dev/null)
   local _active_ts="${TOOL_EXTRA_TOOLSETS:-} $_default_ts"
   local tools
-  tools=$(TS="$_active_ts" python3 -c "
-import json, os, sys
-raw = sys.stdin.read()
+  tools=$(python3 -c "
+import json, sys
+raw = open(sys.argv[1]).read()
 try:
     all_tools = json.loads(raw)
 except:
     print(raw); sys.exit(0)
-active = set(os.environ.get('TS','').split())
+active = set(sys.argv[2].split())
 # Always include tools with no toolset field (legacy/custom tools)
 filtered = [t for t in all_tools if t.get('toolset','core') in active or 'toolset' not in t]
 # Strip internal 'toolset' field before sending to API
 for t in filtered:
     t.pop('toolset', None)
 print(json.dumps(filtered, separators=(',',':')))
-" <<< "$_all_tools" 2>/dev/null)
+" <(printf '%s' "$_all_tools") "$_active_ts" 2>/dev/null)
   # Fallback: if filter fails, send all tools (minus toolset field)
   if [[ -z "$tools" || "$tools" == "null" ]]; then
     tools=$(python3 -c "
 import json,sys
-t=json.load(sys.stdin)
+t=json.loads(open(sys.argv[1]).read())
 for x in t: x.pop('toolset',None)
 print(json.dumps(t,separators=(',',':')))
-" < brain/tools.json 2>/dev/null || cat brain/tools.json)
+" <(cat brain/tools.json) 2>/dev/null || cat brain/tools.json)
   fi
 
   # Skill-specific prompt injection
@@ -142,11 +142,11 @@ print(json.dumps(t,separators=(',',':')))
     fi
     if [[ -n "$_core_prompt_file" ]]; then
         # Use a temporary python snippet to expand environment variables safely
-        skill_prompt=$(CAT_FILE="$_core_prompt_file" PWD_VAL="$(pwd)" python3 -c '
-import os
-content = open(os.environ["CAT_FILE"]).read()
-print(content.replace("$(pwd)", os.environ["PWD_VAL"]))
-')
+        skill_prompt=$(python3 -c '
+import sys
+content = open(sys.argv[1]).read()
+print(content.replace("$(pwd)", sys.argv[2]))
+' "$_core_prompt_file" "$(pwd)")
     fi
     if [[ -f "core/skills/${skill}/tools.json" ]]; then
         skill_tools=$(cat "core/skills/${skill}/tools.json")
@@ -165,7 +165,7 @@ print(content.replace("$(pwd)", os.environ["PWD_VAL"]))
     fi
     if [[ -f "brain/skills/${skill}/tools.json" ]]; then
         local user_tools=$(cat "brain/skills/${skill}/tools.json")
-        skill_tools=$(UT="$user_tools" python3 -c "import json,os,sys; a=json.load(sys.stdin); b=json.loads(os.environ['UT']); print(json.dumps(a+b,separators=(',',':')))" <<< "$skill_tools")
+        skill_tools=$(python3 -c "import json,sys; print(json.dumps(json.loads(open(sys.argv[1]).read())+json.loads(open(sys.argv[2]).read()),separators=(',',':')))" <(printf '%s' "$skill_tools") <(printf '%s' "$user_tools"))
     fi
 
     # 3. Load from custom folder — prefer .md, fall back to .txt
@@ -181,7 +181,7 @@ print(content.replace("$(pwd)", os.environ["PWD_VAL"]))
     fi
     if [[ -f "brain/skills/${skill}/custom/tools.json" ]]; then
         local custom_tools=$(cat "brain/skills/${skill}/custom/tools.json")
-        skill_tools=$(CT="$custom_tools" python3 -c "import json,os,sys; a=json.load(sys.stdin); b=json.loads(os.environ['CT']); print(json.dumps(a+b,separators=(',',':')))" <<< "$skill_tools")
+        skill_tools=$(python3 -c "import json,sys; print(json.dumps(json.loads(open(sys.argv[1]).read())+json.loads(open(sys.argv[2]).read()),separators=(',',':')))" <(printf '%s' "$skill_tools") <(printf '%s' "$custom_tools"))
     fi
 
     if [[ -n "$skill_prompt" ]]; then
@@ -191,43 +191,43 @@ print(content.replace("$(pwd)", os.environ["PWD_VAL"]))
     if [[ "$skill_tools" != "[]" ]]; then
         local _extra_ts
         _extra_ts=$(python3 -c "
-import json,os,sys
+import json,sys
 try:
-    st=json.loads(sys.stdin.read())
+    st=json.loads(open(sys.argv[1]).read())
     extra=[x for x in st if isinstance(x,dict) and '_enabled_toolsets' in x]
     if extra:
         ts=extra[0]['_enabled_toolsets']
         print(' '.join(ts) if isinstance(ts,list) else str(ts))
 except:
     pass
-" <<< "$skill_tools" 2>/dev/null)
+" <(printf '%s' "$skill_tools") 2>/dev/null)
         if [[ -n "$_extra_ts" ]]; then
             # Re-filter all_tools with expanded toolset list
             local _expanded_ts="$_active_ts $_extra_ts"
             local _extra_tool_defs
-            _extra_tool_defs=$(TS="$_expanded_ts" python3 -c "
-import json,os,sys
-all_tools=json.load(sys.stdin)
-already=set(t.get('name') for t in json.loads(os.environ.get('CURRENT_TOOLS','[]')))
-active=set(os.environ.get('TS','').split())
+            _extra_tool_defs=$(python3 -c "
+import json,sys
+all_tools=json.loads(open(sys.argv[3]).read())
+already=set(t.get('name') for t in json.loads(open(sys.argv[1]).read()))
+active=set(sys.argv[2].split())
 extra=[t for t in all_tools if t.get('toolset','core') in active and t.get('name') not in already]
 for t in extra: t.pop('toolset',None)
 print(json.dumps(extra,separators=(',',':')))
-" < brain/tools.json 2>/dev/null || echo "[]")
-            tools=$(AT="$_extra_tool_defs" python3 -c "
-import json,os,sys
-base=json.load(sys.stdin)
-extra=json.loads(os.environ.get('AT','[]'))
+" <(printf '%s' "${tools:-[]}") "$_expanded_ts" <(cat brain/tools.json) 2>/dev/null || echo "[]")
+            tools=$(python3 -c "
+import json,sys
+base=json.loads(open(sys.argv[2]).read())
+extra=json.loads(open(sys.argv[1]).read())
 print(json.dumps(base+extra,separators=(',',':')))
-" <<< "$tools" 2>/dev/null || echo "$tools")
+" <(printf '%s' "$_extra_tool_defs") <(printf '%s' "$tools") 2>/dev/null || echo "$tools")
             # Remove the meta _enabled_toolsets entry from skill_tools before merge
             skill_tools=$(python3 -c "
 import json,sys
-st=json.load(sys.stdin)
+st=json.loads(open(sys.argv[1]).read())
 print(json.dumps([x for x in st if not (isinstance(x,dict) and '_enabled_toolsets' in x)],separators=(',',':')))
-" <<< "$skill_tools" 2>/dev/null || echo "$skill_tools")
+" <(printf '%s' "$skill_tools") 2>/dev/null || echo "$skill_tools")
         fi
-        tools=$(ST="$skill_tools" python3 -c "import json,os,sys; a=json.load(sys.stdin); b=json.loads(os.environ['ST']); print(json.dumps(a+b,separators=(',',':')))" <<< "$tools")
+        tools=$(python3 -c "import json,sys; print(json.dumps(json.loads(open(sys.argv[1]).read())+json.loads(open(sys.argv[2]).read()),separators=(',',':')))" <(printf '%s' "$tools") <(printf '%s' "$skill_tools"))
     fi
   fi
   
@@ -316,14 +316,14 @@ call_api() {
   if [ "$PROVIDER" != "default" ] && type "${PROVIDER}_extra_headers_json" >/dev/null 2>&1; then
     local _pheaders; _pheaders=$(${PROVIDER}_extra_headers_json 2>/dev/null) || true
     if [ -n "$_pheaders" ]; then
-      _extra_pairs=$(printf '%s' "$_pheaders" | python3 -c '
+      _extra_pairs=$(python3 -c '
 import json,sys
-for k,v in json.load(sys.stdin).items():
+for k,v in json.loads(open(sys.argv[1]).read()).items():
     if v is None:
         if k.lower()=="authorization": print("SUPPRESS_AUTH")
     else:
         print(f"{k}\t{v}")
-' 2>/dev/null) || true
+' <(printf '%s' "$_pheaders") 2>/dev/null) || true
       echo "$_extra_pairs" | grep -q '^SUPPRESS_AUTH' && _suppress_auth=true
     fi
   fi
@@ -368,13 +368,13 @@ for k,v in json.load(sys.stdin).items():
       # Classify Error
       local classification=$(classify_error "$code" "$body")
       local _cls_parsed
-      _cls_parsed=$(echo "$classification" | python3 -c "
+      _cls_parsed=$(python3 -c "
 import json, sys
-d = json.load(sys.stdin)
+d = json.loads(open(sys.argv[1]).read())
 print(d.get('reason','unknown'))
 print(d.get('retryable','false'))
 print(d.get('should_compress','false'))
-" 2>/dev/null)
+" <(printf '%s' "$classification") 2>/dev/null)
       local reason retryable should_compress
       IFS=$'\n' read -r reason retryable should_compress <<< "$_cls_parsed"
 
@@ -384,10 +384,12 @@ print(d.get('should_compress','false'))
 
       # Log error for reflection
       local err_entry
-      err_entry=$(TS="$(date -u +"%Y-%m-%dT%H:%M:%SZ")" PROV="$PROVIDER" MOD="$MODEL" CODE="$code" RSN="$reason" BODY="$body" python3 -c "
-import json, os
-print(json.dumps({'ts':os.environ['TS'],'provider':os.environ['PROV'],'model':os.environ['MOD'],'code':os.environ['CODE'],'reason':os.environ['RSN'],'body':os.environ['BODY']}))
-")
+      err_entry=$(python3 -c "
+import json, sys
+ts, prov, mod, code, rsn = sys.argv[1:6]
+body = open(sys.argv[6]).read()
+print(json.dumps({'ts': ts, 'provider': prov, 'model': mod, 'code': code, 'reason': rsn, 'body': body}))
+" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$PROVIDER" "$MODEL" "$code" "$reason" <(printf '%s' "$body"))
       echo "$err_entry" >> "brain/state/error_log.jsonl"
 
       if [[ "$retryable" == "true" && "$attempt" -lt "$max_attempts" ]]; then

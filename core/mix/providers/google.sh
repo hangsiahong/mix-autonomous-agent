@@ -430,17 +430,13 @@ google_call_api() {
   printf '%s' "$system_prompt" > "$_g_sys_file"
 
   local payload
-  payload=$(HIST_FILE="$_g_hist_file" \
-            SYS_FILE="$_g_sys_file" \
-            TOOLS_JSON="${tools_json:-[]}" \
-            EXTRA_PAYLOAD="$_extra_payload" \
-            python3 -c '
-import json, os, sys
-s = open(os.environ["SYS_FILE"]).read()
-try: h = json.load(open(os.environ["HIST_FILE"]))
+  payload=$(python3 -c '
+import json, sys
+s = open(sys.argv[1]).read()
+try: h = json.load(open(sys.argv[2]))
 except Exception as e:
     sys.stderr.write(f"Bad HISTORY JSON: {e}\n"); h = []
-try: t = json.loads(os.environ.get("TOOLS_JSON") or "[]")
+try: t = json.loads(open(sys.argv[3]).read())
 except: t = []
 
 contents = []
@@ -466,10 +462,17 @@ for msg in h:
     if msg.get("tool_calls"):
         # For Gemini native, tool calls are parts of the content
         for tc in msg["tool_calls"]:
-            parts.append({"function_call": {
+            part = {"function_call": {
                 "name": tc["function"]["name"],
                 "args": json.loads(tc["function"]["arguments"])
-            }})
+            }}
+            # Restore thoughtSignature for thinking models
+            sig = tc.get("thought_signature") or ""
+            if not sig:
+                sig = (tc.get("extra_content") or {}).get("google", {}).get("thought_signature", "")
+            if sig and sig != "skip_thought_signature_validator":
+                part["thoughtSignature"] = sig
+            parts.append(part)
 
     if msg.get("role") == "tool":
         role = "user" # Gemini expects tool results in a "user" role content (functionResponse)
@@ -503,14 +506,14 @@ if t:
     body["tools"] = [{"function_declarations": decls}]
 
 try:
-    ex = json.loads(os.environ.get("EXTRA_PAYLOAD", "{}"))
+    ex = json.loads(open(sys.argv[4]).read())
     if ex:
         if "thinking_level" not in ex:
             body.update(ex)
 except: pass
 
 print(json.dumps(body))
-')
+' "$_g_sys_file" "$_g_hist_file" <(printf '%s' "${tools_json:-[]}") <(printf '%s' "${_extra_payload:-{}}"))
   rm -f "$_g_hist_file" "$_g_sys_file"
 
   local _curl_args=(-s -X POST "$url" -H "Content-Type: application/json")
@@ -526,18 +529,18 @@ print(json.dumps(body))
     return 1
   fi
 
-  if echo "$resp" | python3 -c "import json,sys; exit(0 if 'error' in json.load(sys.stdin) else 1)" 2>/dev/null; then
+  if python3 -c "import json,sys; exit(0 if 'error' in json.loads(open(sys.argv[1]).read()) else 1)" <(printf '%s' "$resp") 2>/dev/null; then
     local _err
-    _err=$(echo "$resp" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin).get('error',{}),separators=(',',':')))" 2>/dev/null)
+    _err=$(python3 -c "import json,sys; print(json.dumps(json.loads(open(sys.argv[1]).read()).get('error',{}),separators=(',',':')))" <(printf '%s' "$resp") 2>/dev/null)
     echo "FAIL:google_error:$_err"
     return 1
   fi
 
   # Normalize Gemini response to OpenAI format so all consumers speak one language
-  echo "$resp" | python3 -c "
+  python3 -c "
 import json, sys, time
 
-r = json.load(sys.stdin)
+r = json.loads(open(sys.argv[1]).read())
 candidate = (r.get('candidates') or [{}])[0]
 parts = candidate.get('content', {}).get('parts', [])
 finish = candidate.get('finishReason', 'STOP')
@@ -549,12 +552,14 @@ oai_finish = finish_map.get(finish, 'stop')
 text_parts = [p['text'] for p in parts if 'text' in p]
 text = '\n'.join(text_parts)
 
-func_parts = [p['functionCall'] for p in parts if 'functionCall' in p]
+fc_parts = [p for p in parts if 'functionCall' in p]
 tool_calls = None
-if func_parts:
+if fc_parts:
     oai_finish = 'tool_calls'
-    tool_calls = [
-        {
+    tool_calls = []
+    for i, p in enumerate(fc_parts):
+        fc = p['functionCall']
+        tc = {
             'id': 'call_' + str(int(time.time() * 1000) % 10**9 + i),
             'type': 'function',
             'function': {
@@ -562,8 +567,10 @@ if func_parts:
                 'arguments': json.dumps(fc.get('args', {}))
             }
         }
-        for i, fc in enumerate(func_parts)
-    ]
+        sig = p.get('thoughtSignature', '')
+        if sig:
+            tc['thought_signature'] = sig
+        tool_calls.append(tc)
 
 usage = r.get('usageMetadata', {})
 out = {
@@ -583,7 +590,7 @@ out = {
     }
 }
 print(json.dumps(out))
-"
+" <(printf '%s' "$resp")
 }
 
 google_call_api_stream() {
@@ -641,17 +648,13 @@ google_call_api_stream() {
   _gs_sys_file=$(mktemp)
   printf '%s' "${HISTORY:-[]}" > "$_gs_hist_file"
   printf '%s' "$system_prompt" > "$_gs_sys_file"
-  payload=$(HIST_FILE="$_gs_hist_file" \
-            SYS_FILE="$_gs_sys_file" \
-            TOOLS_JSON="${tools_json:-[]}" \
-            EXTRA_PAYLOAD="$_extra_payload" \
-            python3 -c '
-import sys, json, os
-s = open(os.environ["SYS_FILE"]).read()
-try: h = json.load(open(os.environ["HIST_FILE"]))
+  payload=$(python3 -c '
+import sys, json
+s = open(sys.argv[1]).read()
+try: h = json.load(open(sys.argv[2]))
 except Exception as e:
     sys.stderr.write(f"Bad HISTORY JSON: {e}\n"); h = []
-try: t = json.loads(os.environ.get("TOOLS_JSON") or "[]")
+try: t = json.loads(open(sys.argv[3]).read())
 except: t = []
 contents = []
 for msg in h:
@@ -671,7 +674,13 @@ for msg in h:
                     parts.append({"file_data": p["file_data"]})
     if msg.get("tool_calls"):
         for tc in msg["tool_calls"]:
-            parts.append({"function_call": {"name": tc["function"]["name"], "args": json.loads(tc["function"]["arguments"])}})
+            part = {"function_call": {"name": tc["function"]["name"], "args": json.loads(tc["function"]["arguments"])}}
+            sig = tc.get("thought_signature") or ""
+            if not sig:
+                sig = (tc.get("extra_content") or {}).get("google", {}).get("thought_signature", "")
+            if sig and sig != "skip_thought_signature_validator":
+                part["thoughtSignature"] = sig
+            parts.append(part)
     if msg.get("role") == "tool":
         role = "user"
         parts = [{"function_response": {"name": msg["name"], "response": {"content": msg["content"]}}}]
@@ -692,7 +701,7 @@ if t:
     body["tools"] = [{"function_declarations": decls}]
 
 try:
-    ex = json.loads(os.environ.get("EXTRA_PAYLOAD", "{}"))
+    ex = json.loads(open(sys.argv[4]).read())
     if ex:
         if "generationConfig" not in body:
             body["generationConfig"] = {}
@@ -702,7 +711,7 @@ except: pass
 
 import sys
 print(json.dumps(body))
-')
+' "$_gs_sys_file" "$_gs_hist_file" <(printf '%s' "${tools_json:-[]}") <(printf '%s' "${_extra_payload:-{}}"))
   rm -f "$_gs_hist_file" "$_gs_sys_file"
 
   TG_TOKEN="$TG_TOKEN" \

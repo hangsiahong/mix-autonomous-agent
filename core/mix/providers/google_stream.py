@@ -65,7 +65,8 @@ def main():
         url += "&alt=sse"
 
     try:
-        payload = json.load(sys.stdin)
+        payload_data = sys.stdin.read()
+        payload = json.loads(payload_data)
     except Exception as e:
         sys.stderr.write(f"Payload error: {e}\n")
         sys.exit(1)
@@ -110,18 +111,22 @@ def main():
                 parts = content.get("parts", [])
                 
                 for p in parts:
-                    if "text" in p:
+                    if "text" in p and not p.get("thought"):
                         full_text += p["text"]
                     if "functionCall" in p:
                         fc = p["functionCall"]
-                        tool_calls.append({
+                        sig = p.get("thoughtSignature", "")
+                        tc_entry = {
                             "id": f"call_{int(time.time()*1000)}_{len(tool_calls)}",
                             "type": "function",
                             "function": {
                                 "name": fc.get("name"),
                                 "arguments": json.dumps(fc.get("args", {}))
                             }
-                        })
+                        }
+                        if sig:
+                            tc_entry["thought_signature"] = sig
+                        tool_calls.append(tc_entry)
                 
                 if "usageMetadata" in chunk:
                     usage = chunk["usageMetadata"]

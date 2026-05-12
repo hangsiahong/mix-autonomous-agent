@@ -22,20 +22,20 @@ log_usage() {
     local p c t
     read -r p c t <<< "$(echo "$usage_json" | python3 -c "
 import json, sys
-d = json.load(sys.stdin)
+d = json.loads(open(sys.argv[1]).read())
 print(int(d.get('prompt_tokens', 0) or 0), int(d.get('completion_tokens', 0) or 0), int(d.get('total_tokens', 0) or 0))
 " 2>/dev/null)"
 
-    P="$p" C="$c" T="$t" TFILE="$totals_file" python3 -c "
-import json, os
-f = os.environ['TFILE']
+    python3 -c "
+import json, sys
+f = sys.argv[1]
 try: d = json.load(open(f))
 except: d = {'prompt_tokens': 0, 'completion_tokens': 0, 'total_tokens': 0}
-d['prompt_tokens'] = d.get('prompt_tokens', 0) + int(os.environ['P'])
-d['completion_tokens'] = d.get('completion_tokens', 0) + int(os.environ['C'])
-d['total_tokens'] = d.get('total_tokens', 0) + int(os.environ['T'])
+d['prompt_tokens'] = d.get('prompt_tokens', 0) + int(sys.argv[2])
+d['completion_tokens'] = d.get('completion_tokens', 0) + int(sys.argv[3])
+d['total_tokens'] = d.get('total_tokens', 0) + int(sys.argv[4])
 open(f, 'w').write(json.dumps(d))
-"
+" "$totals_file" "${p:-0}" "${c:-0}" "${t:-0}"
 }
 
 log_tool_usage() {

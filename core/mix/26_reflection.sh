@@ -5,21 +5,16 @@ reflect_turn() {
     local chat_id="$1"
     local thread_id="$2"
     local session_id="$3"
-    
+
     # Only reflect if the user isn't just saying 'hi'
     local last_user_msg
-    last_user_msg=$(echo "$HISTORY" | python3 -c "
+    last_user_msg=$(python3 -c "
 import json, sys
-h = json.load(sys.stdin)
-users = [m for m in h if m.get('role') == 'user']
-if not users:
-    print('')
-else:
-    c = users[-1].get('content') or ''
-    if isinstance(c, list):
-        c = ' '.join(p.get('text','') for p in c if isinstance(p,dict))
-    print(c or '')
-" 2>/dev/null)
+h = json.loads(open(sys.argv[1]).read())
+user_msgs = [m for m in h if m.get('role') == 'user']
+if user_msgs:
+    print(user_msgs[-1].get('content', ''))
+" <(printf '%s' "$HISTORY") 2>/dev/null)
     if [[ ${#last_user_msg} -lt 20 ]]; then
         return
     fi
@@ -30,9 +25,9 @@ else:
     fi
 
     echo "AMA: Starting self-reflection for $session_id..."
-    
+
     # Create a hidden reflection prompt
-    local reflection_sys_prompt="You are the Reflection Core of AMA. 
+    local reflection_sys_prompt="You are the Reflection Core of AMA.
 Review the conversation above.
 Is there anything you should proactively do to help the user?
 
@@ -73,14 +68,14 @@ except:
     local turn=0
     while [ "$turn" -lt 5 ]; do
         turn=$((turn + 1))
-        
+
         # Call API with system prompt override
         local response=$(call_api "$reflection_sys_prompt")
         local parsed=$(parse_resp "$response")
-        
+
         local text=$(echo "$parsed" | grep "^TEXT:" | cut -c6-)
         local tool_calls=$(echo "$parsed" | grep "^TC:" | cut -c4-)
-        
+
         if [[ "$text" == "NO_ACTION" ]]; then
             break
         fi
@@ -104,7 +99,7 @@ except:
             local _tc_lines
             _tc_lines=$(echo "$tool_calls" | python3 -c "
 import json, sys
-for tc in json.load(sys.stdin):
+for tc in json.loads(open(sys.argv[1]).read()):
     name = (tc.get('function') or {}).get('name','')
     args = (tc.get('function') or {}).get('arguments','{}')
     tc_json = json.dumps(tc, separators=(',',':'))
@@ -133,7 +128,7 @@ for tc in json.load(sys.stdin):
         fi
         break
     done
-    
+
     # Restore full tools.json and history
     if [[ -f brain/tools.json.bak ]]; then
         mv brain/tools.json.bak brain/tools.json
