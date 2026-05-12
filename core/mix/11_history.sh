@@ -44,22 +44,58 @@ append_tool_result() {
     local id="$1"
     local name="$2"
     local output="$3"
-    # Cap tool output size: keep first 4000 + last 1000 chars to prevent history bloat
-    # (hermes pattern: enforce per-turn budget on tool results)
-    local _MAX_TOOL_CHARS=6000
+    # Smart folding: keep signal-dense head+tail, summarize discarded middle
+    # (AMA Level-4 improvement: reduce cognitive load by removing noise, not just chars)
+    local _MAX_LINES=80
+    local _HEAD_LINES=30
+    local _TAIL_LINES=20
     HISTORY=$(python3 -c "
-import json, sys
+import json, sys, re
+
 h = json.loads(open(sys.argv[1]).read())
 out = open(sys.argv[2]).read()
-max_chars = int(sys.argv[5])
-if len(out) > max_chars:
-    head = out[:4000]
-    tail = out[-1000:]
-    removed = len(out) - 5000
-    out = head + f'\n\n[...{removed} chars truncated...]\n\n' + tail
+max_lines = int(sys.argv[5])
+head_n   = int(sys.argv[6])
+tail_n   = int(sys.argv[7])
+
+lines = out.splitlines()
+
+if len(lines) > max_lines:
+    head = lines[:head_n]
+    tail = lines[-tail_n:]
+    middle = lines[head_n:-tail_n]
+    mid_text = '\n'.join(middle)
+
+    # Analyze what was in the middle
+    errors   = sum(1 for l in middle if re.search(r'\b(error|exception|traceback|fatal|failed)\b', l, re.I))
+    warnings = sum(1 for l in middle if re.search(r'\bwarning\b', l, re.I))
+
+    parts = [f'{len(middle)} lines folded']
+    if errors:   parts.append(f'{errors} error(s)')
+    if warnings: parts.append(f'{warnings} warning(s)')
+
+    # Git diff: add stat summary
+    if '@@' in mid_text or 'diff --git' in mid_text:
+        adds = sum(1 for l in middle if l.startswith('+') and not l.startswith('+++'))
+        dels = sum(1 for l in middle if l.startswith('-') and not l.startswith('---'))
+        parts.append(f'git: +{adds}/-{dels} lines')
+
+    # Pip install: surface what was installed
+    for l in reversed(middle):
+        if 'Successfully installed' in l:
+            parts.append(l.strip()[:80])
+            break
+
+    fold_line = '--- [' + ' | '.join(parts) + '] ---'
+    out = '\n'.join(head) + '\n' + fold_line + '\n' + '\n'.join(tail)
+elif len(out) > 8000:
+    # Char-level cap if line count is low but output is huge (e.g. minified JS)
+    out = out[:5000] + f'\n\n[...{len(out)-6000} chars truncated...]\n\n' + out[-1000:]
+
 h.append({'role': 'tool', 'tool_call_id': sys.argv[3], 'name': sys.argv[4], 'content': out})
 print(json.dumps(h, separators=(',', ':')))
-" <(printf '%s' "$HISTORY") <(printf '%s' "$output") "$id" "$name" "$_MAX_TOOL_CHARS")
+" <(printf '%s' "$HISTORY") <(printf '%s' "$output") "$id" "$name" \
+    "$_MAX_LINES" "$_HEAD_LINES" "$_TAIL_LINES")
 }
 
 save_history() {

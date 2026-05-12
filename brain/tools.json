@@ -696,5 +696,55 @@
       ]
     },
     "toolset": "kanban"
+  },
+  {
+    "name": "ast_edit",
+    "description": "AST-aware Python editor. Validates syntax before and after every change \u2014 impossible to produce broken Python. Actions: validate (check syntax + list symbols), list_symbols (all functions/classes with line numbers), get_symbol (extract a function/class by name), replace_func (replace entire function/class by name), add_import (add import safely), rename (rename symbol everywhere in file). Use this instead of edit_code for Python structural changes.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "validate",
+            "list_symbols",
+            "get_symbol",
+            "replace_func",
+            "add_import",
+            "rename"
+          ],
+          "description": "Operation to perform."
+        },
+        "path": {
+          "type": "string",
+          "description": "Path to the Python file."
+        },
+        "name": {
+          "type": "string",
+          "description": "Function or class name (get_symbol, replace_func)."
+        },
+        "new_body": {
+          "type": "string",
+          "description": "Full replacement function/class source (replace_func). Must be valid Python."
+        },
+        "import": {
+          "type": "string",
+          "description": "Import statement to add (add_import). E.g. \"import os\""
+        },
+        "old_name": {
+          "type": "string",
+          "description": "Symbol to rename (rename)."
+        },
+        "new_name": {
+          "type": "string",
+          "description": "New name (rename)."
+        }
+      },
+      "required": [
+        "action",
+        "path"
+      ]
+    },
+    "toolset": "core"
   }
 ]

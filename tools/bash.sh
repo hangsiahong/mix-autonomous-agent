@@ -88,10 +88,61 @@ else
 fi
 
 # Run with timeout and a small environment to avoid leaking arbitrary host vars.
-timeout --signal=TERM --kill-after=5 "${runtime}" bash -c "$cmd" 2>&1
+output=$(timeout --signal=TERM --kill-after=5 "${runtime}" bash -c "$cmd" 2>&1)
 status=$?
+
+echo "$output"
+
 if (( status == 124 )); then
     echo ""
     echo "[Process killed: exceeded ${runtime}s timeout. Re-run with TOOL_timeout=N to extend, or break the work into smaller commands.]"
 fi
+
+# Better sensory feedback: analyze failures and surface actionable hints
+# so the LLM doesn't have to guess what went wrong.
+if (( status != 0 )); then
+    hint=""
+    # Missing Python module
+    mod=$(echo "$output" | grep -oP "(?<=No module named ')[^']+" | head -1)
+    [[ -n "$mod" ]] && hint="💡 Missing module: pip install ${mod}"
+
+    # Command not found
+    if [[ -z "$hint" ]]; then
+        missing_cmd=$(echo "$output" | grep -oP "(?<=command not found: )\S+" | head -1)
+        [[ -n "$missing_cmd" ]] && hint="💡 '${missing_cmd}' not found. Install it or check PATH."
+    fi
+
+    # Permission denied
+    if [[ -z "$hint" ]]; then
+        perm_file=$(echo "$output" | grep -oP "(?<=Permission denied: )['\"]?[^\s'\"]+['\"]?" | head -1)
+        if [[ -z "$perm_file" ]]; then
+            echo "$output" | grep -q "Permission denied" && perm_file="<file>"
+        fi
+        [[ -n "$perm_file" ]] && hint="💡 Permission denied on ${perm_file}. Try: chmod +x ${perm_file} or check ownership."
+    fi
+
+    # Port already in use
+    if [[ -z "$hint" ]]; then
+        echo "$output" | grep -qiE "address already in use|port.*in use|EADDRINUSE" && \
+            hint="💡 Port already in use. Find the process: lsof -ti :<port> | xargs kill"
+    fi
+
+    # Syntax error in a script we ran
+    if [[ -z "$hint" ]]; then
+        syn_file=$(echo "$output" | grep -oP "(?<=syntax error in )([^\s:]+)" | head -1)
+        [[ -n "$syn_file" ]] && hint="💡 Syntax error in ${syn_file}. Run: bash -n ${syn_file}"
+    fi
+
+    # File/directory not found
+    if [[ -z "$hint" ]]; then
+        echo "$output" | grep -qE "No such file or directory|not found|does not exist" && \
+            hint="💡 Path not found. Verify with: ls -la <path>"
+    fi
+
+    if [[ -n "$hint" ]]; then
+        printf '\n%s\n' "$hint"
+    fi
+    echo "[Exit code: ${status}]"
+fi
+
 exit $status

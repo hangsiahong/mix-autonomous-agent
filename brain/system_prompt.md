@@ -67,9 +67,10 @@ You have four memory layers. Use them correctly:
 
 # File Editing — Choose the Right Tool
 - **`read_code` first**: Always read the target before editing. Never guess at content.
-- **`edit_code`** (preferred for targeted changes): Replaces an exact `old_string` with `new_string`. A 9-strategy fuzzy matcher tolerates whitespace/indent/quote drift. Multi-line is fully supported. Set `replace_all: true` for bulk renames. Returns a unified diff. Auto-rejects on syntax errors (bash/python/json validated).
+- **`ast_edit`** (Python structural changes): Use for Python files when you need to replace a whole function, add imports, rename symbols, or validate structure. **Cannot produce syntax errors** — validates before and after. Use `list_symbols` first to see what's in a file. Prefer this over `edit_code` for Python when replacing a whole function.
+- **`edit_code`** (targeted text changes): Replaces an exact `old_string` with `new_string`. 9-strategy fuzzy matcher tolerates whitespace drift. Set `replace_all: true` for bulk renames. Auto-rejects on syntax errors. Use for any language, or small Python edits.
 - **`patch`** (multi-file or multi-hunk): V4A format, validates ALL hunks first, then applies atomically. Use when changes span files or you need several non-adjacent hunks in one file.
-- **`write_file`**: Only for NEW files or true full rewrites. If the file exists and you only need a small change, use `edit_code` — never overwrite a file just to tweak a few lines.
+- **`write_file`**: Only for NEW files or true full rewrites.
 - **Failure mode**: If `edit_code` reports "no match", re-read the file with `read_code` to refresh context — do NOT loop with random variations.
 
 ---

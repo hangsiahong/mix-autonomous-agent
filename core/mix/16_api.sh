@@ -66,7 +66,31 @@ _api_build_payload() {
         fi
     fi
 
-    # Inject curated memory snapshot (hermes pattern: treat as authoritative background reference)
+    # Inject active todo/plan list (state awareness: LLM sees its own checklist every turn)
+  # Prevents the "forgot I tried this 3 turns ago" failure mode
+  local _todo_block=""
+  for _todo_file in "brain/state/todo_default.json" "brain/state/todo_${session_id:-unknown}.json"; do
+    if [[ -f "$_todo_file" && -s "$_todo_file" ]]; then
+      local _pending
+      _pending=$(python3 -c "
+import json, sys
+try:
+    tasks = json.load(open(sys.argv[1]))
+    pending = [t for t in tasks if not t.get('done', False)]
+    if pending:
+        lines = ['[ ] ' + t.get('text','') for t in pending[:10]]
+        print('\n'.join(lines))
+except: pass
+" "$_todo_file" 2>/dev/null)
+      if [[ -n "$_pending" ]]; then
+        _todo_block="## Active Plan (your checklist — update with the todo tool)\n${_pending}\n\n"
+        break
+      fi
+    fi
+  done
+  [[ -n "$_todo_block" ]] && system_prompt="${_todo_block}${system_prompt}"
+
+  # Inject curated memory snapshot (hermes pattern: treat as authoritative background reference)
     local _mem_block=""
     if [[ -f "brain/state/MEMORY.md" && -s "brain/state/MEMORY.md" ]]; then
         local _mem_raw
