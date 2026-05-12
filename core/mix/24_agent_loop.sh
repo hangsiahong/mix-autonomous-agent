@@ -8,10 +8,14 @@ run_agent() {
     local session_id="$6"
     local chat_title="$7"
     local username="$8"
-    local skill="${9}" # Skill passed from router
+    local skill="${9}"
+    local user_msg_id="${10:-}"  # Telegram message_id of the user's message (for reply-to + reactions)
 
     local pid_file="${DIR}/brain/state/run_${session_id}.pid"
     local stop_flag="${DIR}/brain/state/stop_${session_id}"
+    local steer_file="${DIR}/brain/state/steer_${session_id}"
+    local queue_file="${DIR}/brain/state/queue_${session_id}"
+    local model_file="${DIR}/brain/state/model_${session_id}"
 
     # 1. Immediate Feedback: Decide status based on lock availability
     mkdir -p "${DIR}/brain/state/locks"
@@ -19,12 +23,15 @@ run_agent() {
     local initial_status="Thinking"
     local msg_id
 
+    # React 👀 on the user's message to signal we received it (hermes pattern)
+    [[ -n "$user_msg_id" && "$user_msg_id" != "0" ]] && tg_react "$chat_id" "$user_msg_id" "👀"
+
     # Try non-blocking lock to check if busy
     if ! flock -n "${lock_file}" true 2>/dev/null; then
         initial_status="Queued"
-        msg_id=$(tg_send_r "$chat_id" "🕒 <i>Queued</i>" "$thread_id" "HTML")
+        msg_id=$(tg_send_r "$chat_id" "🕒 <i>Queued</i>" "$thread_id" "HTML" "$user_msg_id")
     else
-        msg_id=$(tg_send_r "$chat_id" "⏳ <i>Thinking…</i>" "$thread_id" "HTML")
+        msg_id=$(tg_send_r "$chat_id" "⏳ <i>Thinking…</i>" "$thread_id" "HTML" "$user_msg_id")
     fi
 
     # Session Lock block
@@ -71,7 +78,13 @@ run_agent() {
             fi
         fi
         [[ -n "$skill" ]] && context_prompt+="- **Active Skill**: $skill\n"
-        
+
+        # Apply per-session model override (/model command — hermes pattern)
+        if [[ -f "$model_file" ]]; then
+            local _session_model; _session_model=$(cat "$model_file" 2>/dev/null)
+            [[ -n "$_session_model" ]] && MODEL="$_session_model"
+        fi
+
         append_text "user" "[SYSTEM: Context Updated]\n$context_prompt\n\n$input" "$media_json"
         ( generate_title "$session_id" & )
 
@@ -140,6 +153,27 @@ for tc in json.loads(open(sys.argv[1]).read()):
     print(f'{name.strip()}|{tc.get(\"id\", \"\").strip()}')
 " <(printf '%s' "$tool_calls"))
                 fi
+                # Drain pending /steer into last tool result (hermes pattern)
+                if [[ -f "$steer_file" ]]; then
+                    local _steer_text; _steer_text=$(cat "$steer_file" 2>/dev/null)
+                    rm -f "$steer_file"
+                    if [[ -n "$_steer_text" ]]; then
+                        # Append steer as "User guidance" to the last tool result in history
+                        HISTORY=$(python3 -c "
+import json, sys
+h = json.loads(open(sys.argv[1]).read())
+steer = open(sys.argv[2]).read().strip()
+# Find last tool message and append guidance
+for i in range(len(h)-1, -1, -1):
+    if h[i].get('role') == 'tool':
+        c = h[i].get('content', '')
+        h[i]['content'] = str(c) + '\n\nUser guidance: ' + steer
+        break
+print(json.dumps(h, separators=(',',':')))
+" <(printf '%s' "$HISTORY") <(printf '%s' "$_steer_text") 2>/dev/null || printf '%s' "$HISTORY")
+                    fi
+                fi
+
                 # Show completed tool names then reset to thinking for next turn
                 local _between_msg
                 _between_msg=$(TOOL_NAMES="$batch_names" python3 -c "
@@ -168,16 +202,38 @@ print('<i>Thinking…</i>\n' + '\n'.join(lines) if lines else '⏳ <i>Thinking�
                 local full_md="${text}"$'\n\n'"_🔧 ${total_tool_calls} tool call$([[ $total_tool_calls -ne 1 ]] && echo 's'): ${footer_parts}_"
                 tg_edit "$chat_id" "$msg_id" "$(md_to_tg_html "$full_md")" "HTML" > /dev/null
             elif [[ -n "$text" && "$text" != "null" && $total_tool_calls -eq 0 ]]; then
-                # Plain text reply — streaming may not have updated yet (fast responses)
                 tg_edit "$chat_id" "$msg_id" "$(md_to_tg_html "$text")" "HTML" > /dev/null
             fi
+            # React ✅ on the user's original message (hermes: done signal)
+            [[ -n "$user_msg_id" && "$user_msg_id" != "0" ]] && tg_react "$chat_id" "$user_msg_id" "✅"
+        else
+            # Loop hit max turns without clean exit
+            tg_edit "$chat_id" "$msg_id" "$(md_to_tg_html "${text:-}")\n\n⚠️ _Max turns reached. Use /retry to continue or /new for fresh session._" "HTML" > /dev/null 2>&1 || true
+            [[ -n "$user_msg_id" && "$user_msg_id" != "0" ]] && tg_react "$chat_id" "$user_msg_id" "👎"
         fi
 
         save_history "$session_id"
         log_trajectory "$session_id" "completed"
         ( reflect_turn "$chat_id" "$thread_id" "$session_id" & )
-        # Save end-of-session recap to memory (background — hermes pattern)
         [[ "$loop_completed" == true && $total_tool_calls -gt 0 ]] && \
             ( save_session_recap "$session_id" "$chat_id" "$thread_id" & )
     ) 200>"$lock_file"
+
+    # Process queued message after lock is released (hermes /queue pattern)
+    if [[ -f "$queue_file" ]]; then
+        local _queued_text
+        _queued_text=$(head -1 "$queue_file" 2>/dev/null)
+        # Pop the first line
+        python3 -c "
+import sys
+lines = open(sys.argv[1]).readlines()
+if len(lines) > 1:
+    open(sys.argv[1],'w').writelines(lines[1:])
+else:
+    import os; os.unlink(sys.argv[1])
+" "$queue_file" 2>/dev/null || rm -f "$queue_file"
+        if [[ -n "$_queued_text" ]]; then
+            ( set -m; run_agent "$chat_id" "$_queued_text" "$user_id" "[]" "$thread_id" "$session_id" "$chat_title" "$username" "$skill" ) &
+        fi
+    fi
 }

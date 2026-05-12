@@ -18,14 +18,36 @@ cbq = u.get('callback_query') or {}
 src_msg = msg if msg else (cbq.get('message') or {})
 src_from = (msg.get('from') or cbq.get('from')) or {}
 chat = src_msg.get('chat') or {}
+bot_username = os.environ.get('BOT_USERNAME', '')
+
+# Reply-to: capture the original message's ID and text for threading
+reply_to_msg = msg.get('reply_to_message') or {}
+reply_to_id = str(reply_to_msg.get('message_id', '') or '')
+
+# For group @mention gate: check if bot is @mentioned in text or caption
+raw_text = str(msg.get('text', '') or msg.get('caption', '') or cbq.get('data', '') or '')
+is_mention = False
+if bot_username and ('@' + bot_username).lower() in raw_text.lower():
+    is_mention = True
+# Also check if it's a reply to a bot message
+is_reply_to_bot = bool(reply_to_msg.get('from', {}).get('is_bot'))
+
+# media_group_id for album batching
+media_group_id = str(msg.get('media_group_id', '') or '')
+
 vals = {
-    'chat_id':    str(chat.get('id', '') or ''),
-    'thread_id':  str(src_msg.get('message_thread_id', '') or ''),
-    'chat_type':  str(chat.get('type', 'private') or 'private'),
-    'chat_title': str(chat.get('title', '') or ''),
-    'text':       str(msg.get('text', '') or msg.get('caption', '') or cbq.get('data', '') or ''),
-    'user_id':    str(src_from.get('id', '') or ''),
-    'username':   str(src_from.get('username', '') or ''),
+    'chat_id':       str(chat.get('id', '') or ''),
+    'thread_id':     str(src_msg.get('message_thread_id', '') or ''),
+    'chat_type':     str(chat.get('type', 'private') or 'private'),
+    'chat_title':    str(chat.get('title', '') or ''),
+    'text':          raw_text,
+    'user_id':       str(src_from.get('id', '') or ''),
+    'username':      str(src_from.get('username', '') or ''),
+    'message_id':    str(src_msg.get('message_id', '') or ''),
+    'reply_to_id':   reply_to_id,
+    'is_mention':    '1' if is_mention else '0',
+    'is_reply_to_bot': '1' if is_reply_to_bot else '0',
+    'media_group_id': media_group_id,
 }
 for k, v in vals.items():
     print(f'{k}={shlex.quote(v)}')
@@ -52,14 +74,58 @@ for k, v in vals.items():
 
     # Whitelist Check
     if ! is_whitelisted "$chat_id" && ! is_whitelisted "$user_id"; then
-        # Check if it's the admin trying to whitelist this chat
         if [[ "$user_id" == "${TG_ADMIN}" && "$text" == "/whitelist"* ]]; then
-             : # Allow admin to use /whitelist even if not whitelisted (though admin should be)
+             : # Allow admin whitelist bootstrap
         else
-            echo "Access denied for chat_id $chat_id / user_id $user_id. User text: $text"
-            # Do NOT send a reply to unauthorized users to prevent spam/discovery
+            echo "Access denied for chat_id $chat_id / user_id $user_id."
             return
         fi
+    fi
+
+    # Group @mention gate (hermes-style): in groups only respond when @mentioned or replied-to
+    # Controlled by env REQUIRE_MENTION=1 or for all groups when not DM
+    if [[ "$chat_type" != "private" && "$text" != /* ]]; then
+        local _require_mention="${REQUIRE_MENTION:-0}"
+        # If REQUIRE_MENTION is set, skip unless @mentioned or reply to bot
+        if [[ "$_require_mention" == "1" || "$_require_mention" == "true" ]]; then
+            if [[ "$is_mention" != "1" && "$is_reply_to_bot" != "1" ]]; then
+                return  # Silent drop — bot not addressed
+            fi
+        fi
+    fi
+
+    # Photo album batching (hermes-style): coalesce media_group albums into one agent call
+    # If this photo belongs to a media group, defer it to a pending batch file for 1 second
+    if [[ -n "$media_group_id" && "$media_group_id" != "null" ]]; then
+        local _batch_dir="${DIR}/brain/state/albums"
+        mkdir -p "$_batch_dir"
+        local _batch_file="${_batch_dir}/${session_id}_${media_group_id}"
+        # Append this update's media to the batch file
+        local _cur_media="$media_json"
+        if [[ -f "$_batch_file" ]]; then
+            # Merge: combine existing + new media arrays
+            _cur_media=$(python3 -c "
+import json, sys
+existing = json.loads(open(sys.argv[1]).read())
+new = json.loads(sys.argv[2])
+combined = existing + new
+print(json.dumps(combined))
+" "$_batch_file" "$media_json" 2>/dev/null || echo "$media_json")
+        fi
+        printf '%s' "$_cur_media" > "$_batch_file"
+        # Schedule flush after 1 second (background — kills any pending flush for same album)
+        local _lock_file="${_batch_dir}/${session_id}_${media_group_id}.lock"
+        # Background flush: wait 1s then dispatch if this is the last writer
+        (
+            sleep 1
+            [[ -f "$_batch_file" ]] || exit 0
+            local _batched_media; _batched_media=$(cat "$_batch_file")
+            rm -f "$_batch_file"
+            local _caption="$text"
+            [[ -z "$_caption" ]] && _caption="[Photo album]"
+            ( set -m; run_agent "$chat_id" "$_caption" "$user_id" "$_batched_media" "$thread_id" "$session_id" "$chat_title" "$username" "$skill" "$message_id" ) &
+        ) &
+        return  # Don't process immediately; let the batch flush handle it
     fi
 
     # Auto-load AMA skill if mentioning AMA or autonomous-agent
@@ -80,14 +146,28 @@ for k, v in vals.items():
                 ;;
             /help)
                 tg_send "$chat_id" "<b>Commands</b>
-/stop — stop this session's running task
-/stop all — stop ALL running tasks across all sessions
-/reset or /new — clear session history and start fresh
-/status — show current model, session info, system stats
+<b>Session</b>
+/stop — stop running task • /stop all — kill everything
+/new or /reset — fresh session (history archived)
+/retry — re-run last message
+/undo — remove last exchange from history
+/steer &lt;note&gt; — inject guidance mid-run (after next tool call)
+/queue &lt;text&gt; — queue a message for after current run
+
+<b>Config</b>
+/model &lt;name&gt; — switch model this session
+/skill &lt;name&gt; — activate a skill • /skill off to clear
 /skills — list available skills
-/insights — token usage statistics
-/restart — restart the bot (admin only)
-/shutdown — shut down the bot (admin only)" "$thread_id" "HTML"
+
+<b>Info</b>
+/status — model, session, system info
+/usage — token usage this session
+/insights — token + tool frequency stats
+
+<b>Admin</b>
+/whitelist &lt;id&gt; — add user/chat
+/restart — restart bot
+/shutdown — shut down bot" "$thread_id" "HTML"
                 ;;
             /whitelist)
                 local target_id=$(echo "$args" | awk '{print $1}')
@@ -99,7 +179,6 @@ for k, v in vals.items():
                 fi
                 ;;
             /reset|/new)
-                # Archive current session to trajectories before clearing so session_search can still find it
                 local _hist_file="${DIR}/brain/state/history_${session_id}.json"
                 if [[ -f "$_hist_file" ]]; then
                     local _archive_dir="${DIR}/brain/state/sessions"
@@ -108,7 +187,168 @@ for k, v in vals.items():
                     cp "$_hist_file" "${_archive_dir}/history_${session_id}_${_ts}.json"
                     rm -f "$_hist_file"
                 fi
+                # Clear session-level overrides on reset
+                rm -f "${DIR}/brain/state/model_${session_id}" \
+                      "${DIR}/brain/state/steer_${session_id}" \
+                      "${DIR}/brain/state/queue_${session_id}" 2>/dev/null || true
                 tg_send "$chat_id" "🆕 New session started. Past conversations are archived and searchable with \`session_search\`." "$thread_id"
+                ;;
+
+            /retry)
+                # Re-run the last user message (hermes pattern: trim last exchange, re-queue)
+                local _hist_file="${DIR}/brain/state/history_${session_id}.json"
+                local _last_user_text=""
+                if [[ -f "$_hist_file" ]]; then
+                    _last_user_text=$(python3 -c "
+import json, sys
+h = json.load(open(sys.argv[1]))
+# Find last user message going backwards, extract text
+for msg in reversed(h):
+    if msg.get('role') == 'user':
+        c = msg.get('content', '')
+        if isinstance(c, list):
+            c = ' '.join(p.get('text','') for p in c if isinstance(p,dict) and p.get('type')=='text')
+        print(str(c).strip())
+        break
+" "$_hist_file" 2>/dev/null)
+                fi
+                if [[ -z "$_last_user_text" ]]; then
+                    tg_send "$chat_id" "Nothing to retry — history is empty." "$thread_id"
+                else
+                    # Trim history to before the last user turn
+                    python3 -c "
+import json, sys
+h = json.load(open(sys.argv[1]))
+# Find index of last user message
+idx = None
+for i in range(len(h)-1, -1, -1):
+    if h[i].get('role') == 'user':
+        idx = i; break
+if idx is not None:
+    open(sys.argv[1], 'w').write(json.dumps(h[:idx], separators=(',',':')))
+" "$_hist_file" 2>/dev/null
+                    tg_send "$chat_id" "🔁 Retrying last message…" "$thread_id"
+                    ( set -m; run_agent "$chat_id" "$_last_user_text" "$user_id" "[]" "$thread_id" "$session_id" "$chat_title" "$username" "$skill" "$message_id" ) &
+                fi
+                ;;
+
+            /undo)
+                # Remove the last exchange (last user message + everything after) from history
+                local _hist_file="${DIR}/brain/state/history_${session_id}.json"
+                if [[ ! -f "$_hist_file" ]]; then
+                    tg_send "$chat_id" "Nothing to undo — history is empty." "$thread_id"
+                else
+                    local _undo_result
+                    _undo_result=$(python3 -c "
+import json, sys
+h = json.load(open(sys.argv[1]))
+idx = None
+for i in range(len(h)-1, -1, -1):
+    if h[i].get('role') == 'user':
+        idx = i; break
+if idx is None:
+    print('empty')
+else:
+    removed = len(h) - idx
+    preview = h[idx].get('content','')
+    if isinstance(preview, list):
+        preview = ' '.join(p.get('text','') for p in preview if isinstance(p,dict))
+    open(sys.argv[1], 'w').write(json.dumps(h[:idx], separators=(',',':')))
+    print(f'removed:{removed}:{str(preview)[:80]}')
+" "$_hist_file" 2>/dev/null)
+                    if [[ "$_undo_result" == "empty" ]]; then
+                        tg_send "$chat_id" "Nothing to undo." "$thread_id"
+                    else
+                        local _removed_count; _removed_count=$(echo "$_undo_result" | cut -d: -f2)
+                        local _preview; _preview=$(echo "$_undo_result" | cut -d: -f3-)
+                        tg_send "$chat_id" "↩️ Removed $_removed_count message(s). Last prompt was: <i>${_preview}</i>" "$thread_id" "HTML"
+                    fi
+                fi
+                ;;
+
+            /model)
+                # Per-session model override (hermes pattern: stored per session_id)
+                local _model_arg=$(echo "$args" | awk '{print $1}')
+                if [[ -z "$_model_arg" ]]; then
+                    local _cur_model="${MODEL:-unknown}"
+                    local _override_model=""
+                    [[ -f "${DIR}/brain/state/model_${session_id}" ]] && _override_model=$(cat "${DIR}/brain/state/model_${session_id}" 2>/dev/null)
+                    if [[ -n "$_override_model" ]]; then
+                        tg_send "$chat_id" "Current model: <code>${_override_model}</code> (session override)\nDefault: <code>${_cur_model}</code>\n\nUse <code>/model &lt;name&gt;</code> to switch. <code>/model default</code> to reset." "$thread_id" "HTML"
+                    else
+                        tg_send "$chat_id" "Current model: <code>${_cur_model}</code>\n\nUse <code>/model &lt;name&gt;</code> to switch." "$thread_id" "HTML"
+                    fi
+                elif [[ "$_model_arg" == "default" || "$_model_arg" == "reset" ]]; then
+                    rm -f "${DIR}/brain/state/model_${session_id}"
+                    tg_send "$chat_id" "✅ Model reset to default: <code>${MODEL:-unknown}</code>" "$thread_id" "HTML"
+                else
+                    mkdir -p "${DIR}/brain/state"
+                    printf '%s' "$_model_arg" > "${DIR}/brain/state/model_${session_id}"
+                    tg_send "$chat_id" "✅ Model set to <code>${_model_arg}</code> for this session." "$thread_id" "HTML"
+                fi
+                ;;
+
+            /usage)
+                # Show token usage for this session (hermes pattern)
+                local _usage_report
+                _usage_report=$(python3 -c "
+import json, sys, os
+usage_file = '${DIR}/brain/state/usage_log.jsonl'
+session_id = '${session_id}'
+if not os.path.exists(usage_file):
+    print('No usage data recorded yet.')
+    sys.exit(0)
+lines = open(usage_file).readlines()
+total_in = total_out = total_calls = 0
+for line in lines:
+    try:
+        e = json.loads(line)
+        if e.get('chat_id') == session_id.replace('tg_','') or e.get('session_id') == session_id:
+            u = e.get('usage', {})
+            total_in += int(u.get('prompt_tokens', 0) or 0)
+            total_out += int(u.get('completion_tokens', 0) or 0)
+            total_calls += 1
+    except: pass
+if total_calls == 0:
+    # Fall back to totals file
+    try:
+        t = json.load(open('${DIR}/brain/state/usage_totals.json'))
+        total_in = t.get('prompt_tokens',0)
+        total_out = t.get('completion_tokens',0)
+        print(f'All-time: {total_in:,} in + {total_out:,} out = {total_in+total_out:,} tokens')
+        sys.exit(0)
+    except: pass
+    print('No usage data for this session.')
+    sys.exit(0)
+total = total_in + total_out
+print(f'Session: {total_calls} API calls\n{total_in:,} input + {total_out:,} output = {total:,} total tokens')
+" 2>/dev/null || echo "Usage data unavailable.")
+                tg_send "$chat_id" "📊 <b>Token Usage</b>\n${_usage_report}" "$thread_id" "HTML"
+                ;;
+
+            /steer)
+                # Inject guidance mid-run (hermes pattern: appended to next tool result)
+                if [[ -z "$args" ]]; then
+                    tg_send "$chat_id" "Usage: <code>/steer &lt;guidance text&gt;</code>\nThe note will be injected after the agent's next tool call." "$thread_id" "HTML"
+                else
+                    mkdir -p "${DIR}/brain/state"
+                    local _steer_file="${DIR}/brain/state/steer_${session_id}"
+                    printf '%s\n' "$args" >> "$_steer_file"
+                    tg_send "$chat_id" "💬 Steer queued. It will be injected after the next tool call." "$thread_id"
+                fi
+                ;;
+
+            /queue)
+                # Queue a message to run after current turn completes (hermes pattern)
+                if [[ -z "$args" ]]; then
+                    tg_send "$chat_id" "Usage: <code>/queue &lt;message&gt;</code>\nThe message will be processed after the current task finishes." "$thread_id" "HTML"
+                else
+                    mkdir -p "${DIR}/brain/state"
+                    local _queue_file="${DIR}/brain/state/queue_${session_id}"
+                    printf '%s\n' "$args" >> "$_queue_file"
+                    local _qdepth; _qdepth=$(wc -l < "$_queue_file" 2>/dev/null || echo 1)
+                    tg_send "$chat_id" "📥 Queued (position $_qdepth)." "$thread_id"
+                fi
                 ;;
             /status)
                 local title="Untitled"
@@ -264,11 +504,11 @@ Use <code>/skill off</code> to clear."
                 ;;
             *)
                 # Pass unknown commands to agent
-                ( set -m; run_agent "$chat_id" "$text" "$user_id" "$media_json" "$thread_id" "$session_id" "$chat_title" "$username" "$skill" ) &
+                ( set -m; run_agent "$chat_id" "$text" "$user_id" "$media_json" "$thread_id" "$session_id" "$chat_title" "$username" "$skill" "$message_id" ) &
                 ;;
         esac
     else
-        # Normal text -> Run Agent
-        ( set -m; run_agent "$chat_id" "$text" "$user_id" "$media_json" "$thread_id" "$session_id" "$chat_title" "$username" "$skill" ) &
+        # Normal text -> Run Agent (pass message_id for reply-to threading)
+        ( set -m; run_agent "$chat_id" "$text" "$user_id" "$media_json" "$thread_id" "$session_id" "$chat_title" "$username" "$skill" "$message_id" ) &
     fi
 }

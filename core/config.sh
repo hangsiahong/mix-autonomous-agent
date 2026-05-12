@@ -16,7 +16,9 @@ load_config() {
 }
 
 save_config() {
-    echo "$1" > "$CONFIG_FILE"
+    # Atomic write: prevents corruption when concurrent sessions call save_config
+    local _tmp; _tmp=$(mktemp "${CONFIG_FILE}.XXXXXX")
+    printf '%s' "$1" > "$_tmp" && mv "$_tmp" "$CONFIG_FILE" || { rm -f "$_tmp"; return 1; }
 }
 
 is_whitelisted() {

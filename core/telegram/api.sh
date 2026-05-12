@@ -14,6 +14,7 @@ tg_send() {
     local text="$2"
     local thread_id="$3"
     local parse_mode="${4:-Markdown}"
+    local reply_to_id="${5:-}"   # optional: reply_to_message_id (hermes-style threading)
     local payload
     payload=$(TG_CID="$chat_id" TG_TXT="$text" TG_PM="$parse_mode" python3 -c "
 import json, os
@@ -25,17 +26,26 @@ import json, os, sys
 d = json.load(sys.stdin)
 try: d['message_thread_id'] = int(os.environ['TID'])
 except: d['message_thread_id'] = os.environ['TID']
+print(json.dumps(d))" <<< "$payload")
+    fi
+    if [[ -n "$reply_to_id" && "$reply_to_id" != "null" && "$reply_to_id" != "0" ]]; then
+        payload=$(RID="$reply_to_id" python3 -c "
+import json, os, sys
+d = json.load(sys.stdin)
+try: d['reply_to_message_id'] = int(os.environ['RID'])
+except: pass
 print(json.dumps(d))" <<< "$payload")
     fi
     _tg_send_payload "$payload" > /dev/null
 }
 
-# Like tg_send but prints the message_id to stdout (for callers that need it for later edits)
+# Like tg_send but returns the message_id (callers need it for later edits)
 tg_send_r() {
     local chat_id="$1"
     local text="$2"
     local thread_id="$3"
     local parse_mode="${4:-Markdown}"
+    local reply_to_id="${5:-}"   # optional: reply_to_message_id
     local payload
     payload=$(TG_CID="$chat_id" TG_TXT="$text" TG_PM="$parse_mode" python3 -c "
 import json, os
@@ -49,7 +59,33 @@ try: d['message_thread_id'] = int(os.environ['TID'])
 except: d['message_thread_id'] = os.environ['TID']
 print(json.dumps(d))" <<< "$payload")
     fi
+    if [[ -n "$reply_to_id" && "$reply_to_id" != "null" && "$reply_to_id" != "0" ]]; then
+        payload=$(RID="$reply_to_id" python3 -c "
+import json, os, sys
+d = json.load(sys.stdin)
+try: d['reply_to_message_id'] = int(os.environ['RID'])
+except: pass
+print(json.dumps(d))" <<< "$payload")
+    fi
     _tg_send_payload "$payload"
+}
+
+# Set a reaction emoji on a message (hermes-style: 👀 thinking, ✅ done, 👎 error)
+tg_react() {
+    local chat_id="$1"
+    local message_id="$2"
+    local emoji="$3"    # e.g. "👀" "✅" "👎" — pass "" to clear all reactions
+    [[ -z "${TG_REACTIONS:-}" || "${TG_REACTIONS}" == "false" || "${TG_REACTIONS}" == "0" ]] && return 0
+    [[ -z "$chat_id" || -z "$message_id" || "$message_id" == "0" ]] && return 0
+    local payload
+    if [[ -z "$emoji" ]]; then
+        payload=$(TG_CID="$chat_id" TG_MID="$message_id" python3 -c "
+import json,os; print(json.dumps({'chat_id':os.environ['TG_CID'],'message_id':int(os.environ['TG_MID']),'reaction':[],'is_big':False}))")
+    else
+        payload=$(TG_CID="$chat_id" TG_MID="$message_id" TG_EM="$emoji" python3 -c "
+import json,os; print(json.dumps({'chat_id':os.environ['TG_CID'],'message_id':int(os.environ['TG_MID']),'reaction':[{'type':'emoji','emoji':os.environ['TG_EM']}],'is_big':False}))")
+    fi
+    tg_api "setMessageReaction" "$payload" > /dev/null 2>&1 || true
 }
 
 _tg_send_payload() {
@@ -132,18 +168,23 @@ tg_download() {
 
 tg_set_commands() {
     local commands='[
-        {"command": "start", "description": "Start the bot"},
-        {"command": "help", "description": "Show available commands"},
-        {"command": "new", "description": "Reset conversation history"},
-        {"command": "reset", "description": "Reset conversation history"},
-        {"command": "status", "description": "Show agent status"},
-        {"command": "skill", "description": "View or set active skill (/skill <name> or /skill off)"},
-        {"command": "skills", "description": "List all available skills"},
-        {"command": "insights", "description": "Show usage stats and tool frequency"},
-        {"command": "sethome", "description": "Set this chat as the home chat (admin)"},
-        {"command": "whitelist", "description": "Whitelist a user or chat ID (admin)"},
-        {"command": "restart", "description": "Restart the bot (admin)"},
-        {"command": "stop", "description": "Shut down the bot (admin)"}
+        {"command": "start",    "description": "Start the bot"},
+        {"command": "help",     "description": "Show all available commands"},
+        {"command": "new",      "description": "Start a fresh session (archives history)"},
+        {"command": "retry",    "description": "Re-run the last message"},
+        {"command": "undo",     "description": "Remove the last exchange from history"},
+        {"command": "stop",     "description": "Stop the running task — /stop all to kill everything"},
+        {"command": "steer",    "description": "Inject guidance mid-run: /steer <note>"},
+        {"command": "queue",    "description": "Queue a message for after current run: /queue <text>"},
+        {"command": "model",    "description": "Switch model this session: /model <name>"},
+        {"command": "status",   "description": "Show model, session info, system stats"},
+        {"command": "usage",    "description": "Show token usage for this session"},
+        {"command": "skill",    "description": "View or set active skill: /skill <name> or off"},
+        {"command": "skills",   "description": "List all available skills"},
+        {"command": "insights", "description": "Token and tool usage statistics"},
+        {"command": "whitelist","description": "Whitelist a user or chat ID (admin)"},
+        {"command": "restart",  "description": "Restart the bot (admin)"},
+        {"command": "shutdown", "description": "Shut down the bot (admin)"}
     ]'
     tg_api "setMyCommands" "$(CMDS="$commands" python3 -c "import json,os; print(json.dumps({'commands':json.loads(os.environ['CMDS'])}))")" > /dev/null
 }
