@@ -91,6 +91,38 @@ def main():
     usage = None
     last_update = time.time()
 
+    # ── Tool progress (openclaw-style) ──
+    _TOOL_EMOJI = {
+        "bash":"🛠️","web_search":"🔍","fetch_url":"🌐","read_file":"📖",
+        "write_file":"✍️","edit_code":"📝","search_files":"🔎","todo":"📋",
+        "memory":"🧠","memory_remember":"🧠","memory_recall":"🧠",
+        "process":"⚙️","browser":"🌍","image_generate":"🎨","patch":"🩹",
+        "repo_map":"🗺️","clarify":"💬","session_search":"🗂️","sys_info":"📊",
+        "custom_tool_manager":"🔧","skill_manager":"🎯","skill_install":"📦",
+        "insights":"📈","recap":"📝","kanban_show":"📌","kanban_create":"📌",
+        "kanban_complete":"✅","kanban_block":"🚧",
+    }
+
+    def _tool_progress_block(tc_list, max_lines=4):
+        lines = []
+        for tc in tc_list:
+            name = (tc.get("function", {}).get("name") or "").strip()
+            if not name: continue
+            emoji = _TOOL_EMOJI.get(name, "🧩")
+            label = name.replace("_", " ")
+            try:
+                args = json.loads(tc.get("function", {}).get("arguments") or "{}")
+                detail = next((str(v)[:60].replace("`","'").strip() for v in args.values() if isinstance(v,str) and str(v).strip()), None)
+            except Exception:
+                detail = None
+            raw = f"{emoji} {label}" + (f": {detail}" if detail else "")
+            lines.append(f"`{raw}`")
+        return "_Working…_\n" + "\n".join(lines[-max_lines:]) if lines else "_Working…_"
+
+    def _build_display(text, tc_list):
+        block = _tool_progress_block(tc_list)
+        return (text.strip() + "\n\n" + block) if text.strip() else block
+
     try:
         with requests.post(url, json=payload, headers=headers, stream=True, timeout=60) as r:
             if r.status_code != 200:
@@ -132,8 +164,10 @@ def main():
                     usage = chunk["usageMetadata"]
 
                 if time.time() - last_update > 2.0:
-                    display = full_text if full_text else "⏳"
-                    if tool_calls: display += "\n\n🔧 _Running tools…_"
+                    if tool_calls:
+                        display = _build_display(full_text, tool_calls)
+                    else:
+                        display = full_text if full_text else "⏳"
                     update_tg(tg_url, chat_id, message_id, display)
                     last_update = time.time()
 
@@ -142,12 +176,14 @@ def main():
     finally:
         _typing_stop.set()
 
-    # Final Telegram update with complete text
+    # Final Telegram update
     sys.stderr.write(f"DBG: full_text_len={len(full_text)} msg_id={message_id} chat_id={chat_id}\n")
-    if full_text:
+    if tool_calls:
+        update_tg(tg_url, chat_id, message_id, _build_display(full_text, tool_calls))
+    elif full_text:
         update_tg(tg_url, chat_id, message_id, full_text)
     else:
-        sys.stderr.write("DBG: full_text is empty, skipping final update\n")
+        sys.stderr.write("DBG: no text and no tools, skipping final update\n")
 
     # Final logic
     print(f"TC:{json.dumps(tool_calls)}")

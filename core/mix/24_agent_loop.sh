@@ -128,7 +128,21 @@ for tc in json.loads(open(sys.argv[1]).read()):
     print(f'{name.strip()}|{tc.get(\"id\", \"\").strip()}')
 " <(printf '%s' "$tool_calls"))
                 fi
-                tg_edit "$chat_id" "$msg_id" "⏳ <i>Thinking…</i>" "HTML" > /dev/null 2>&1
+                # Show completed tool names then reset to thinking for next turn
+                local _between_msg
+                _between_msg=$(TOOL_NAMES="$batch_names" python3 -c "
+import os, re
+EMOJI = {'bash':'🛠️','web_search':'🔍','fetch_url':'🌐','read_file':'📖','write_file':'✍️',
+         'edit_code':'📝','search_files':'🔎','todo':'📋','memory':'🧠','memory_remember':'🧠',
+         'memory_recall':'🧠','process':'⚙️','browser':'🌍','image_generate':'🎨','patch':'🩹',
+         'repo_map':'🗺️','clarify':'💬','session_search':'🗂️','sys_info':'📊','recap':'📝',
+         'custom_tool_manager':'🔧','skill_manager':'🎯','skill_install':'📦','insights':'📈',
+         'kanban_show':'📌','kanban_create':'📌','kanban_complete':'✅','kanban_block':'🚧'}
+names = [n.strip() for n in os.environ.get('TOOL_NAMES','').split(',') if n.strip()]
+lines = ['<code>' + EMOJI.get(n,'🧩') + ' ' + n.replace('_',' ') + '</code>' for n in names[:4]]
+print('<i>Thinking…</i>\n' + '\n'.join(lines) if lines else '⏳ <i>Thinking…</i>')
+" 2>/dev/null || echo "⏳ <i>Thinking…</i>")
+                tg_edit "$chat_id" "$msg_id" "$_between_msg" "HTML" > /dev/null 2>&1
                 export _AMA_REASONING_HTML=""
                 continue
             fi

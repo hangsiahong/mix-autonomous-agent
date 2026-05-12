@@ -128,6 +128,40 @@ tool_calls = {} # Use dict to accumulate by index
 usage = None
 last_update = time.time()
 
+# ── Tool progress (openclaw-style) ──
+_TOOL_EMOJI = {
+    "bash":"🛠️","web_search":"🔍","fetch_url":"🌐","read_file":"📖",
+    "write_file":"✍️","edit_code":"📝","search_files":"🔎","todo":"📋",
+    "memory":"🧠","memory_remember":"🧠","memory_recall":"🧠",
+    "process":"⚙️","browser":"🌍","image_generate":"🎨","patch":"🩹",
+    "repo_map":"🗺️","clarify":"💬","session_search":"🗂️","sys_info":"📊",
+    "custom_tool_manager":"🔧","skill_manager":"🎯","skill_install":"📦",
+    "insights":"📈","recap":"📝","kanban_show":"📌","kanban_create":"📌",
+    "kanban_complete":"✅","kanban_block":"🚧",
+}
+
+def _tool_progress_block(tc_dict, max_lines=4):
+    lines = []
+    for idx in sorted(tc_dict.keys()):
+        tc = tc_dict[idx]
+        name = (tc.get("function", {}).get("name") or "").strip()
+        if not name: continue
+        emoji = _TOOL_EMOJI.get(name, "🧩")
+        label = name.replace("_", " ")
+        try:
+            args = json.loads(tc.get("function", {}).get("arguments") or "{}")
+            detail = next((str(v)[:60].replace(chr(96), chr(39)).strip() for v in args.values() if isinstance(v,str) and str(v).strip()), None)
+        except Exception:
+            detail = None
+        raw = f"{emoji} {label}" + (f": {detail}" if detail else "")
+        lines.append(f"`{raw}`")
+    return "_Working…_\n" + "\n".join(lines[-max_lines:]) if lines else "_Working…_"
+
+def _build_display(text, tc_dict):
+    clean = re.sub(r"<(think|thinking|reasoning|thought)>.*?(</\1>|$)", "", text, flags=re.DOTALL|re.IGNORECASE).strip()
+    block = _tool_progress_block(tc_dict)
+    return (clean + "\n\n" + block) if clean else block
+
 try:
     with requests.post(url, json=payload, headers=headers, stream=True, timeout=60) as r:
         if r.status_code not in (200, 206):
@@ -190,9 +224,10 @@ try:
                         if "arguments" in f: tool_calls[idx]["function"]["arguments"] += f["arguments"]
 
             if time.time() - last_update > 2.0:
-                display_text = content if content else "⏳"
                 if tool_calls:
-                    display_text += "\n\n🔧 <i>Running tools…</i>"
+                    display_text = _build_display(content, tool_calls)
+                else:
+                    display_text = content if content else "⏳"
                 update_tg(display_text)
                 last_update = time.time()
 except Exception as e:
@@ -204,13 +239,11 @@ finally:
 clean_final = re.sub(r"<(think|thinking|reasoning|thought)>.*?(</\1>|$)", "", content, flags=re.DOTALL | re.IGNORECASE)
 sys.stderr.write(f"DBG18: content_len={len(content)} clean_final_len={len(clean_final.strip())} msg_id={message_id} chat_id={chat_id}\n")
 if tool_calls:
-    if clean_final.strip():
-        clean_final += "\n\n🔧 <i>Running tools…</i>"
-    # else: leave message as "⏳ Thinking..." — agent_loop will edit it with results
+    update_tg(_build_display(clean_final, tool_calls))
 else:
-    if not clean_final.strip():
-        clean_final = ""  # nothing to show; agent_loop handles final edit
-update_tg(clean_final)
+    if clean_final.strip():
+        update_tg(clean_final)
+    # else: nothing to show; agent_loop handles final edit
 
 # Output for bash parsing (TC: list of tool calls)
 tc_list = []
