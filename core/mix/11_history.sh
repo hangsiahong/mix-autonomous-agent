@@ -67,6 +67,8 @@ save_history() {
     local _hfile="brain/state/history_${session_id}.json"
     local _tmp; _tmp=$(mktemp "${_hfile}.XXXXXX")
     printf '%s' "$HISTORY" > "$_tmp" && mv "$_tmp" "$_hfile" || { rm -f "$_tmp"; return 1; }
+    # Mirror to SQLite session DB in background (hermes durability pattern)
+    ( python3 tools/session_db.py sync "$session_id" "$_hfile" > /dev/null 2>&1 & )
 }
 
 load_history() {

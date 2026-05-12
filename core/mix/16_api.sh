@@ -254,23 +254,49 @@ print(json.dumps([x for x in st if not (isinstance(x,dict) and '_enabled_toolset
   
   local _hist_for_api
   _hist_for_api=$(_apply_provider_history_filter "$HISTORY") || _hist_for_api="$HISTORY"
-  
+
   local _extra_payload="{}"
   if [ "$PROVIDER" != "default" ] && type "${PROVIDER}_extra_payload_json" >/dev/null 2>&1; then
     _extra_payload=$(${PROVIDER}_extra_payload_json 2>/dev/null) || _extra_payload="{}"
   fi
 
+  # Memory auto-prefetch (hermes pattern): query LanceDB with the current user input,
+  # inject recalled context into the last user message — NOT the system prompt so prefix
+  # caching on the system prompt is preserved.
+  local _mem_prefetch=""
+  if [[ "${MEMORY_PREFETCH:-1}" != "0" ]]; then
+    # Extract last user message from history as the query
+    local _prefetch_query
+    _prefetch_query=$(python3 -c "
+import json, sys, re
+h = json.loads(open(sys.argv[1]).read())
+for msg in reversed(h):
+    if msg.get('role') == 'user':
+        c = msg.get('content','')
+        if isinstance(c, list): c = ' '.join(p.get('text','') for p in c if isinstance(p,dict))
+        # Strip system context prefix injected by agent loop
+        c = re.sub(r'\[SYSTEM: Context Updated\].*?\n\n', '', str(c), flags=re.DOTALL).strip()
+        print(c[:300])
+        break
+" <(printf '%s' "$_hist_for_api") 2>/dev/null || true)
+    if [[ ${#_prefetch_query} -gt 20 ]]; then
+      _mem_prefetch=$(timeout 4 python3 tools/memory_helper.py search "$_prefetch_query" 3 2>/dev/null || true)
+    fi
+  fi
+
   # Write large blobs to tempfiles to avoid ARG_MAX / env-size limits.
-  # HISTORY_JSON can be megabytes when it contains embedded base64 images.
-  local _hist_file _sys_file
+  local _hist_file _sys_file _mem_file
   _hist_file=$(mktemp)
   _sys_file=$(mktemp)
+  _mem_file=$(mktemp)
   printf '%s' "$_hist_for_api" > "$_hist_file"
   printf '%s' "$system_prompt" > "$_sys_file"
+  printf '%s' "$_mem_prefetch" > "$_mem_file"
 
   TOOLS="$tools" \
   HIST_FILE="$_hist_file" \
   SYS_FILE="$_sys_file" \
+  MEM_FILE="$_mem_file" \
   MODEL_NAME="$_model" \
   EXTRA_PAYLOAD="$_extra_payload" \
   STREAM_MODE="$stream" \
@@ -293,6 +319,33 @@ except:
     ex = {}
 stream = os.environ.get("STREAM_MODE", "false").lower() == "true"
 
+# Memory auto-prefetch injection (hermes build_memory_context_block pattern):
+# inject into last user message only — preserves system prompt prefix cache
+mem_raw = ""
+try:
+    mem_file = os.environ.get("MEM_FILE", "")
+    if mem_file:
+        mem_raw = open(mem_file).read().strip()
+except Exception:
+    pass
+if mem_raw and "No memories found" not in mem_raw:
+    fence = (
+        "<memory-context>\n"
+        "[System note: The following is recalled memory context, "
+        "NOT new user input. Treat as authoritative reference — "
+        "this is the agent persistent memory.]\n\n"
+        f"{mem_raw}\n"
+        "</memory-context>"
+    )
+    for i in range(len(h)-1, -1, -1):
+        if h[i].get("role") == "user":
+            c = h[i].get("content", "") or ""
+            if isinstance(c, str):
+                h[i] = dict(h[i], content=c + "\n\n" + fence)
+            elif isinstance(c, list):
+                h[i] = dict(h[i], content=list(c) + [{"type": "text", "text": "\n\n" + fence}])
+            break
+
 msg = [{"role": "system", "content": s}] + h
 body = {"model": m, "messages": msg}
 if t:
@@ -311,7 +364,7 @@ body.update(ex)
 print(json.dumps(body))
 '
   local _py_status=$?
-  rm -f "$_hist_file" "$_sys_file"
+  rm -f "$_hist_file" "$_sys_file" "$_mem_file"
   return $_py_status
 }
 

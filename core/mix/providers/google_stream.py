@@ -34,7 +34,7 @@ def md_to_html(text):
 def update_tg(tg_url, chat_id, message_id, text):
     if not text: return
     # Scrub thinking blocks from Telegram output
-    clean_text = re.sub(r"<(think|thinking|reasoning|thought)>.*?(</\1>|$)", "", text, flags=re.DOTALL | re.IGNORECASE)
+    clean_text = re.sub(r"<(think|thinking|reasoning|thought|memory-context)>.*?(</\1>|$)", "", text, flags=re.DOTALL | re.IGNORECASE)
     if not clean_text.strip(): return
     html = md_to_html(clean_text.strip())
     try:
@@ -123,67 +123,76 @@ def main():
         block = _tool_progress_block(tc_list)
         return (text.strip() + "\n\n" + block) if text.strip() else block
 
-    try:
-        with requests.post(url, json=payload, headers=headers, stream=True, timeout=60) as r:
-            if r.status_code != 200:
-                sys.stderr.write(f"API Error {r.status_code}: {r.text[:500]}\n")
-                sys.exit(1)
-            
-            for line in r.iter_lines():
-                if not line: continue
-                line = line.decode("utf-8")
-                if not line.startswith("data: "): continue
-                
-                try:
-                    chunk = json.loads(line[6:])
-                except: continue
-
-                candidate = (chunk.get("candidates") or [{}])[0]
-                content = candidate.get("content", {})
-                parts = content.get("parts", [])
-                
-                for p in parts:
-                    if "text" in p and not p.get("thought"):
-                        full_text += p["text"]
-                    if "functionCall" in p:
-                        fc = p["functionCall"]
-                        sig = p.get("thoughtSignature", "")
-                        tc_entry = {
-                            "id": f"call_{int(time.time()*1000)}_{len(tool_calls)}",
-                            "type": "function",
-                            "function": {
-                                "name": fc.get("name"),
-                                "arguments": json.dumps(fc.get("args", {}))
-                            }
-                        }
-                        if sig:
-                            tc_entry["thought_signature"] = sig
-                        tool_calls.append(tc_entry)
-                
-                if "usageMetadata" in chunk:
-                    usage = chunk["usageMetadata"]
-
-                if time.time() - last_update > 2.0:
-                    if tool_calls:
-                        display = _build_display(full_text, tool_calls)
-                    else:
-                        display = full_text if full_text else "⏳"
-                    update_tg(tg_url, chat_id, message_id, display)
-                    last_update = time.time()
-
-    except Exception as e:
-        sys.stderr.write(f"Stream Error: {e}\n")
-        # T1-1: Stream drop recovery — never leave TG message stuck at "Thinking…"
+    MAX_STREAM_ATTEMPTS = 2
+    for _attempt in range(1, MAX_STREAM_ATTEMPTS + 1):
+        if _attempt > 1:
+            time.sleep(2)
+            update_tg(tg_url, chat_id, message_id, "⏳ _Reconnecting…_")
+            full_text = ""
+            tool_calls = []
+            usage = None
+            last_update = time.time()
         try:
-            if full_text.strip():
-                update_tg(tg_url, chat_id, message_id,
-                          full_text + "\n\n⚠️ _Connection dropped. Partial response above._")
-            else:
-                update_tg(tg_url, chat_id, message_id, "⚠️ _Connection dropped. Please retry._")
-        except Exception:
-            pass
-    finally:
-        _typing_stop.set()
+            with requests.post(url, json=payload, headers=headers, stream=True, timeout=60) as r:
+                if r.status_code != 200:
+                    sys.stderr.write(f"API Error {r.status_code}: {r.text[:500]}\n")
+                    if r.status_code in (429, 503) and _attempt < MAX_STREAM_ATTEMPTS:
+                        continue
+                    sys.exit(1)
+
+                for line in r.iter_lines():
+                    if not line: continue
+                    line = line.decode("utf-8")
+                    if not line.startswith("data: "): continue
+
+                    try:
+                        chunk = json.loads(line[6:])
+                    except: continue
+
+                    candidate = (chunk.get("candidates") or [{}])[0]
+                    content = candidate.get("content", {})
+                    parts = content.get("parts", [])
+
+                    for p in parts:
+                        if "text" in p and not p.get("thought"):
+                            full_text += p["text"]
+                        if "functionCall" in p:
+                            fc = p["functionCall"]
+                            sig = p.get("thoughtSignature", "")
+                            tc_entry = {
+                                "id": f"call_{int(time.time()*1000)}_{len(tool_calls)}",
+                                "type": "function",
+                                "function": {
+                                    "name": fc.get("name"),
+                                    "arguments": json.dumps(fc.get("args", {}))
+                                }
+                            }
+                            if sig:
+                                tc_entry["thought_signature"] = sig
+                            tool_calls.append(tc_entry)
+
+                    if "usageMetadata" in chunk:
+                        usage = chunk["usageMetadata"]
+
+                    if time.time() - last_update > 2.0:
+                        display = _build_display(full_text, tool_calls) if tool_calls else (full_text or "⏳")
+                        update_tg(tg_url, chat_id, message_id, display)
+                        last_update = time.time()
+            break  # stream succeeded
+        except Exception as e:
+            sys.stderr.write(f"Stream attempt {_attempt} error: {e}\n")
+            if _attempt >= MAX_STREAM_ATTEMPTS:
+                try:
+                    if full_text.strip():
+                        update_tg(tg_url, chat_id, message_id,
+                                  full_text + "\n\n⚠️ _Connection dropped. Partial response above._")
+                    else:
+                        update_tg(tg_url, chat_id, message_id,
+                                  "⚠️ _Connection dropped after 2 attempts. Please /retry._")
+                except Exception:
+                    pass
+
+    _typing_stop.set()
 
     # Final Telegram update
     sys.stderr.write(f"DBG: full_text_len={len(full_text)} msg_id={message_id} chat_id={chat_id}\n")

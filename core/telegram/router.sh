@@ -187,11 +187,51 @@ print(json.dumps(combined))
                     cp "$_hist_file" "${_archive_dir}/history_${session_id}_${_ts}.json"
                     rm -f "$_hist_file"
                 fi
+                # End session in SQLite DB (hermes: end_reason="reset")
+                ( python3 tools/session_db.py end "$session_id" "reset" > /dev/null 2>&1 & )
                 # Clear session-level overrides on reset
                 rm -f "${DIR}/brain/state/model_${session_id}" \
                       "${DIR}/brain/state/steer_${session_id}" \
                       "${DIR}/brain/state/queue_${session_id}" 2>/dev/null || true
                 tg_send "$chat_id" "🆕 New session started. Past conversations are archived and searchable with \`session_search\`." "$thread_id"
+                ;;
+
+            /sessions)
+                # List recent sessions with lineage (hermes /sessions command)
+                local _limit_arg=$(echo "$args" | awk '{print $1}')
+                local _limit="${_limit_arg:-10}"
+                local _sessions_out
+                _sessions_out=$(python3 -c "
+import sys, json
+sys.path.insert(0, '${DIR}/tools')
+from session_db import list_sessions, session_lineage
+import datetime
+
+rows = list_sessions($_limit)
+if not rows:
+    print('No sessions found.')
+    sys.exit(0)
+
+lines = ['<b>Recent Sessions</b>']
+for r in rows:
+    sid = r['id']
+    title = (r.get('title') or sid)[:30]
+    model = (r.get('model') or '?')[:20]
+    msgs = r.get('message_count', 0)
+    tokens = (r.get('input_tokens',0) or 0) + (r.get('output_tokens',0) or 0)
+    status = r.get('end_reason') or ('active' if not r.get('ended_at') else 'ended')
+    parent = r.get('parent_session_id')
+    lineage = ' ← (compressed)' if parent else ''
+    ts = r.get('updated_at') or r.get('started_at') or 0
+    if ts:
+        dt = datetime.datetime.fromtimestamp(float(ts)).strftime('%m-%d %H:%M')
+    else:
+        dt = '?'
+    lines.append(f'<code>{sid[:28]}</code> <i>{dt}</i>')
+    lines.append(f'  {title} | {model} | {msgs} msgs | {tokens:,}t | {status}{lineage}')
+print('\n'.join(lines))
+" 2>/dev/null || echo "Session DB unavailable. Try /status for current session info.")
+                tg_send "$chat_id" "$_sessions_out" "$thread_id" "HTML"
                 ;;
 
             /retry)

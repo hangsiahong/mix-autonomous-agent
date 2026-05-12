@@ -107,7 +107,7 @@ def md_to_html(text):
 def update_tg(text):
     if not text: return
     # Scrub thinking blocks from Telegram output
-    clean_text = re.sub(r"<(think|thinking|reasoning|thought)>.*?(</\1>|$)", "", text, flags=re.DOTALL | re.IGNORECASE)
+    clean_text = re.sub(r"<(think|thinking|reasoning|thought|memory-context)>.*?(</\1>|$)", "", text, flags=re.DOTALL | re.IGNORECASE)
     if not clean_text.strip(): return
     html = md_to_html(clean_text.strip())
     try:
@@ -158,15 +158,33 @@ def _tool_progress_block(tc_dict, max_lines=4):
     return "_Working…_\n" + "\n".join(lines[-max_lines:]) if lines else "_Working…_"
 
 def _build_display(text, tc_dict):
-    clean = re.sub(r"<(think|thinking|reasoning|thought)>.*?(</\1>|$)", "", text, flags=re.DOTALL|re.IGNORECASE).strip()
+    clean = re.sub(r"<(think|thinking|reasoning|thought|memory-context)>.*?(</\1>|$)", "", text, flags=re.DOTALL|re.IGNORECASE).strip()
     block = _tool_progress_block(tc_dict)
     return (clean + "\n\n" + block) if clean else block
 
-try:
-    with requests.post(url, json=payload, headers=headers, stream=True, timeout=60) as r:
+MAX_STREAM_ATTEMPTS = 2
+_stream_attempt = 0
+_stream_success = False
+
+while _stream_attempt < MAX_STREAM_ATTEMPTS:
+    _stream_attempt += 1
+    if _stream_attempt > 1:
+        time.sleep(2)
+        update_tg("⏳ _Reconnecting…_")
+        # Reset accumulated state for clean retry
+        content = ""
+        thought_active = False
+        tool_calls = {}
+        usage = None
+        last_update = time.time()
+
+    try:
+      with requests.post(url, json=payload, headers=headers, stream=True, timeout=60) as r:
         if r.status_code not in (200, 206):
             body = r.text[:2000]
             sys.stderr.write(f"API HTTP {r.status_code}: {body}\n")
+            if r.status_code in (429, 503):
+                continue  # retryable
             sys.exit(1)
         for line in r.iter_lines():
             if not line: continue
@@ -230,28 +248,24 @@ try:
                     display_text = content if content else "⏳"
                 update_tg(display_text)
                 last_update = time.time()
-except Exception as e:
-    # T1-1: Stream drop recovery — update TG message so it never stays "Thinking…" forever
-    sys.stderr.write(f"Error: {e}\n")
-    _stream_error = str(e)
-    try:
-        if content.strip():
-            # Partial content received — show what we got + error notice
-            partial = re.sub(r"<(think|thinking|reasoning|thought)>.*?(</\1>|$)", "", content, flags=re.DOTALL|re.IGNORECASE).strip()
-            if partial:
-                update_tg(partial + "\n\n⚠️ _Connection dropped. Partial response above._")
-        else:
-            update_tg("⚠️ _Connection dropped. Please retry._")
-    except Exception:
-        pass
-    print(f"STREAM_ERROR:{_stream_error}", file=sys.stderr)
-else:
-    _stream_error = ""
-finally:
-    _typing_stop.set()
+      _stream_success = True
+      break  # stream completed — exit retry loop
+    except Exception as e:
+        sys.stderr.write(f"Stream attempt {_stream_attempt} error: {e}\n")
+        if _stream_attempt >= MAX_STREAM_ATTEMPTS:
+            try:
+                partial = re.sub(r"<(think|thinking|reasoning|thought|memory-context)>.*?(</\1>|$)", "", content, flags=re.DOTALL|re.IGNORECASE).strip()
+                if partial:
+                    update_tg(partial + "\n\n⚠️ _Connection dropped. Partial response above._")
+                else:
+                    update_tg("⚠️ _Connection dropped after 2 attempts. Please /retry._")
+            except Exception:
+                pass
+
+_typing_stop.set()
 
 # Final update
-clean_final = re.sub(r"<(think|thinking|reasoning|thought)>.*?(</\1>|$)", "", content, flags=re.DOTALL | re.IGNORECASE)
+clean_final = re.sub(r"<(think|thinking|reasoning|thought|memory-context)>.*?(</\1>|$)", "", content, flags=re.DOTALL | re.IGNORECASE)
 sys.stderr.write(f"DBG18: content_len={len(content)} clean_final_len={len(clean_final.strip())} msg_id={message_id} chat_id={chat_id}\n")
 if tool_calls:
     update_tg(_build_display(clean_final, tool_calls))

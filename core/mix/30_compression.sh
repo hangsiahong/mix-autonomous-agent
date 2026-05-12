@@ -287,6 +287,15 @@ print(json.dumps(fp + [sm] + lp, separators=(',', ':')))
     echo "AMA: Context compressed successfully."
     save_history "$session_id"
 
+    # Record compression lineage in SQLite (hermes parent_session_id pattern)
+    # Create a new session ID for the post-compression context, link to old one
+    local _compressed_sid="${session_id}_c$(date +%s)"
+    (
+        python3 tools/session_db.py end "$session_id" "compression" > /dev/null 2>&1
+        python3 tools/session_db.py create "$_compressed_sid" > /dev/null 2>&1
+        python3 tools/session_db.py link "$_compressed_sid" "$session_id" > /dev/null 2>&1
+    ) &
+
     # Restore thinking indicator after compression
     if [[ -n "$chat_id" && -n "$msg_id" ]]; then
         tg_edit "$chat_id" "$msg_id" "⏳ Thinking..." "" 2>/dev/null || true

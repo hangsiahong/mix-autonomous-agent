@@ -85,6 +85,10 @@ run_agent() {
             [[ -n "$_session_model" ]] && MODEL="$_session_model"
         fi
 
+        # Ensure session exists in SQLite DB (hermes: create_session is idempotent)
+        ( python3 tools/session_db.py create "$session_id" "${user_id:-}" "${MODEL:-}" \
+            > /dev/null 2>&1 & )
+
         append_text "user" "[SYSTEM: Context Updated]\n$context_prompt\n\n$input" "$media_json"
         ( generate_title "$session_id" & )
 

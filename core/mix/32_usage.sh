@@ -6,12 +6,12 @@ log_usage() {
     local usage_json="$2"
     local model="$3"
     local timestamp=$(date +%s)
-    
+
     [ -z "$usage_json" ] && return
-    
+
     local usage_file="brain/state/usage_log.jsonl"
     mkdir -p "brain/state"
-    
+
     # Append to daily log
     echo "{\"ts\": $timestamp, \"chat_id\": \"$chat_id\", \"model\": \"$model\", \"usage\": $usage_json}" >> "$usage_file"
     
@@ -36,6 +36,11 @@ d['completion_tokens'] = d.get('completion_tokens', 0) + int(sys.argv[3])
 d['total_tokens'] = d.get('total_tokens', 0) + int(sys.argv[4])
 open(f, 'w').write(json.dumps(d))
 " "$totals_file" "${p:-0}" "${c:-0}" "${t:-0}"
+
+    # Mirror token counts to SQLite session DB in background
+    local _session_id="tg_${chat_id}"
+    ( python3 tools/session_db.py update "$_session_id" --tokens "${p:-0}" "${c:-0}" \
+        --model "$model" > /dev/null 2>&1 & )
 }
 
 log_tool_usage() {
