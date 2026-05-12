@@ -343,7 +343,7 @@ total_in = total_out = total_calls = 0
 for line in lines:
     try:
         e = json.loads(line)
-        if e.get('chat_id') == session_id.replace('tg_','') or e.get('session_id') == session_id:
+        if e.get('chat_id') == session_id or e.get('chat_id') == session_id.replace('tg_',''):
             u = e.get('usage', {})
             total_in += int(u.get('prompt_tokens', 0) or 0)
             total_out += int(u.get('completion_tokens', 0) or 0)

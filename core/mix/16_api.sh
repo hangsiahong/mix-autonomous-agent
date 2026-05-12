@@ -260,27 +260,33 @@ print(json.dumps([x for x in st if not (isinstance(x,dict) and '_enabled_toolset
     _extra_payload=$(${PROVIDER}_extra_payload_json 2>/dev/null) || _extra_payload="{}"
   fi
 
-  # Memory auto-prefetch (hermes pattern): query LanceDB with the current user input,
-  # inject recalled context into the last user message — NOT the system prompt so prefix
-  # caching on the system prompt is preserved.
+  # Memory auto-prefetch (hermes queue_prefetch_all pattern):
+  # Results are pre-warmed by the PREVIOUS turn into a cache file — zero latency hot path.
+  # If cache is cold (first turn), fall back to a quick inline search (1.5s timeout).
   local _mem_prefetch=""
   if [[ "${MEMORY_PREFETCH:-1}" != "0" ]]; then
-    # Extract last user message from history as the query
-    local _prefetch_query
-    _prefetch_query=$(python3 -c "
+    local _prefetch_cache="${DIR:-$(pwd)}/brain/state/prefetch_${session_id:-default}"
+    if [[ -f "$_prefetch_cache" ]]; then
+        # Hot path: use pre-warmed result from previous turn
+        _mem_prefetch=$(cat "$_prefetch_cache" 2>/dev/null || true)
+        rm -f "$_prefetch_cache"  # consume it
+    else
+        # Cold path: inline search with short timeout (first turn or cache miss)
+        local _prefetch_query
+        _prefetch_query=$(python3 -c "
 import json, sys, re
 h = json.loads(open(sys.argv[1]).read())
 for msg in reversed(h):
     if msg.get('role') == 'user':
         c = msg.get('content','')
         if isinstance(c, list): c = ' '.join(p.get('text','') for p in c if isinstance(p,dict))
-        # Strip system context prefix injected by agent loop
         c = re.sub(r'\[SYSTEM: Context Updated\].*?\n\n', '', str(c), flags=re.DOTALL).strip()
         print(c[:300])
         break
 " <(printf '%s' "$_hist_for_api") 2>/dev/null || true)
-    if [[ ${#_prefetch_query} -gt 20 ]]; then
-      _mem_prefetch=$(timeout 4 python3 tools/memory_helper.py search "$_prefetch_query" 3 2>/dev/null || true)
+        if [[ ${#_prefetch_query} -gt 20 ]]; then
+            _mem_prefetch=$(timeout 2 python3 tools/memory_helper.py search "$_prefetch_query" 3 2>/dev/null || true)
+        fi
     fi
   fi
 

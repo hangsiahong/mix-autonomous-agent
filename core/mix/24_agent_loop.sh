@@ -196,6 +196,18 @@ print('<i>Thinking…</i>\n' + '\n'.join(lines) if lines else '⏳ <i>Thinking�
                 export _AMA_REASONING_HTML=""
                 continue
             fi
+            # Steer arrived but no tools were called this turn — inject into next turn
+            # instead of losing it silently (hermes: steer waits for next tool batch)
+            if [[ -f "$steer_file" ]]; then
+                local _steer_leftover; _steer_leftover=$(cat "$steer_file" 2>/dev/null)
+                rm -f "$steer_file"
+                if [[ -n "$_steer_leftover" ]]; then
+                    # Add as a user guidance message so next turn picks it up
+                    append_text "user" "[User guidance for next response: $_steer_leftover]"
+                    tg_edit "$chat_id" "$msg_id" "⏳ <i>Applying guidance…</i>" "HTML" > /dev/null 2>&1
+                    continue  # Run another turn with the steer applied
+                fi
+            fi
             loop_completed=true
             break
         done
@@ -221,6 +233,15 @@ print('<i>Thinking…</i>\n' + '\n'.join(lines) if lines else '⏳ <i>Thinking�
         ( reflect_turn "$chat_id" "$thread_id" "$session_id" & )
         [[ "$loop_completed" == true && $total_tool_calls -gt 0 ]] && \
             ( save_session_recap "$session_id" "$chat_id" "$thread_id" & )
+        # Pre-warm memory for next turn in background (hermes queue_prefetch_all pattern)
+        # Result stored in prefetch cache so next _api_build_payload finds it instantly
+        if [[ "${MEMORY_PREFETCH:-1}" != "0" && -n "$text" ]]; then
+            local _prefetch_cache="${DIR}/brain/state/prefetch_${session_id}"
+            local _next_query
+            _next_query=$(printf '%s' "$text" | head -c 300)
+            ( timeout 8 python3 tools/memory_helper.py search "$_next_query" 3 \
+                > "$_prefetch_cache" 2>/dev/null || rm -f "$_prefetch_cache" ) &
+        fi
     ) 200>"$lock_file"
 
     # Process queued message after lock is released (hermes /queue pattern)

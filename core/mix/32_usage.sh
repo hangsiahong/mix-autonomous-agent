@@ -38,8 +38,8 @@ open(f, 'w').write(json.dumps(d))
 " "$totals_file" "${p:-0}" "${c:-0}" "${t:-0}"
 
     # Mirror token counts to SQLite session DB in background
-    local _session_id="tg_${chat_id}"
-    ( python3 tools/session_db.py update "$_session_id" --tokens "${p:-0}" "${c:-0}" \
+    # Note: chat_id here is actually session_id (e.g. tg_670967877) — use as-is
+    ( python3 tools/session_db.py update "$chat_id" --tokens "${p:-0}" "${c:-0}" \
         --model "$model" > /dev/null 2>&1 & )
 }
 
