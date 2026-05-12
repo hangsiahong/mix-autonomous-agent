@@ -1,6 +1,6 @@
-# AMA: Autonomous Mix Agent
+# AMA — Autonomous Mix Agent
 
-A self-evolving autonomous agent that lives in Telegram. Pure Bash harness, 24 tools, Playwright browser, vector memory, and a self-improvement loop.
+A self-evolving autonomous agent that lives in Telegram. Pure Bash harness, 30+ tools, Playwright browser, vector memory + SQLite session DB, and a self-improvement loop. Inspired by hermes-agent and openclaw.
 
 ---
 
@@ -8,11 +8,11 @@ A self-evolving autonomous agent that lives in Telegram. Pure Bash harness, 24 t
 
 ### Prerequisites
 - Linux / macOS
-- `bash`, `curl`, `jq`, `python3`
+- `bash`, `curl`, `python3`
 - A Telegram bot token from [@BotFather](https://t.me/BotFather)
 - An LLM API key (Google Vertex AI, Gemini API, Anthropic, or OpenAI)
 
-### Install Python dependencies
+### Install
 ```bash
 pip install -r requirements.txt
 python3 -m playwright install chromium
@@ -24,12 +24,28 @@ cp .env.example .env
 # Edit .env with your values
 ```
 
-Minimum required in `.env`:
+Minimum required `.env`:
 ```env
 TG_TOKEN=your-telegram-bot-token
 TG_ADMIN=your-telegram-user-id
+
+# Google Vertex AI (recommended — Gemini 3 Flash)
 PROVIDER=google
-GOOGLE_CLOUD_PROJECT=your-gcp-project-id
+GOOGLE_PROJECT=your-gcp-project-id
+MODEL=gemini-3-flash-preview
+
+# Optional fallback if primary provider fails
+FALLBACK_PROVIDER=default:gpt-4o-mini
+```
+
+Other useful env vars:
+```env
+TG_REACTIONS=1              # Enable 👀/✅/👎 reactions on messages
+REQUIRE_MENTION=1           # Groups: only respond when @mentioned
+MAX_CONCURRENT_AGENTS=10    # Max parallel sessions before rejecting new messages
+SESSION_IDLE_HOURS=24       # Auto-reset sessions idle for N hours (0=disabled)
+MEMORY_PREFETCH=1           # Auto-inject recalled memory into every turn (default on)
+BOT_USERNAME=YourBotName    # For @mention detection in groups
 ```
 
 ---
@@ -41,32 +57,18 @@ GOOGLE_CLOUD_PROJECT=your-gcp-project-id
 bash bot.sh
 ```
 
-### With pm2 (recommended — auto-restarts on crash)
+### With pm2 (recommended)
 ```bash
 npm install -g pm2
 pm2 start pm2.config.js
-pm2 save          # persist across reboots
-pm2 startup       # generate boot hook
+pm2 save && pm2 startup
+pm2 logs ama-bot
 ```
 
-Useful pm2 commands:
-```bash
-pm2 logs ama-bot   # live logs
-pm2 restart ama-bot
-pm2 stop ama-bot
-```
-
----
-
-## Run with Docker
-
+### Docker
 ```bash
 docker build -t ama-bot .
 docker run -d --env-file .env --name ama ama-bot
-```
-
-Logs:
-```bash
 docker logs -f ama
 ```
 
@@ -74,44 +76,155 @@ docker logs -f ama
 
 ## Telegram Commands
 
+### Session
 | Command | Description |
 |---------|-------------|
-| `/help` | Show all commands |
-| `/new` | Reset conversation |
-| `/status` | Agent status |
-| `/skill <name>` | Activate a skill |
-| `/skills` | List available skills |
-| `/insights` | Token & tool usage stats |
-| `/restart` | Restart bot (admin) |
-| `/stop` | Shut down bot (admin) |
+| `/stop` | Stop current running task |
+| `/stop all` | Kill all running tasks across all sessions |
+| `/new` or `/reset` | Start fresh session (archives history) |
+| `/retry` | Re-run the last message |
+| `/undo` | Remove the last exchange from history |
+| `/steer <note>` | Inject guidance mid-run (appended after next tool call) |
+| `/queue <text>` | Queue a message to run after current task finishes |
+
+### Config
+| Command | Description |
+|---------|-------------|
+| `/model <name>` | Switch model for this session (`/model default` to reset) |
+| `/skill <name>` | Activate a skill for this session |
+| `/skill off` | Clear active skill |
+| `/skills` | List all available skills |
+| `/topic <name>` | Name this Telegram thread/topic |
+
+### Info
+| Command | Description |
+|---------|-------------|
+| `/status` | Model, session age, message count, active agents, queue depth |
+| `/usage` | Token counts for this session |
+| `/history [n]` | Show last N conversation turns (default 20) |
+| `/sessions [n]` | List recent sessions with lineage and token counts |
+| `/insights` | Token and tool usage frequency statistics |
+| `/help` | Full command reference |
+
+### Admin
+| Command | Description |
+|---------|-------------|
+| `/whitelist <id>` | Add user or chat to whitelist |
+| `/restart` | Restart bot via pm2 |
+| `/shutdown` | Shut down bot |
 
 ---
 
-## Project Structure
+## Architecture
 
 ```
-bot.sh              Entry point & Telegram polling
-pm2.config.js       pm2 process config
-Dockerfile          Container definition
-requirements.txt    Python deps
+bot.sh                    Entry point, Telegram long-poll, process cap (MAX_CONCURRENT_AGENTS)
+pm2.config.js             Process manager config
+Dockerfile                Container (Debian slim + Playwright Chromium)
+requirements.txt          Python dependencies
+
 brain/
-  system_prompt.md  Agent personality & rules
-  tools.json        Tool registry (24 tools)
-  config.json       Toolsets & whitelist config
+  system_prompt.md        Agent personality and rules
+  tools.json              Tool registry (30+ tools across 6 toolsets)
+  config.json             Toolsets, whitelist, group topics
+  state/
+    sessions.db           SQLite session DB (metadata + FTS message index)
+    history_<sid>.json    Active conversation history (JSON array)
+    sessions/             Archived session histories
+    session_recaps.jsonl  End-of-session summaries for cross-session recall
+    usage_log.jsonl       Per-call token usage
+    model_<sid>           Per-session model override (/model command)
+    steer_<sid>           Pending /steer text for next tool call
+    queue_<sid>           Queued messages (/queue command)
+
 core/
-  mix/              Agent loop, API, history, compression
-  telegram/         Polling, routing, formatting
+  mix/
+    00_header.sh          Constants and icons
+    01_config.sh          Environment defaults, provider activation
+    11_history.sh         History load/save (atomic), idle auto-reset
+    13_tool_execution.sh  Tool dispatch with permission checks
+    16_api.sh             Payload builder, memory auto-prefetch, provider fallback
+    17_response_parser.sh OpenAI-format response parser
+    18_streaming_api_call.sh  SSE streaming + TG live updates + retry
+    22_process_one_tool_call.sh  Loop detection, per-tool caps, TG status
+    23_parallel_tools.sh  Parallel-safe tool batching
+    24_agent_loop.sh      Main loop: reactions, reply-to, steer, queue drain
+    26_reflection.sh      Background reflection + end-of-session recap
+    28_summary.sh         Session title generation
+    30_compression.sh     Context compression (token-based, hermes format)
+    32_usage.sh           Token usage logging + SQLite sync
+    34_error_classifier.sh HTTP error → retry/fallback classification
+    36_think_scrubber.sh  Strip thinking blocks from response
+    38_rate_limit.sh      Per-provider backoff tracking
+    40_trajectory.sh      Session metadata log
+    providers/
+      google.sh           Vertex AI + AI Studio (native + OpenAI-compat)
+      google_stream.py    Native Gemini SSE streaming + retry
+      ollama.sh           Local Ollama provider
+      copilot.sh          GitHub Copilot OAuth provider
+  telegram/
+    api.sh                tg_send, tg_edit, tg_react, tg_download (with timeout)
+    media.sh              Photo/voice/video download and base64 encoding
+    formatter.sh          Markdown → Telegram HTML
+    polling.sh            Long-poll with offset tracking
+    router.sh             Update parsing, @mention gate, album batching, all commands
+  access_control.sh       Tool permission checks
+  config.sh               Whitelist, topic config, atomic save_config
+  ui.sh                   Generic message/error display
+
 tools/
-  _lib/             Python core (fuzzy edit, patch, browser)
-  bash.sh           Hardened shell executor
-  browser.sh        Playwright browser automation
-  fetch_url.sh      Web fetching (Jina + fallback)
-  memory_helper.py  LanceDB vector memory (chunked)
-  edit_code.sh      9-strategy fuzzy file editor
-  patch.sh          V4A atomic multi-file patcher
+  bash.sh                 Hardened shell executor (timeout, blocklist)
+  browser.sh              Playwright Chromium headless
+  edit_code.sh            9-strategy fuzzy file editor
+  fetch_url.sh            Web fetching (Jina + fallback)
+  memory_helper.py        LanceDB vector memory (chunked, access-tracked)
+  session_db.py           SQLite session DB CLI (create/end/sync/search/lineage)
+  patch.sh                V4A atomic multi-file patcher
+  web_search.sh           DuckDuckGo / Tavily / Exa / Brave / SearXNG
+  process.sh              Background process manager
+  clarify.sh              Ask user before acting (blocks until reply)
+  image_generate.sh       Image generation via Pollinations.ai
+  todo.sh                 Per-session task list
+  insights.sh             Token and tool frequency report
+  [20+ more tools]
+
 extensions/
-  cron/             Background maintenance (log trim, memory prune)
+  cron/                   Background maintenance (log trim, memory prune)
 ```
+
+---
+
+## Key Features
+
+### Telegram UX (openclaw + hermes patterns)
+- **Reactions**: 👀 on receive, ✅ on done, 👎 on error/max-turns (enable: `TG_REACTIONS=1`)
+- **Reply threading**: Bot replies thread to your original message
+- **Tool progress**: Live `_Working…_ \`🛠️ bash: git status\`` in the streaming message
+- **Photo album batching**: Multiple photos → coalesced into one agent call (1s buffer)
+- **Group @mention gate**: `REQUIRE_MENTION=1` → only respond when @mentioned
+
+### Memory & Sessions (hermes patterns)
+- **Memory auto-prefetch**: LanceDB queried every turn, recalled context injected into user message (invisible, scrubbed from output)
+- **SQLite session DB**: Durable metadata, FTS message search, compression lineage chain
+- **Session recaps**: Structured summary saved after each tool-heavy session
+- **Cross-session memory**: Last 3 recaps injected into system prompt
+- **Idle auto-reset**: `SESSION_IDLE_HOURS=24` archives and resets stale sessions
+
+### Reliability
+- **Stream retry**: Auto-reconnects once on network drop before showing error
+- **Provider fallback chain**: `FALLBACK_PROVIDER=provider:model` activates on 2nd retry
+- **Agent process cap**: Rejects new messages when `MAX_CONCURRENT_AGENTS` exceeded
+- **Atomic writes**: History, config use `mktemp + mv` to prevent corruption
+- **Compression**: Token-based trigger (80K), hermes-style 7-section summary
+
+### Commands
+- `/retry`, `/undo` — redo/undo last turn
+- `/steer` — inject guidance mid-run between tool calls
+- `/queue` — FIFO message queue (processed after current turn)
+- `/model` — per-session model override
+- `/sessions` — list recent sessions with lineage
+- `/history` — show conversation turns
+- `/stop all` — kill every running session
 
 ---
 
@@ -120,4 +233,3 @@ extensions/
 ```bash
 bash scripts/run_all_tests.sh
 ```
-

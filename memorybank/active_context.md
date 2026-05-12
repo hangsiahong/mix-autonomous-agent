@@ -1,62 +1,72 @@
 # Active Context
 
-## Current Status
-- **Production-ready**: Running under pm2 with auto-restart. All systems stable.
-- **24 tools** across 6 toolsets (core, search, memory, meta, inspect, media).
-- **Browser automation**: Playwright Chromium headless added (`browser` tool in `search` toolset).
-- **Memory system**: Chunked indexing, access tracking, monthly auto-pruning via cron.
-- **Containerized**: Dockerfile + pm2.config.js for clean deployment.
+## Current Status (2026-05-13)
+- **Branch**: `improve` — comprehensive harness upgrade in progress
+- **Stable under pm2** — all features tested against Google Vertex AI Gemini 3 Flash
+- **30+ tools**, 6 toolsets, Playwright browser, SQLite session DB, LanceDB vector memory
 
-## Recent Changes (2026-05-10 — Capabilities & Polish)
+## Major Changes Landed (improve branch — May 2026)
 
-### Infrastructure
-- **`pm2.config.js`**: Bot now runs under pm2 (`autorestart: true`). Logs to `logs/bot.log`.
-- **`Dockerfile`**: Debian slim, installs all deps + Playwright Chromium, runs via `pm2-runtime`.
-- **`requirements.txt`**: `requests`, `duckduckgo-search`, `lancedb`, `playwright`.
-- **`.env.example`**: Template for all required env vars.
-- **`/restart` command**: Admin Telegram command; delegates to `pm2 restart ama-bot`.
+### Vertex AI / Gemini 3 Fixes
+- **`thought_signature`**: Captured from stream deltas and restored in API payloads — fixes 400 errors on Gemini 3 thinking models
+- **`google_filter_history`**: Fixed stdin bug (was reading `sys.argv[1]` instead of `sys.stdin`) — filter was silently a no-op
+- **Native payload builders**: Both `google_call_api` and `google_call_api_stream` now restore `thoughtSignature` in `function_call` parts
 
-### Toolset System
-- All 24 tools tagged with `toolset` field in `brain/tools.json`.
-- Default toolsets (loaded every turn): `core`, `search`, `memory`, `meta`.
-- On-demand: `inspect` (repo_map, sys_info, read_error_log, insights), `media` (image_generate).
-- `brain/config.json`: `default_toolsets` field drives filtering in `16_api.sh`.
-- Skill `_enabled_toolsets` mechanism for per-topic expansion.
+### Telegram UX (openclaw patterns)
+- **Reactions** (`TG_REACTIONS=1`): 👀 on receive, ✅ on done, 👎 on max-turns/error via `tg_react()`
+- **Reply-to threading**: All bot responses are `reply_to_message_id` of user's original message
+- **Tool progress display**: `_Working…_` header + individual tool lines in backtick code blocks
+- **Photo album batching**: Detects `media_group_id`, buffers 1s, coalesces into one agent call
+- **Group @mention gate**: `REQUIRE_MENTION=1` env var — only respond when @mentioned in groups
+- **Stream retry**: Auto-reconnects once on network drop before showing error
 
-### Browser Automation
-- **`tools/_lib/browser.py`**: Playwright Chromium headless. SSRF guard, aria-snapshot text output, interactive element listing.
-- **`tools/browser.sh`**: Shell wrapper. Actions: navigate, click, type, scroll, snapshot.
-- Registered in `search` toolset — always loaded alongside `web_search` and `fetch_url`.
+### New Slash Commands
+| Command | What it does |
+|---------|-------------|
+| `/retry` | Trim history to before last user message, re-run it |
+| `/undo` | Remove last exchange from history |
+| `/model <name>` | Per-session model override (stored in `brain/state/model_<sid>`) |
+| `/usage` | Token counts for this session from usage_log.jsonl |
+| `/steer <note>` | Inject guidance mid-run after next tool call |
+| `/queue <text>` | FIFO queue — processed after current turn |
+| `/history [n]` | Show last N conversation turns |
+| `/topic <name>` | Name this Telegram thread/topic |
+| `/sessions [n]` | List recent sessions with lineage and token counts |
+| `/stop all` | Kill every running session + edit all dangling messages |
 
-### Memory Improvements
-- **Chunking**: `save_memory` splits texts >400 words into overlapping chunks (50-word overlap). Each chunk gets its own embedding.
-- **Access tracking**: `search_memory` stamps `last_accessed` + increments `access_count` on every recall.
-- **`saved_at`**: Injected automatically by `memory_remember.sh` at save time.
-- **`prune_memory(days=30)`**: Removes entries unused for N days (keeps if recently saved or used >2x).
-- **Monthly cron pruning**: `extensions/cron/run.sh` runs `prune 30` once a month via marker file.
-- **New CLI modes**: `stats`, `prune [days] [--dry-run]`.
+### /stop race condition fix
+- PID file now written **inside** the flock (always points to running process, not queued)
+- Stop flag file (`brain/state/stop_<sid>`) catches queued processes after kill
+- `/stop` edits the dangling message to "Stopped."
 
-### Skill & Command UX
-- `/skill` (no args): lists all skills with [core]/[user] labels.
-- `/skills`: alias.
-- `/skill <name>`: validates existence before activating; rejects unknown names.
-- `/skill off`: clears active skill.
-- `skill_manager create`: writes `prompt.md` + `tools.json`.
-- `skill_manager list`: shows both `core/skills/` and `brain/skills/`.
-- **Telegram command menu**: All 12 commands registered via `tg_set_commands`.
+### Memory and Sessions (hermes patterns)
+- **Memory auto-prefetch**: Every API call queries LanceDB with current user input (3s timeout), injects `<memory-context>` fence into last user message (not system prompt — preserves prefix cache)
+- **Session recaps**: End-of-session structured summary saved to `session_recaps.jsonl` + LanceDB
+- **Recent recaps in context**: Last 3 session recaps injected into system prompt
+- **Session idle auto-reset**: `SESSION_IDLE_HOURS` env var (0=disabled)
+- **`tools/session_db.py`**: Full SQLite session manager — FTS5 message search, compression lineage, token tracking
+- **Compression lineage**: `parent_session_id` recorded in SQLite on context compression
 
-### File Format
-- `brain/system_prompt.txt` → `brain/system_prompt.md`.
-- All skill prompts use `.md`. Backward-compatible `.txt` fallback in `16_api.sh`.
+### Compression Improvements (hermes patterns)
+- **Structured summary**: 7 sections — Active Task, Goal, Completed Actions, Current State, Key Context, Remaining Work, Important Facts
+- **Token-based trigger**: ~80K tokens instead of naive message count
+- **Pre-compression pruning**: Tool results >400 chars truncated before feeding to LLM summarizer
+- **Tool result cap**: `append_tool_result` truncates outputs >6000 chars (head 4K + tail 1K)
 
-### System Prompt Additions
-- "Toolset System" section (6 toolsets, expansion mechanism).
-- "Resilience & Retry Strategy" section (per-tool fallback rules).
-- "Browser automation" rule (fetch_url first, then browser).
-- Memory hygiene guidance (selective saving, pruning awareness).
+### Reliability Fixes
+- **Stream error recovery**: Shows partial content + warning instead of leaving "Thinking…" stuck
+- **Agent process cap**: `MAX_CONCURRENT_AGENTS=10` rejects new messages when overloaded
+- **Max-turns notification**: Shows warning + retry instructions instead of silent exit
+- **tools.json race in reflection**: Uses unique `mktemp` backup + `trap` to always restore
+- **Atomic writes**: `save_history`, `save_config` use `mktemp + mv`
+- **Provider fallback chain**: `FALLBACK_PROVIDER=provider:model` activates on 2nd retry
+- **Media download timeout**: 30s timeout + 10MB/s rate limit on `tg_download`
 
-## Immediate Next
-- [ ] Enhance **Reflection Core** to optimize system prompt from usage insights.
-- [ ] **Trajectory Logging** for fine-tuning dataset collection.
-- [ ] File watcher extension for cron-triggered summarization tasks.
+## Architecture Patterns in Use
+- **hermes-agent**: Session state machine, compression lineage, memory prefetch, steer/queue, reactions, structured summaries
+- **openclaw**: Tool progress display (backtick code blocks), reply-to threading, photo batching, @mention gate
 
+## Immediate Next (if continuing)
+- `/branch` + `/rollback` — snapshot history before risky work, restore on failure
+- `/approve` / `/deny` — Telegram confirmation gate for dangerous tools
+- Memory dreaming / background consolidation (openclaw pattern)
