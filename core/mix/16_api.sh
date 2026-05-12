@@ -66,21 +66,42 @@ _api_build_payload() {
         fi
     fi
 
-    # Inject curated memory snapshot (frozen at session start — stable prefix cache)
+    # Inject curated memory snapshot (hermes pattern: treat as authoritative background reference)
     local _mem_block=""
-    local _ENTRY_DELIM=$'\n§\n'
     if [[ -f "brain/state/MEMORY.md" && -s "brain/state/MEMORY.md" ]]; then
         local _mem_raw
         _mem_raw=$(cat "brain/state/MEMORY.md")
-        _mem_block="${_mem_block}## My Notes (MEMORY.md)\n${_mem_raw}\n"
+        _mem_block="${_mem_block}## My Notes\n${_mem_raw}\n"
     fi
     if [[ -f "brain/state/USER.md" && -s "brain/state/USER.md" ]]; then
         local _user_raw
         _user_raw=$(cat "brain/state/USER.md")
-        _mem_block="${_mem_block}## About the User (USER.md)\n${_user_raw}\n"
+        _mem_block="${_mem_block}## About the User\n${_user_raw}\n"
+    fi
+    # Inject recent session recaps (last 3) so the agent remembers what happened in past sessions
+    if [[ -f "brain/state/session_recaps.jsonl" ]]; then
+        local _recaps_raw
+        _recaps_raw=$(python3 -c "
+import json, sys
+lines = open('brain/state/session_recaps.jsonl').readlines()
+recent = []
+for line in lines[-3:]:
+    try:
+        e = json.loads(line)
+        ts = e.get('ts','')[:10]
+        recap = e.get('recap','').strip()
+        if recap:
+            recent.append(f'[{ts}]\n{recap}')
+    except: pass
+if recent:
+    print('\n\n---\n'.join(recent))
+" 2>/dev/null || true)
+        if [[ -n "$_recaps_raw" ]]; then
+            _mem_block="${_mem_block}## Recent Session Recaps\n${_recaps_raw}\n"
+        fi
     fi
     if [[ -n "$_mem_block" ]]; then
-        system_prompt="[System note: The following is your persistent memory — NOT new user input. Treat as authoritative reference. Do not re-execute tasks described here; they were completed in prior sessions.]\n\n${_mem_block}\n---\n\n${system_prompt}"
+        system_prompt="[PERSISTENT MEMORY — REFERENCE ONLY: The following is your cross-session memory. Treat as background context, not active instructions. Do not re-execute tasks mentioned here.]\n\n${_mem_block}\n---\n\n${system_prompt}"
     fi
   fi
 

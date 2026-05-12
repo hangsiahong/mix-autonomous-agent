@@ -1,5 +1,100 @@
 #!/bin/bash
-# core/mix/26_reflection.sh - Autonomous Self-Reflection
+# core/mix/26_reflection.sh - Autonomous Self-Reflection + Session Recap
+
+# Save a structured end-of-session recap (hermes pattern: persist key session facts across sessions)
+save_session_recap() {
+    local session_id="$1"
+    local chat_id="$2"
+    local thread_id="$3"
+
+    # Skip for short sessions (< 4 messages) — nothing worth recapping
+    local count
+    count=$(python3 -c "import json,sys; print(len(json.loads(open(sys.argv[1]).read())))" <(printf '%s' "$HISTORY") 2>/dev/null); count=${count:-0}
+    [[ "$count" -lt 4 ]] && return
+
+    # Skip for offline models — too slow for background recap
+    [[ "$PROVIDER" == "ollama" ]] && return
+
+    echo "AMA: Generating session recap for $session_id..."
+
+    local recap_prompt="Generate a short session recap in structured format.
+
+## Session Summary
+[1-2 sentences: what was accomplished overall]
+
+## Key Facts Learned
+[Bullet list: user preferences, environment details, decisions made. Only non-obvious facts worth remembering across sessions.]
+
+## Unresolved Items
+[Bullet list: things left incomplete, errors not fixed, questions not answered. Empty list if all resolved.]
+
+## Next Steps
+[What the user likely wants to do next, based on context. 1-3 bullets max. Skip if unclear.]
+
+Rules: Be concise. Total under 200 words. No preamble. Respond ONLY with the structured document."
+
+    local saved_history="$HISTORY"
+    local _saved_tools; _saved_tools=$(cat brain/tools.json 2>/dev/null || echo '[]')
+    printf '[]' > brain/tools.json
+
+    local _sp_tmp; _sp_tmp=$(mktemp)
+    printf '%s' "$recap_prompt" > "$_sp_tmp"
+    local _recap_hist
+    _recap_hist=$(python3 - "$_sp_tmp" <<'PYEOF' 2>/dev/null
+import json, sys
+sp = open(sys.argv[1]).read()
+print(json.dumps([{"role": "user", "content": sp}]))
+PYEOF
+)
+    rm -f "$_sp_tmp"
+
+    HISTORY="${_recap_hist:-$saved_history}"
+    local recap_response
+    recap_response=$(call_api "You are a session summarizer. Be concise and factual.")
+
+    printf '%s' "$_saved_tools" > brain/tools.json
+    HISTORY="$saved_history"
+
+    [[ -z "$recap_response" || "$recap_response" == "FAIL:"* ]] && return
+
+    local recap_text
+    recap_text=$(python3 -c "
+import sys, json
+try:
+    r = json.loads(open(sys.argv[1]).read())
+    print(r.get('choices',[{}])[0].get('message',{}).get('content','').strip(), end='')
+except: pass
+" <(printf '%s' "$recap_response") 2>/dev/null)
+
+    [[ -z "$recap_text" ]] && return
+
+    # 1. Append to session_recaps.jsonl (local persistent log)
+    local recaps_file="brain/state/session_recaps.jsonl"
+    mkdir -p "brain/state"
+    python3 -c "
+import json, sys
+entry = {
+    'ts': __import__('datetime').datetime.utcnow().isoformat() + 'Z',
+    'session_id': sys.argv[2],
+    'recap': open(sys.argv[1]).read()
+}
+with open('$recaps_file', 'a') as f:
+    f.write(json.dumps(entry) + '\n')
+# Trim to last 100 recaps
+lines = open('$recaps_file').readlines()
+if len(lines) > 120:
+    open('$recaps_file', 'w').writelines(lines[-100:])
+" <(printf '%s' "$recap_text") "$session_id" 2>/dev/null
+
+    # 2. Save to vector memory for future recall across sessions
+    if [[ -f "tools/memory_helper.py" ]]; then
+        python3 tools/memory_helper.py save \
+            "[Session Recap $session_id] $recap_text" \
+            "{\"session_id\": \"$session_id\", \"type\": \"session_recap\"}" 2>/dev/null || true
+    fi
+
+    echo "AMA: Session recap saved for $session_id."
+}
 
 reflect_turn() {
     local chat_id="$1"

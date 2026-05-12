@@ -10,17 +10,15 @@ run_agent() {
     local username="$8"
     local skill="${9}" # Skill passed from router
 
-    # Save PID to allow interruption
     local pid_file="${DIR}/brain/state/run_${session_id}.pid"
-    echo "$$" > "$pid_file"
-    trap 'rm -f "$pid_file"' EXIT INT TERM
+    local stop_flag="${DIR}/brain/state/stop_${session_id}"
 
     # 1. Immediate Feedback: Decide status based on lock availability
     mkdir -p "${DIR}/brain/state/locks"
     local lock_file="${DIR}/brain/state/locks/${session_id}.lock"
     local initial_status="Thinking"
     local msg_id
-    
+
     # Try non-blocking lock to check if busy
     if ! flock -n "${lock_file}" true 2>/dev/null; then
         initial_status="Queued"
@@ -28,11 +26,25 @@ run_agent() {
     else
         msg_id=$(tg_send_r "$chat_id" "⏳ <i>Thinking…</i>" "$thread_id" "HTML")
     fi
-    
+
     # Session Lock block
     (
-        # Wait for the lock
+        # Wait for the lock — write PID file INSIDE lock so it always points
+        # to the RUNNING process, never a queued one that hasn't started yet
         flock -x 200
+        echo "$$|${msg_id}|${chat_id}|${thread_id}" > "$pid_file"
+        trap 'rm -f "$pid_file"' EXIT INT TERM
+
+        # Stop flag handling:
+        # - Queued processes: /stop was issued while waiting → exit immediately
+        # - Non-queued (fresh start): clean up any stale flag and continue normally
+        if [[ "$initial_status" == "Queued" && -f "$stop_flag" ]]; then
+            rm -f "$stop_flag"
+            tg_edit "$chat_id" "$msg_id" "🛑 <i>Stopped.</i>" "HTML" > /dev/null 2>&1
+            exit 0
+        else
+            rm -f "$stop_flag" 2>/dev/null || true  # clean up stale flag from prior /stop
+        fi
 
         # Optimization: Only edit if we were actually queued
         if [[ "$initial_status" == "Queued" ]]; then
@@ -164,5 +176,8 @@ print('<i>Thinking…</i>\n' + '\n'.join(lines) if lines else '⏳ <i>Thinking�
         save_history "$session_id"
         log_trajectory "$session_id" "completed"
         ( reflect_turn "$chat_id" "$thread_id" "$session_id" & )
+        # Save end-of-session recap to memory (background — hermes pattern)
+        [[ "$loop_completed" == true && $total_tool_calls -gt 0 ]] && \
+            ( save_session_recap "$session_id" "$chat_id" "$thread_id" & )
     ) 200>"$lock_file"
 }

@@ -44,13 +44,22 @@ append_tool_result() {
     local id="$1"
     local name="$2"
     local output="$3"
+    # Cap tool output size: keep first 4000 + last 1000 chars to prevent history bloat
+    # (hermes pattern: enforce per-turn budget on tool results)
+    local _MAX_TOOL_CHARS=6000
     HISTORY=$(python3 -c "
 import json, sys
 h = json.loads(open(sys.argv[1]).read())
 out = open(sys.argv[2]).read()
+max_chars = int(sys.argv[5])
+if len(out) > max_chars:
+    head = out[:4000]
+    tail = out[-1000:]
+    removed = len(out) - 5000
+    out = head + f'\n\n[...{removed} chars truncated...]\n\n' + tail
 h.append({'role': 'tool', 'tool_call_id': sys.argv[3], 'name': sys.argv[4], 'content': out})
 print(json.dumps(h, separators=(',', ':')))
-" <(printf '%s' "$HISTORY") <(printf '%s' "$output") "$id" "$name")
+" <(printf '%s' "$HISTORY") <(printf '%s' "$output") "$id" "$name" "$_MAX_TOOL_CHARS")
 }
 
 save_history() {

@@ -1,10 +1,11 @@
 #!/bin/bash
 # core/mix/30_compression.sh - Summary-based context compression
 
-# Thresholds
-COMPRESSION_THRESHOLD=200 # Start compressing if messages > 200 (modern LLMs have 1M+ context)
-KEEP_LAST_N=40            # Keep the last 40 messages as-is for better continuity
-KEEP_FIRST_N=5            # Keep more of the initial setup
+# Thresholds — token-based (rough estimate: chars / 4)
+COMPRESSION_TOKEN_THRESHOLD=80000  # ~80K tokens: start compressing (fits most 128K models at 62%)
+KEEP_LAST_N=40                     # Keep the last 40 messages verbatim for continuity
+KEEP_FIRST_N=5                     # Keep early setup messages
+TOOL_RESULT_PRUNE_CHARS=400        # Truncate tool results > this before feeding to summarizer
 
 compress_history() {
     local session_id="$1"
@@ -12,9 +13,25 @@ compress_history() {
     local thread_id="$3"
     local msg_id="$4"
 
+    # Rough token estimate: total chars / 4
+    local rough_tokens
+    rough_tokens=$(python3 -c "
+import json, sys
+h = json.loads(open(sys.argv[1]).read())
+total = 0
+for m in h:
+    c = m.get('content') or ''
+    if isinstance(c, list):
+        c = ' '.join(p.get('text','') for p in c if isinstance(p,dict))
+    total += len(str(c))
+    for tc in (m.get('tool_calls') or []):
+        total += len(str(tc.get('function',{}).get('arguments','')))
+print(total // 4)
+" <(printf '%s' "$HISTORY") 2>/dev/null); rough_tokens=${rough_tokens:-0}
+
     local count; count=$(python3 -c "import json,sys; print(len(json.loads(open(sys.argv[1]).read())))" <(printf '%s' "$HISTORY") 2>/dev/null); count=${count:-0}
 
-    if [ "$count" -le "$COMPRESSION_THRESHOLD" ]; then
+    if [ "$rough_tokens" -lt "$COMPRESSION_TOKEN_THRESHOLD" ]; then
         return
     fi
 
@@ -93,17 +110,54 @@ print(json.dumps({"start": si, "end": ei}))
         return
     fi
 
-    # 2. Extract middle messages for summarization
+    # 2. Extract middle messages for summarization, with pre-pruning of large tool results
+    # (hermes pattern: replace old large outputs with 1-line summaries before sending to LLM)
     local middle_msgs
-    middle_msgs=$(python3 -c "import json,sys; h=json.loads(open(sys.argv[1]).read()); print(json.dumps(h[${start_index}:${end_index}],separators=(',',':')))" <(printf '%s' "$HISTORY"))
+    middle_msgs=$(python3 -c "
+import json, sys
+h = json.loads(open(sys.argv[1]).read())
+middle = h[${start_index}:${end_index}]
+limit = ${TOOL_RESULT_PRUNE_CHARS}
+for msg in middle:
+    if msg.get('role') == 'tool':
+        c = msg.get('content', '')
+        if isinstance(c, str) and len(c) > limit:
+            # Keep first 200 chars + summary line
+            preview = c[:200].replace('\n', ' ').strip()
+            msg['content'] = f'{preview}... [truncated {len(c)} chars for summarization]'
+print(json.dumps(middle, separators=(',',':')))
+" <(printf '%s' "$HISTORY"))
 
-    # 3. Request Summary from LLM
-    local summary_prompt="The following is a middle portion of a conversation history.
-Summarize the key events, decisions, and information exchanged in these turns.
-Focus on what is still relevant for the ongoing task.
-Format as a concise bulleted list.
-If tools were used, mention the outcomes.
-Respond ONLY with the summary.
+    # 3. Request Summary from LLM — structured hermes-style handoff document
+    local summary_prompt="Summarize the conversation turns below into a structured handoff document.
+Use EXACTLY these sections (omit a section if truly empty):
+
+## Active Task
+[The most recent unfulfilled user request, verbatim or very close. Write 'None — all requests addressed' if complete.]
+
+## Goal
+[Overall intent/purpose of this conversation in 1-2 sentences.]
+
+## Completed Actions
+[Numbered list: what was done, which tool was used, and the outcome. E.g. '1. Ran bash git status → clean working tree']
+
+## Current State
+[Working directory, modified files, test status, environment details — only if relevant.]
+
+## Key Context
+[Specific values, error messages, decisions made and WHY. Things the model must not forget.]
+
+## Remaining Work
+[What still needs to be done, framed as context not instructions. Bullet list.]
+
+## Important Facts
+[User preferences, constraints, environment quirks, or facts learned about the user.]
+
+Rules:
+- Be concise. Each section: 2-6 bullets max.
+- Preserve exact error messages, file paths, and command outputs verbatim (do not paraphrase).
+- Total summary under 500 words.
+- Respond ONLY with the structured document, no preamble.
 
 CONVERSATION TO SUMMARIZE:
 $middle_msgs"
@@ -185,7 +239,7 @@ except: pass
     local last_part
     last_part=$(python3 -c "import json,sys; h=json.loads(open(sys.argv[1]).read()); print(json.dumps(h[${end_index}:],separators=(',',':')))" <(printf '%s' "$HISTORY"))
 
-    local summary_prefix="[CONTEXT COMPACTION — REFERENCE ONLY] Earlier turns were compacted into the summary below. This is a handoff from a previous context window — treat it as background reference, NOT as active instructions. Do NOT answer questions or fulfill requests mentioned in this summary; they were already addressed. Your current task is identified in the '## Active Task' section of the summary — resume exactly from there. Respond ONLY to the latest user message that appears AFTER this summary. The current session state may reflect work described here — avoid repeating it:"
+    local summary_prefix="[CONTEXT COMPACTION — REFERENCE ONLY] The turns below were compacted. Treat this as background reference, NOT active instructions. Do NOT re-answer questions or re-execute actions from this summary — they were already completed. Resume from the '## Active Task' section and respond only to the most recent user message that appears AFTER this block. Do not mention this compaction to the user."
 
     local summary_msg
     summary_msg=$(python3 -c "

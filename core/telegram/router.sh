@@ -79,7 +79,15 @@ for k, v in vals.items():
                 tg_send "$chat_id" "AMA (Autonomous Mix Agent) ready. Use /help for commands." "$thread_id"
                 ;;
             /help)
-                tg_send "$chat_id" "Commands: /start, /help, /reset, /status, /sethome, /whitelist <id>, /stop, /restart" "$thread_id"
+                tg_send "$chat_id" "<b>Commands</b>
+/stop — stop this session's running task
+/stop all — stop ALL running tasks across all sessions
+/reset or /new — clear session history and start fresh
+/status — show current model, session info, system stats
+/skills — list available skills
+/insights — token usage statistics
+/restart — restart the bot (admin only)
+/shutdown — shut down the bot (admin only)" "$thread_id" "HTML"
                 ;;
             /whitelist)
                 local target_id=$(echo "$args" | awk '{print $1}')
@@ -157,17 +165,59 @@ Use <code>/skill off</code> to clear."
                 tg_send "$chat_id" "$report" "$thread_id"
                 ;;
             /stop)
-                local pid_file="${DIR}/brain/state/run_${session_id}.pid"
-                if [[ -f "$pid_file" ]]; then
-                    local run_pid=$(cat "$pid_file")
-                    echo "Interruption requested for session $session_id (PID $run_pid)"
-                    # Kill the process group (negative PID kills the group)
-                    # We use setsid or similar in the background call to ensure it has its own group
-                    kill -TERM "-$run_pid" 2>/dev/null || kill -TERM "$run_pid" 2>/dev/null
-                    rm -f "$pid_file"
-                    tg_send "$chat_id" "🛑 Task interrupted." "$thread_id"
+                local _stop_args=$(echo "$args" | awk '{print $1}')
+                if [[ "$_stop_args" == "all" ]]; then
+                    # /stop all — kill every running session + flag all queued ones
+                    local _stopped=0
+                    for _pf in "${DIR}/brain/state"/run_*.pid; do
+                        [[ -f "$_pf" ]] || continue
+                        # Derive session_id from filename: run_<session_id>.pid
+                        local _sf="${_pf%.pid}"
+                        _sf="${_sf##*/run_}"
+                        # Set stop flag so any queued process for this session exits too
+                        touch "${DIR}/brain/state/stop_${_sf}" 2>/dev/null || true
+                        local _pf_data; _pf_data=$(cat "$_pf" 2>/dev/null) || continue
+                        local _ppid _pmsg _pchat _pthread
+                        IFS='|' read -r _ppid _pmsg _pchat _pthread <<< "$_pf_data"
+                        if kill -0 "$_ppid" 2>/dev/null; then
+                            kill -TERM "-${_ppid}" 2>/dev/null || kill -TERM "$_ppid" 2>/dev/null
+                            if [[ -n "$_pmsg" && "$_pmsg" != "pending" && -n "$_pchat" ]]; then
+                                tg_edit "$_pchat" "$_pmsg" "🛑 <i>Stopped.</i>" "HTML" > /dev/null 2>&1 || true
+                            fi
+                            _stopped=$((_stopped + 1))
+                        fi
+                        rm -f "$_pf"
+                    done
+                    if [[ "$_stopped" -gt 0 ]]; then
+                        tg_send "$chat_id" "🛑 Stopped $_stopped running task(s)." "$thread_id"
+                    else
+                        tg_send "$chat_id" "No active tasks to stop." "$thread_id"
+                    fi
                 else
-                    tg_send "$chat_id" "No active task to stop." "$thread_id"
+                    # /stop — kill this session only
+                    local pid_file="${DIR}/brain/state/run_${session_id}.pid"
+                    local stop_flag="${DIR}/brain/state/stop_${session_id}"
+                    # Always set stop flag first — catches queued processes that get the
+                    # lock AFTER we kill the running one (they check the flag and exit)
+                    touch "$stop_flag"
+                    if [[ -f "$pid_file" ]]; then
+                        local _pid_data; _pid_data=$(cat "$pid_file" 2>/dev/null)
+                        local run_pid _msg_id _orig_chat _orig_thread
+                        IFS='|' read -r run_pid _msg_id _orig_chat _orig_thread <<< "$_pid_data"
+                        echo "AMA: Stopping session $session_id (PID $run_pid)"
+                        # Kill the whole process group — takes down bash + python subprocesses
+                        kill -TERM "-${run_pid}" 2>/dev/null || kill -TERM "$run_pid" 2>/dev/null
+                        rm -f "$pid_file"
+                        # Edit the dangling "Thinking…" or "Working…" bot message
+                        if [[ -n "$_msg_id" && "$_msg_id" != "pending" ]]; then
+                            tg_edit "${_orig_chat:-$chat_id}" "$_msg_id" "🛑 <i>Stopped.</i>" "HTML" > /dev/null 2>&1 || true
+                        fi
+                        tg_send "$chat_id" "🛑 Task stopped." "$thread_id"
+                    else
+                        # No running process — but we set the stop flag above, which will
+                        # catch any queued process when it tries to acquire the lock
+                        tg_send "$chat_id" "🛑 Stopped (was queued)." "$thread_id"
+                    fi
                 fi
                 ;;
             /shutdown)
