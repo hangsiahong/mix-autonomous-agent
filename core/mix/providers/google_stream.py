@@ -173,6 +173,15 @@ def main():
 
     except Exception as e:
         sys.stderr.write(f"Stream Error: {e}\n")
+        # T1-1: Stream drop recovery — never leave TG message stuck at "Thinking…"
+        try:
+            if full_text.strip():
+                update_tg(tg_url, chat_id, message_id,
+                          full_text + "\n\n⚠️ _Connection dropped. Partial response above._")
+            else:
+                update_tg(tg_url, chat_id, message_id, "⚠️ _Connection dropped. Please retry._")
+        except Exception:
+            pass
     finally:
         _typing_stop.set()
 
@@ -182,8 +191,6 @@ def main():
         update_tg(tg_url, chat_id, message_id, _build_display(full_text, tool_calls))
     elif full_text:
         update_tg(tg_url, chat_id, message_id, full_text)
-    else:
-        sys.stderr.write("DBG: no text and no tools, skipping final update\n")
 
     # Final logic
     print(f"TC:{json.dumps(tool_calls)}")

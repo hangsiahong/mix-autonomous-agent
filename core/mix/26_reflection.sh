@@ -155,10 +155,12 @@ except:
 " 2>/dev/null)
 
     # Call API (Non-streaming for reflection)
-    # Temporarily use only safe read-only tools during reflection
-    # Use a file-based backup so it survives crashes (variable would be lost)
-    cp brain/tools.json brain/tools.json.bak 2>/dev/null || true
+    # T1-5: Use a unique per-process backup path so concurrent reflection calls
+    # don't stomp each other, and always restore via trap (survives crashes/kills)
+    local _tools_bak; _tools_bak=$(mktemp "brain/tools.json.bak.XXXXXX")
+    cp brain/tools.json "$_tools_bak" 2>/dev/null || true
     printf '%s' "$_safe_tools" > brain/tools.json
+    trap 'mv "$_tools_bak" brain/tools.json 2>/dev/null; HISTORY="$temp_history"' EXIT INT TERM
 
     local turn=0
     while [ "$turn" -lt 5 ]; do
@@ -224,9 +226,8 @@ for tc in json.loads(open(sys.argv[1]).read()):
         break
     done
 
-    # Restore full tools.json and history
-    if [[ -f brain/tools.json.bak ]]; then
-        mv brain/tools.json.bak brain/tools.json
-    fi
+    # Restore full tools.json and history (trap handles crash case too)
+    trap - EXIT INT TERM
+    mv "$_tools_bak" brain/tools.json 2>/dev/null || true
     HISTORY="$temp_history"
 }

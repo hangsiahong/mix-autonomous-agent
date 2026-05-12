@@ -231,7 +231,22 @@ try:
                 update_tg(display_text)
                 last_update = time.time()
 except Exception as e:
+    # T1-1: Stream drop recovery — update TG message so it never stays "Thinking…" forever
     sys.stderr.write(f"Error: {e}\n")
+    _stream_error = str(e)
+    try:
+        if content.strip():
+            # Partial content received — show what we got + error notice
+            partial = re.sub(r"<(think|thinking|reasoning|thought)>.*?(</\1>|$)", "", content, flags=re.DOTALL|re.IGNORECASE).strip()
+            if partial:
+                update_tg(partial + "\n\n⚠️ _Connection dropped. Partial response above._")
+        else:
+            update_tg("⚠️ _Connection dropped. Please retry._")
+    except Exception:
+        pass
+    print(f"STREAM_ERROR:{_stream_error}", file=sys.stderr)
+else:
+    _stream_error = ""
 finally:
     _typing_stop.set()
 
@@ -240,10 +255,8 @@ clean_final = re.sub(r"<(think|thinking|reasoning|thought)>.*?(</\1>|$)", "", co
 sys.stderr.write(f"DBG18: content_len={len(content)} clean_final_len={len(clean_final.strip())} msg_id={message_id} chat_id={chat_id}\n")
 if tool_calls:
     update_tg(_build_display(clean_final, tool_calls))
-else:
-    if clean_final.strip():
-        update_tg(clean_final)
-    # else: nothing to show; agent_loop handles final edit
+elif clean_final.strip():
+    update_tg(clean_final)
 
 # Output for bash parsing (TC: list of tool calls)
 tc_list = []

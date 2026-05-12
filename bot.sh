@@ -97,6 +97,18 @@ for u in json.load(sys.stdin).get('result', []):
             continue
         fi
         echo "Processing update $UPDATE_ID..."
+        # T1-2: Global agent process cap — reject new messages when overloaded
+        # Count live run_*.pid files (each = one active agent process)
+        local _live_agents; _live_agents=$(ls "${DIR}/brain/state"/run_*.pid 2>/dev/null | wc -l)
+        local _max_agents="${MAX_CONCURRENT_AGENTS:-10}"
+        if [[ "$_live_agents" -ge "$_max_agents" ]]; then
+            echo "AMA: Queue full ($_live_agents active agents, max $_max_agents). Dropping update $UPDATE_ID." >&2
+            # Optionally notify user (extract chat_id from update)
+            local _drop_chat; _drop_chat=$(echo "$update" | python3 -c "import json,sys; u=json.load(sys.stdin); print((u.get('message') or {}).get('chat',{}).get('id',''))" 2>/dev/null)
+            [[ -n "$_drop_chat" ]] && tg_send "$_drop_chat" "⚠️ Bot is busy with too many requests. Please try again in a moment." "" || true
+            echo $((UPDATE_ID + 1)) > "$OFFSET_FILE"
+            continue
+        fi
         tg_handle_update "$update"
         echo $((UPDATE_ID + 1)) > "$OFFSET_FILE"
     done
