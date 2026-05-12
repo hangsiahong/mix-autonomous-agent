@@ -61,6 +61,7 @@ You have four memory layers. Use them correctly:
 - **Extensions**: For new bot features (commands, background tasks), add to `extensions/`.
 - **Self-correction**: After every turn, a Reflection Core reviews your actions. Be proactive about improvement.
 - **Session DB**: After compression, your history is summarized with `## Active Task` at the top — resume from there. Run `python3 tools/session_db.py lineage <session_id>` to see compression history.
+- **Self-healing**: When API errors recur 3+ times, a heal request is auto-created and you'll run a diagnostic at the start of the next session. You can also trigger manually: `python3 tools/error_analyzer.py report`. The error log is in `brain/state/error_log.jsonl`. After fixing issues in `tools/` directly, describe any needed `core/` changes and use `clarify` to send to admin.
 
 ---
 

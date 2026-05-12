@@ -123,18 +123,24 @@ if user_msgs:
 
     # Create a hidden reflection prompt
     local reflection_sys_prompt="You are the Reflection Core of AMA.
-Review the conversation above.
-Is there anything you should proactively do to help the user?
+Review the conversation above and do the following (use tools, don't just describe):
 
-You are LIMITED to read-only and memory tools ONLY:
-1. Save an important fact about the user using 'memory_remember'.
-2. Search memory with 'memory_search' or 'memory_recall'.
-3. Check error log with 'read_error_log' if you suspect issues.
+1. ERRORS: Call read_error_log and check if any errors happened in this session.
+   If the same error appeared 2+ times, call memory_remember to note the pattern.
 
-DO NOT use: edit_code, write_file, bash, process, custom_tool_manager, skill_manager, or any tool that modifies files or runs code.
-DO NOT propose code changes or improvements to your own source files.
+2. MEMORY: Save any new durable facts about the user, their preferences, or environment
+   using memory_remember. Only save high-signal facts worth recalling in future sessions.
 
-If no memory-worthy observation exists, respond with 'NO_ACTION'.
+3. INSIGHTS: If the user achieved something important or the session revealed a useful pattern,
+   summarize it with memory_remember (type=insight).
+
+Available tools: read_error_log, check_health, memory_remember, memory_recall, session_search,
+sys_info, insights, search_files, web_search, fetch_url, clarify.
+
+DO NOT use bash, edit_code, write_file, or any file-modifying tools here.
+If you find a critical error pattern needing a code fix, use clarify to notify the user.
+
+If there is nothing worth noting, respond with exactly: NO_ACTION
 "
 
     # Save current history
@@ -146,9 +152,11 @@ If no memory-worthy observation exists, respond with 'NO_ACTION'.
 import json, sys
 try:
     tools = json.load(open('brain/tools.json'))
-    blocked = {'bash','process','edit_code','write_file','patch','delete_file',
-               'custom_tool_manager','skill_manager','skill_install','image_generate'}
-    safe = [t for t in tools if t.get('name','') not in blocked]
+    # Reflection allowed: read-only + memory + diagnostic tools
+    allowed = {'memory_remember','memory_recall','session_search','memory',
+               'read_error_log','check_health','sys_info','insights',
+               'search_files','web_search','fetch_url','todo','clarify'}
+    safe = [t for t in tools if t.get('name','') in allowed]
     print(json.dumps(safe, separators=(',',':')))
 except:
     print('[]')

@@ -10,15 +10,27 @@ source "${DIR}/core/mix/01_config.sh"
 
 echo "[$(date)] Running background maintenance..."
 
-# 1. Check Error Log for patterns
-if [[ -f "${DIR}/brain/state/error_log.jsonl" ]]; then
-    ERROR_COUNT=$(tail -n 100 "${DIR}/brain/state/error_log.jsonl" | wc -l)
-    if [[ "$ERROR_COUNT" -gt 50 ]]; then
-        echo "High error rate detected ($ERROR_COUNT in last 100). Needs attention."
-        # Maybe send alert to TG_ADMIN if home_chat set
-        # This is hard since we don't have chat_id easily here
+# 1. Error pattern detection + self-heal trigger (self-healing loop)
+if python3 "${DIR}/tools/error_analyzer.py" report --hours 24 > /tmp/ama_error_report.txt 2>&1; then
+    echo "[$(date)] Error report: no critical patterns"
+else
+    # Exit code 1 = needs_attention
+    echo "[$(date)] Error report flagged issues:"
+    cat /tmp/ama_error_report.txt
+    # Create a heal request so the agent picks it up next session
+    python3 "${DIR}/tools/error_analyzer.py" create_request 24 2>/dev/null && \
+        echo "[$(date)] Heal request created for next agent session"
+    # Alert admin via Telegram if home_chat configured
+    _home_chat=$(python3 -c "import json; print(json.load(open('${DIR}/brain/config.json')).get('home_chat',''))" 2>/dev/null)
+    if [[ -n "$_home_chat" && -n "${TG_TOKEN:-}" ]]; then
+        _report_summary=$(head -20 /tmp/ama_error_report.txt | tail -c 600)
+        curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+            -H "Content-Type: application/json" \
+            -d "{\"chat_id\":\"$_home_chat\",\"text\":\"🔧 AMA error patterns detected:\\n${_report_summary}\",\"parse_mode\":\"HTML\"}" \
+            > /dev/null 2>&1 || true
     fi
 fi
+rm -f /tmp/ama_error_report.txt
 
 # 2. Cleanup log files (keep last N lines)
 for logfile in "${DIR}/brain/state/trajectories.jsonl" \

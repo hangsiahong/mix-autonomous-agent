@@ -89,6 +89,9 @@ run_agent() {
         ( python3 tools/session_db.py create "$session_id" "${user_id:-}" "${MODEL:-}" \
             > /dev/null 2>&1 & )
 
+        # Self-heal check: if a heal_request exists from cron/error detection, run it now
+        self_heal_if_needed "$session_id" "$chat_id" "$thread_id"
+
         append_text "user" "[SYSTEM: Context Updated]\n$context_prompt\n\n$input" "$media_json"
         ( generate_title "$session_id" & )
 
