@@ -348,7 +348,7 @@
   },
   {
     "name": "repo_map",
-    "description": "Get a tree view of the entire project structure.",
+    "description": "Get a smart repository map: file tree + function/class symbols extracted with ripgrep + entry points. Use this first when you need to understand where logic lives before searching or editing. Much faster than reading files one by one. Optional: TOOL_query to focus on files matching a pattern, TOOL_path for a subtree, TOOL_depth for tree depth.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -359,7 +359,7 @@
       },
       "required": []
     },
-    "toolset": "inspect"
+    "toolset": "meta"
   },
   {
     "name": "memory_remember",
