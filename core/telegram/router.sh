@@ -351,17 +351,36 @@ print(f'Session: {total_calls} API calls\n{total_in:,} input + {total_out:,} out
                 fi
                 ;;
             /status)
-                local title="Untitled"
-                if [ -f "brain/state/titles.json" ]; then
-                    title=$(SID="$session_id" python3 -c "
-import json, os
-try:
-    d = json.load(open('brain/state/titles.json'))
-    print(d.get(os.environ['SID'], 'Untitled') or 'Untitled')
-except: print('Untitled')" 2>/dev/null)
+                local _title="Untitled"
+                [[ -f "brain/state/titles.json" ]] && _title=$(SID="$session_id" python3 -c "
+import json,os; d=json.load(open('brain/state/titles.json')); print(d.get(os.environ['SID'],'Untitled') or 'Untitled')" 2>/dev/null)
+                # Session age from history file mtime
+                local _sess_age="new"
+                if [[ -f "${DIR}/brain/state/history_${session_id}.json" ]]; then
+                    local _age_s=$(( $(date +%s) - $(stat -c %Y "${DIR}/brain/state/history_${session_id}.json" 2>/dev/null || echo $(date +%s)) ))
+                    if [[ $_age_s -lt 3600 ]]; then _sess_age="${_age_s}s"
+                    elif [[ $_age_s -lt 86400 ]]; then _sess_age="$((_age_s/3600))h"
+                    else _sess_age="$((_age_s/86400))d"; fi
                 fi
-                local sysinfo=$(bash tools/sys_info.sh)
-                tg_send "$chat_id" "Title: $title\nProvider: ${PROVIDER:-openai (default)}\nModel: ${MODEL:-gpt-4o-mini}\nSession: $session_id\nUser: ${username:-$user_id}\nType: $chat_type\nSkill: ${skill:-none}\n\n$sysinfo" "$thread_id"
+                # Message count
+                local _msg_count=$(python3 -c "import json; print(len(json.load(open('${DIR}/brain/state/history_${session_id}.json'))))" 2>/dev/null || echo 0)
+                # Active agents & queue depth
+                local _active_agents=$(ls "${DIR}/brain/state"/run_*.pid 2>/dev/null | wc -l)
+                local _queue_depth=0
+                [[ -f "${DIR}/brain/state/queue_${session_id}" ]] && _queue_depth=$(wc -l < "${DIR}/brain/state/queue_${session_id}" 2>/dev/null || echo 0)
+                # Model override
+                local _cur_model="${MODEL:-unknown}"
+                [[ -f "${DIR}/brain/state/model_${session_id}" ]] && _cur_model="$(cat "${DIR}/brain/state/model_${session_id}")* (override)"
+                local _sysinfo=$(bash tools/sys_info.sh 2>/dev/null || true)
+                tg_send "$chat_id" "<b>Status</b>
+<b>Session:</b> <code>$session_id</code> (${_sess_age}, ${_msg_count} msgs)
+<b>Title:</b> ${_title}
+<b>Provider:</b> ${PROVIDER:-default}  <b>Model:</b> <code>${_cur_model}</code>
+<b>Skill:</b> ${skill:-none}  <b>Type:</b> $chat_type
+<b>Active agents:</b> ${_active_agents}  <b>Queued:</b> ${_queue_depth}
+<b>User:</b> ${username:-$user_id}
+
+${_sysinfo}" "$thread_id" "HTML"
                 ;;
             /skills|/skill)
                 local sname=$(echo "$args" | awk '{print $1}')
@@ -403,6 +422,62 @@ Use <code>/skill off</code> to clear."
             /insights)
                 local report=$(bash tools/insights.sh)
                 tg_send "$chat_id" "$report" "$thread_id"
+                ;;
+
+            /history)
+                # Show last N conversation turns (hermes /history pattern)
+                local _hist_file="${DIR}/brain/state/history_${session_id}.json"
+                local _n_arg=$(echo "$args" | awk '{print $1}')
+                local _n="${_n_arg:-20}"
+                if [[ ! -f "$_hist_file" ]]; then
+                    tg_send "$chat_id" "No history for this session." "$thread_id"
+                else
+                    local _hist_out
+                    _hist_out=$(N="$_n" python3 -c "
+import json, os, sys
+h = json.load(open('$_hist_file'))
+n = int(os.environ.get('N','20'))
+lines = []
+for msg in h[-n:]:
+    role = msg.get('role','?')
+    c = msg.get('content','')
+    if role == 'tool':
+        lines.append('🔧 <code>' + (msg.get('name','tool'))[:20] + ': ' + str(c)[:80].replace('<','&lt;').replace('>','&gt;') + '</code>')
+    elif role == 'assistant':
+        if msg.get('tool_calls'):
+            names = ', '.join(t.get('function',{}).get('name','?') for t in msg['tool_calls'])
+            lines.append('<b>assistant:</b> [→ ' + names[:80] + ']')
+        elif c:
+            text = str(c)[:150].replace('<','&lt;').replace('>','&gt;')
+            lines.append('<b>assistant:</b> ' + text + ('…' if len(str(c))>150 else ''))
+    elif role == 'user':
+        if isinstance(c, list): c = ' '.join(p.get('text','') for p in c if isinstance(p,dict))
+        c = str(c)
+        if '[SYSTEM:' not in c and len(c.strip()) > 0:
+            lines.append('<b>you:</b> ' + c[:150].replace('<','&lt;').replace('>','&gt;') + ('…' if len(c)>150 else ''))
+total = len(h)
+print(f'<b>History</b> (last {min(n,len(lines))} of {total} messages)\n\n' + '\n'.join(lines[-10:]) if lines else 'Session has no visible turns yet.')
+" 2>/dev/null || echo "Could not read history.")
+                    tg_send "$chat_id" "$_hist_out" "$thread_id" "HTML"
+                fi
+                ;;
+
+            /topic)
+                # Name this thread/topic and optionally bind a skill to it (hermes topic binding)
+                local _tname=$(echo "$args" | sed 's/^[[:space:]]*//' | cut -d' ' -f1-)
+                if [[ -z "$_tname" ]]; then
+                    local _cur_topic
+                    _cur_topic=$(get_topic_config "$chat_id" "$thread_id")
+                    local _tname_cur; _tname_cur=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('name',''))" "$_cur_topic" 2>/dev/null)
+                    local _tskill_cur; _tskill_cur=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('skill',''))" "$_cur_topic" 2>/dev/null)
+                    tg_send "$chat_id" "Topic: <b>${_tname_cur:-unnamed}</b>  Skill: <code>${_tskill_cur:-none}</code>
+
+Use <code>/topic &lt;name&gt;</code> to name this thread.
+Use <code>/skill &lt;name&gt;</code> to bind a skill." "$thread_id" "HTML"
+                else
+                    set_topic_config "$chat_id" "$thread_id" "name" "$_tname"
+                    tg_send "$chat_id" "📌 Topic named: <b>${_tname}</b>" "$thread_id" "HTML"
+                fi
                 ;;
             /stop)
                 local _stop_args=$(echo "$args" | awk '{print $1}')

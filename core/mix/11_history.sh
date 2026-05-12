@@ -64,12 +64,30 @@ print(json.dumps(h, separators=(',', ':')))
 
 save_history() {
     local session_id="$1"
-    echo "$HISTORY" > "brain/state/history_${session_id}.json"
+    local _hfile="brain/state/history_${session_id}.json"
+    local _tmp; _tmp=$(mktemp "${_hfile}.XXXXXX")
+    printf '%s' "$HISTORY" > "$_tmp" && mv "$_tmp" "$_hfile" || { rm -f "$_tmp"; return 1; }
 }
 
 load_history() {
     local session_id="$1"
     if [[ -f "brain/state/history_${session_id}.json" ]]; then
+        # Session idle auto-reset (hermes pattern): if file is older than SESSION_IDLE_HOURS,
+        # treat session as expired and start fresh — avoids resuming week-old conversations
+        local _idle_hours="${SESSION_IDLE_HOURS:-0}"  # 0 = disabled
+        if [[ "$_idle_hours" -gt 0 ]]; then
+            local _file_age_hours=$(( ( $(date +%s) - $(stat -c %Y "brain/state/history_${session_id}.json" 2>/dev/null || echo 0) ) / 3600 ))
+            if [[ "$_file_age_hours" -ge "$_idle_hours" ]]; then
+                echo "AMA: Session $session_id idle $_file_age_hours h (limit ${_idle_hours}h) — auto-reset." >&2
+                local _archive_dir="brain/state/sessions"
+                mkdir -p "$_archive_dir"
+                mv "brain/state/history_${session_id}.json" "${_archive_dir}/history_${session_id}_$(date +%s).json" 2>/dev/null || \
+                    rm -f "brain/state/history_${session_id}.json"
+                HISTORY="[]"
+                return
+            fi
+        fi
+
         HISTORY=$(cat "brain/state/history_${session_id}.json")
         # Sanity check: if history ends with consecutive user messages (no assistant reply),
         # the conversation is in an invalid state — trim the orphaned user messages.

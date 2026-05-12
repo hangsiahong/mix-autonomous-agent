@@ -415,13 +415,26 @@ print(json.dumps({'ts': ts, 'provider': prov, 'model': mod, 'code': code, 'reaso
 
       if [[ "$retryable" == "true" && "$attempt" -lt "$max_attempts" ]]; then
           local delay=$((2 ** attempt + RANDOM % 5))
-          echo "AMA: API Error $code, retrying in $delay s... ($attempt/$max_attempts)" >&2
-          
-          # If it's a rate limit or server error and we have a fallback, switch for next attempt
-          if [[ ("$reason" == "rate_limit" || "$reason" == "server_error") && -n "$FALLBACK_MODEL" && "$MODEL" != "$FALLBACK_MODEL" ]]; then
+          echo "AMA: API Error $code ($reason), retrying in ${delay}s ($attempt/$max_attempts)" >&2
+
+          # Provider fallback chain (hermes pattern): on persistent rate-limit/auth/server errors,
+          # try FALLBACK_PROVIDER=provider:model (e.g. "default:gpt-4o-mini") before giving up
+          if [[ "$attempt" -ge 2 && -n "${FALLBACK_PROVIDER:-}" ]]; then
+              local _fb_provider _fb_model
+              _fb_provider=$(echo "$FALLBACK_PROVIDER" | cut -d: -f1)
+              _fb_model=$(echo "$FALLBACK_PROVIDER" | cut -d: -f2-)
+              if [[ -n "$_fb_provider" && "$PROVIDER" != "$_fb_provider" ]]; then
+                  echo "AMA: Activating fallback provider $_fb_provider:${_fb_model}" >&2
+                  PROVIDER="$_fb_provider"
+                  [[ -n "$_fb_model" ]] && MODEL="$_fb_model"
+                  if type "${PROVIDER}_activate" >/dev/null 2>&1; then
+                      ${PROVIDER}_activate 2>/dev/null || true
+                  fi
+                  payload=$(_api_build_payload "false" "$sys_prompt_override")
+              fi
+          elif [[ ("$reason" == "rate_limit" || "$reason" == "server_error") && -n "${FALLBACK_MODEL:-}" && "$MODEL" != "$FALLBACK_MODEL" ]]; then
               echo "AMA: Switching to fallback model $FALLBACK_MODEL" >&2
               MODEL="$FALLBACK_MODEL"
-              # Re-build payload with new model
               payload=$(_api_build_payload "false" "$sys_prompt_override")
           fi
 

@@ -163,7 +163,9 @@ tg_get_file() {
 tg_download() {
     local file_path="$1"
     local local_dest="$2"
-    curl -sf -o "$local_dest" "https://api.telegram.org/file/bot${TG_TOKEN}/${file_path}"
+    # 30s timeout + 20MB size limit — prevents hangs and OOM on large files
+    curl -sf --max-time 30 --limit-rate 10M -o "$local_dest" \
+        "https://api.telegram.org/file/bot${TG_TOKEN}/${file_path}"
 }
 
 tg_set_commands() {
@@ -177,6 +179,8 @@ tg_set_commands() {
         {"command": "steer",    "description": "Inject guidance mid-run: /steer <note>"},
         {"command": "queue",    "description": "Queue a message for after current run: /queue <text>"},
         {"command": "model",    "description": "Switch model this session: /model <name>"},
+        {"command": "history",  "description": "Show recent conversation turns: /history [n]"},
+        {"command": "topic",    "description": "Name this thread/topic: /topic <name>"},
         {"command": "status",   "description": "Show model, session info, system stats"},
         {"command": "usage",    "description": "Show token usage for this session"},
         {"command": "skill",    "description": "View or set active skill: /skill <name> or off"},
