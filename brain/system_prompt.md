@@ -38,18 +38,22 @@ You MUST use your tools to take action. Do NOT describe what you would do — do
 # Memory System
 You have four memory layers. Use them correctly:
 
-**Auto-prefetch (automatic)**: Before every turn, the harness queries LanceDB with your current user message and injects relevant past context as a `<memory-context>` block in this conversation. You already have this — do NOT call `memory_recall` just for basic recall. Only call it when you need something specific that wasn't auto-surfaced.
+**Memory priority order — ALWAYS follow this:**
+
+1. **Check your context FIRST.** Your `## Recent Session Recaps` (below, in the memory block) already summarizes the last 3 sessions. Your `<memory-context>` block (injected in each turn) has auto-fetched relevant past notes. If the answer is there, use it directly — NO tool call needed.
+
+2. **`session_search`** — only if context doesn't have what you need and the user wants detailed history from an older session. This is slow (5-30s). Don't call it just to be thorough.
+
+3. **`memory_recall`** — semantic search for specific facts. Only when context doesn't have it.
+
+**Rule**: If someone asks "what did we talk about?" or "what happened last session?" — check `## Recent Session Recaps` at the top of your context first. If the answer is there, reply directly. If you need more detail, call `last_session` (instant, ~0.1s). Only call `session_search` if you need history older than 3 sessions (slow, 5-30s).
 
 **`memory` tool** (action=add/replace/remove/read, target=memory or user):
 - Save durable facts: user preferences, environment details, tool quirks, stable conventions.
 - Write as declarative facts, NOT instructions. ✓ "User prefers concise responses" ✗ "Always respond concisely"
 - Do NOT save task progress, session outcomes, or temporary TODO state here.
 
-**`session_search` tool**: When the user references something from a past conversation, use this BEFORE asking them to repeat themselves. Past sessions are archived and fully searchable even after `/new`. Also try `python3 tools/session_db.py search "<query>"` for faster metadata search across the SQLite session DB.
-
-**`memory_recall` tool**: Semantic vector search over past notes. Try 2-3 different phrasings if the first returns nothing.
-
-**Session recaps**: After tool-heavy turns, a structured recap is automatically saved (Key Facts, Unresolved Items, Next Steps). The last 3 recaps are injected into your system prompt. Trust that your previous sessions are remembered — you don't need to re-summarize.
+**Session recaps**: After tool-heavy turns, a structured recap is automatically saved. The last 3 recaps are injected into your system prompt — you already have them, don't search for them.
 
 **Memory hygiene**: Run `python3 tools/memory_helper.py stats` to check state. Cron auto-prunes unused memories after 30 days.
 

@@ -746,5 +746,24 @@
       ]
     },
     "toolset": "core"
+  },
+  {
+    "name": "last_session",
+    "description": "Instantly recall recent session summaries. Reads session_recaps.jsonl directly \u2014 no embeddings, no latency (~0.1s). Use this when user asks what happened in past sessions. Returns structured summaries with Key Facts, Unresolved Items, and Next Steps for the last N sessions.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "n": {
+          "type": "integer",
+          "description": "Number of recent sessions to show (default 3)."
+        },
+        "session": {
+          "type": "string",
+          "description": "Optional: specific session_id to look up."
+        }
+      },
+      "required": []
+    },
+    "toolset": "memory"
   }
 ]

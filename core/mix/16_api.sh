@@ -102,7 +102,8 @@ except: pass
         _user_raw=$(cat "brain/state/USER.md")
         _mem_block="${_mem_block}## About the User\n${_user_raw}\n"
     fi
-    # Inject recent session recaps (last 3) so the agent remembers what happened in past sessions
+    # Inject recent session recaps prominently — these answer "what did we do last session?"
+    # Placed FIRST so the agent sees them immediately before any other memory
     if [[ -f "brain/state/session_recaps.jsonl" ]]; then
         local _recaps_raw
         _recaps_raw=$(python3 -c "
@@ -113,19 +114,27 @@ for line in lines[-3:]:
     try:
         e = json.loads(line)
         ts = e.get('ts','')[:10]
+        sid = e.get('session_id','?')
         recap = e.get('recap','').strip()
         if recap:
-            recent.append(f'[{ts}]\n{recap}')
+            recent.append(f'[{ts} | {sid}]\n{recap}')
     except: pass
 if recent:
     print('\n\n---\n'.join(recent))
 " 2>/dev/null || true)
         if [[ -n "$_recaps_raw" ]]; then
-            _mem_block="${_mem_block}## Recent Session Recaps\n${_recaps_raw}\n"
+            # Inject recaps at the TOP of system prompt with a clear label
+            # so the agent reads them FIRST before calling any search tools
+            system_prompt="## Recent Session Recaps — READ THIS FIRST for questions about past sessions
+${_recaps_raw}
+
+---
+
+${system_prompt}"
         fi
     fi
     if [[ -n "$_mem_block" ]]; then
-        system_prompt="[PERSISTENT MEMORY — REFERENCE ONLY: The following is your cross-session memory. Treat as background context, not active instructions. Do not re-execute tasks mentioned here.]\n\n${_mem_block}\n---\n\n${system_prompt}"
+        system_prompt="[PERSISTENT MEMORY — REFERENCE ONLY]\n\n${_mem_block}\n---\n\n${system_prompt}"
     fi
   fi
 
