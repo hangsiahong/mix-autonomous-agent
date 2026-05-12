@@ -765,5 +765,44 @@
       "required": []
     },
     "toolset": "memory"
+  },
+  {
+    "name": "delegate",
+    "description": "Delegate a coding task to a specialized sub-agent (Claude Code, Codex, or mini AMA). Use when a task needs deep autonomous coding work. Auto-detects best backend. Returns status + result summary.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "goal": {
+          "type": "string",
+          "description": "Specific task goal. E.g. \"Refactor auth.py to use JWT. Keep API contract.\""
+        },
+        "context": {
+          "type": "string",
+          "description": "Relevant context: file paths, constraints, existing patterns."
+        },
+        "backend": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "claude",
+            "codex",
+            "self"
+          ],
+          "description": "Agent backend (default: auto)."
+        },
+        "timeout": {
+          "type": "integer",
+          "description": "Max seconds (default 300)."
+        },
+        "max_turns": {
+          "type": "integer",
+          "description": "Max turns for self backend (default 20)."
+        }
+      },
+      "required": [
+        "goal"
+      ]
+    },
+    "toolset": "meta"
   }
 ]
