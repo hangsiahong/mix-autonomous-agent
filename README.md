@@ -22,6 +22,12 @@ python3 -m playwright install chromium
 ```bash
 cp .env.example .env
 # Edit .env with your values
+
+cp brain/config.example.json brain/config.json
+# Edit brain/config.json with your Telegram user ID and whitelist
+
+cp SOUL.md.example SOUL.md
+# Edit SOUL.md to customize the agent's persona (optional)
 ```
 
 Minimum required `.env`:
@@ -225,6 +231,32 @@ extensions/
 - `/sessions` — list recent sessions with lineage
 - `/history` — show conversation turns
 - `/stop all` — kill every running session
+
+---
+
+## Pulling upstream updates (fork workflow)
+
+AMA is designed so `git pull` never conflicts with your agent's self-modifications:
+
+| File | Status | Notes |
+|------|--------|-------|
+| `core/`, `tools/` (built-in) | ✅ versioned | Receives upstream updates safely |
+| `brain/tools.json` | ✅ versioned | Base tool registry — upstream adds new tools here |
+| `brain/system_prompt.md` | ✅ versioned | Base prompt — upstream improves it here |
+| `brain/config.json` | 🔒 gitignored | Your whitelist/config — copy from `config.example.json` |
+| `brain/tools_extra.json` | 🔒 gitignored | Agent-added custom tools — merged at runtime |
+| `brain/state/` | 🔒 gitignored | All runtime state (history, memory, sessions) |
+| `tools/custom/` | 🔒 gitignored | Agent-created tool scripts |
+| `brain/skills/` | 🔒 gitignored | User/agent skills |
+| `SOUL.md` | 🔒 gitignored | Your persona — copy from `SOUL.md.example` |
+
+**The agent writes to gitignored paths only** — it adds custom tools to `brain/tools_extra.json` (not `brain/tools.json`), and creates scripts in `tools/custom/` (not `tools/`). You can always `git pull` without conflicts.
+
+```bash
+# Update your fork with upstream improvements
+git pull origin master   # or: git fetch origin && git merge origin/master
+# No conflicts — your config, custom tools, and state are all gitignored
+```
 
 ---
 

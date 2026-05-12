@@ -1,0 +1,8 @@
+{
+  "_setup": "Copy this file to brain/config.json and fill in your values. config.json is gitignored so it never conflicts with upstream updates.",
+  "whitelist": ["YOUR_TELEGRAM_USER_ID"],
+  "home_chat": "YOUR_TELEGRAM_USER_ID",
+  "default_toolsets": ["core", "search", "memory", "meta"],
+  "_toolset_note": "Available: core search memory meta inspect media. Add to '_enabled_toolsets' in a skill's tools.json to expand for that topic.",
+  "group_topics": []
+}
