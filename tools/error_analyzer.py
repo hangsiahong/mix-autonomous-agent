@@ -149,6 +149,42 @@ def log_heal(action: str, result: str):
     with open(HEAL_LOG, "a") as f:
         f.write(entry + "\n")
 
+def archive_addressed(before_ts: float = 0) -> dict:
+    """
+    Move errors older than before_ts to an archive file and clear them from
+    the active log. Called after a self-heal session so stale errors stop
+    triggering repeat alerts.
+    """
+    if not ERROR_LOG.exists():
+        return {"archived": 0, "kept": 0}
+
+    all_rows = ERROR_LOG.read_text().splitlines()
+    archive_path = DIR / "brain/state/error_log_archive.jsonl"
+
+    kept = []
+    archived = []
+    for line in all_rows:
+        try:
+            e = json.loads(line)
+            ts_raw = e.get("ts", "")
+            try:
+                ts = datetime.fromisoformat(ts_raw.replace("Z","+00:00")).timestamp()
+            except Exception:
+                ts = 0
+            if before_ts > 0 and ts < before_ts:
+                archived.append(line)
+            else:
+                kept.append(line)
+        except Exception:
+            kept.append(line)
+
+    if archived:
+        with open(archive_path, "a") as f:
+            f.write("\n".join(archived) + "\n")
+        ERROR_LOG.write_text("\n".join(kept) + ("\n" if kept else ""))
+
+    return {"archived": len(archived), "kept": len(kept)}
+
 def create_heal_request(patterns):
     """Write a heal_request.json for the agent to pick up next session."""
     req = {
@@ -198,6 +234,25 @@ if __name__ == "__main__":
         result = sys.argv[3] if len(sys.argv) > 3 else ""
         log_heal(action, result)
         print(f"Logged: {action}")
+
+    elif cmd == "clear":
+        # Archive everything older than N hours (default: all) out of active log
+        hours = float(sys.argv[2]) if len(sys.argv) > 2 else 0
+        before_ts = time.time() - hours * 3600 if hours > 0 else time.time()
+        result = archive_addressed(before_ts)
+        print(f"Archived {result['archived']} errors, kept {result['kept']} recent entries")
+
+    elif cmd == "archive_before":
+        # Archive errors before a given ISO timestamp
+        ts_str = sys.argv[2] if len(sys.argv) > 2 else ""
+        before_ts = 0
+        if ts_str:
+            try:
+                before_ts = datetime.fromisoformat(ts_str.replace("Z","+00:00")).timestamp()
+            except Exception:
+                before_ts = float(ts_str)
+        result = archive_addressed(before_ts)
+        print(f"Archived {result['archived']} errors before {ts_str}")
 
     elif cmd == "since":
         ts_str = sys.argv[2] if len(sys.argv) > 2 else ""

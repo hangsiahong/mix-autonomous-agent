@@ -196,12 +196,19 @@ for tc in json.loads(open(sys.argv[1]).read()):
 
     # Log the heal session and notify admin
     if [[ -n "$_heal_result" ]]; then
+        local _heal_ts; _heal_ts=$(date -u +%s)
         python3 tools/error_analyzer.py log "self_heal_session" "${_heal_result:0:200}" 2>/dev/null || true
+
+        # Archive errors that pre-date this heal run — they triggered the heal,
+        # they're now addressed (or at least acknowledged), stop re-alerting on them
+        python3 tools/error_analyzer.py archive_before "$(date -u +%Y-%m-%dT%H:%M:%SZ)" 2>/dev/null || true
 
         # Notify admin
         local _admin_chat; _admin_chat="${TG_ADMIN:-$chat_id}"
-        local _msg="🔧 <b>Self-Heal Report</b>
-$(echo "$_heal_result" | head -c 800)"
+        local _msg="🔧 <b>Self-Heal Complete</b>
+$(echo "$_heal_result" | head -c 800)
+
+<i>Old error entries archived.</i>"
         tg_send "$_admin_chat" "$_msg" "" "HTML" > /dev/null 2>&1 || true
     fi
 
