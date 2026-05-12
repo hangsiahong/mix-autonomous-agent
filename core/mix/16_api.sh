@@ -352,6 +352,13 @@ if mem_raw and "No memories found" not in mem_raw:
                 h[i] = dict(h[i], content=list(c) + [{"type": "text", "text": "\n\n" + fence}])
             break
 
+# Guard: Vertex/Gemini rejects payloads with no user messages ("Model input cannot be empty")
+# If history has no user/assistant messages, bail early with a clear error
+has_user = any(msg.get("role") in ("user", "assistant") for msg in h)
+if not h or not has_user:
+    sys.stderr.write("GUARD: empty history — no user messages, skipping API call\n")
+    sys.exit(2)
+
 msg = [{"role": "system", "content": s}] + h
 body = {"model": m, "messages": msg}
 if t:

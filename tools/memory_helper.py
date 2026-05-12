@@ -1,6 +1,9 @@
 import os
 import sys
 import subprocess
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 import lancedb
 import requests
 import json

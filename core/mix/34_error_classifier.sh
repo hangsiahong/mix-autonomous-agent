@@ -21,6 +21,10 @@ classify_error() {
             reason="context_overflow"
             retryable="true"
             should_compress="true"
+        elif [[ "$body" == *"cannot be empty"* || "$body" == *"input cannot be empty"* || "$body" == *"thought_signature"* ]]; then
+            # Permanent structural errors — retrying with the same payload will always fail
+            reason="bad_request_permanent"
+            retryable="false"
         else
             reason="bad_request"
             retryable="false"

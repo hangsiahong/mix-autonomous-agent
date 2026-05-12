@@ -176,12 +176,19 @@ except:
 
         # Call API with system prompt override
         local response=$(call_api "$reflection_sys_prompt")
+
+        # Break immediately on API failure — don't retry empty/broken payloads
+        if [[ -z "$response" || "$response" == "FAIL:"* ]]; then
+            echo "Reflection: API call failed ($response), stopping" >&2
+            break
+        fi
+
         local parsed=$(parse_resp "$response")
 
         local text=$(echo "$parsed" | grep "^TEXT:" | cut -c6-)
         local tool_calls=$(echo "$parsed" | grep "^TC:" | cut -c4-)
 
-        if [[ "$text" == "NO_ACTION" ]]; then
+        if [[ "$text" == "NO_ACTION" || -z "$text" ]]; then
             break
         fi
 
