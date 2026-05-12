@@ -222,9 +222,14 @@ print('<i>Thinking…</i>\n' + '\n'.join(lines) if lines else '⏳ <i>Thinking�
                 tg_edit "$chat_id" "$msg_id" "$(md_to_tg_html "$full_md")" "HTML" > /dev/null
             elif [[ -n "$text" && "$text" != "null" && $total_tool_calls -eq 0 ]]; then
                 tg_edit "$chat_id" "$msg_id" "$(md_to_tg_html "$text")" "HTML" > /dev/null
+            else
+                # Empty response — Gemini thinking-only output or scrubbed content.
+                # The ⏳ placeholder is still showing. Replace it with a retry prompt.
+                tg_edit "$chat_id" "$msg_id" "🤔 <i>No response generated (model may have only produced internal reasoning). Use /retry to try again.</i>" "HTML" > /dev/null 2>&1 || true
+                [[ -n "$user_msg_id" && "$user_msg_id" != "0" ]] && tg_react "$chat_id" "$user_msg_id" "👎" || true
             fi
             # React ✅ on the user's original message (hermes: done signal)
-            [[ -n "$user_msg_id" && "$user_msg_id" != "0" ]] && tg_react "$chat_id" "$user_msg_id" "✅"
+            [[ -z "$text" ]] || { [[ -n "$user_msg_id" && "$user_msg_id" != "0" ]] && tg_react "$chat_id" "$user_msg_id" "✅"; }
         else
             # Loop hit max turns without clean exit
             tg_edit "$chat_id" "$msg_id" "$(md_to_tg_html "${text:-}")\n\n⚠️ _Max turns reached. Use /retry to continue or /new for fresh session._" "HTML" > /dev/null 2>&1 || true
