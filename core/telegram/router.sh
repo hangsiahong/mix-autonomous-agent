@@ -678,6 +678,27 @@ Or to re-login with a different account: /google_login force" "$thread_id" "HTML
                 fi
                 ;;
 
+            /google_rediscover)
+                local _oauth_tool="${DIR}/tools/google_oauth.py"
+                tg_send "$chat_id" "⏳ Re-discovering tier and model (no re-login needed)…" "$thread_id"
+                local _rd_out _rd_tmp
+                _rd_tmp=$(mktemp)
+                python3 "$_oauth_tool" rediscover >"$_rd_tmp" 2>/dev/null
+                _rd_out=$(cat "$_rd_tmp"); rm -f "$_rd_tmp"
+                if [[ "$_rd_out" == OK* ]]; then
+                    local _rd_tier _rd_model
+                    _rd_tier=$(echo "$_rd_out" | grep -oP 'tier=\K\S+')
+                    _rd_model=$(echo "$_rd_out" | grep -oP 'model=\K\S+')
+                    tg_send "$chat_id" "✅ Rediscovered!
+Tier: <code>${_rd_tier:-?}</code>
+Model: <code>${_rd_model:-?}</code>
+
+Pool entry uses model automatically — restart bot to apply: pm2 restart ama-bot" "$thread_id" "HTML"
+                else
+                    tg_send "$chat_id" "❌ Rediscovery failed: <code>${_rd_out}</code>" "$thread_id" "HTML"
+                fi
+                ;;
+
             /google_quota)
                 local _oauth_tool="${DIR}/tools/google_oauth.py"
                 if [[ ! -f "$_oauth_tool" ]]; then
@@ -704,10 +725,14 @@ Or to re-login with a different account: /google_login force" "$thread_id" "HTML
                     python3 "$_oauth_tool" finish "$_callback_val" >"$_finish_tmp" 2>/dev/null
                     _finish_out=$(cat "$_finish_tmp"); rm -f "$_finish_tmp"
                     if [[ "$_finish_out" == OK* ]]; then
-                        local _fc_email
+                        local _fc_email _fc_tier _fc_model
                         _fc_email=$(echo "$_finish_out" | grep -oP 'email=\K\S+')
+                        _fc_tier=$(echo "$_finish_out" | grep -oP 'tier=\K\S+')
+                        _fc_model=$(echo "$_finish_out" | grep -oP 'model=\K\S+')
                         tg_send "$chat_id" "✅ <b>Logged in!</b>
 Account: <code>${_fc_email}</code>
+Tier: <code>${_fc_tier:-?}</code>
+Model: <code>${_fc_model:-gemini-2.5-flash}</code>
 
 Now tell me: <i>add this Google account to my provider pool</i> and I'll configure it automatically." "$thread_id" "HTML"
                     else

@@ -220,7 +220,7 @@ headers = {
     "Content-Type":          "application/json",
     "Accept":                "text/event-stream",
     "Authorization":         f"Bearer {access_token}",
-    "User-Agent":            "gemini-cli/0.1.0-beta.5 (ama-bot)",
+    "User-Agent":            "google-api-nodejs-client/9.15.1 (gzip)",
     "X-Goog-Api-Client":     "gl-node/24.0.0",
     "x-activity-request-id": str(uuid.uuid4()),
 }

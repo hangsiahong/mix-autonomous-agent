@@ -72,17 +72,31 @@ def _post(url: str, params: dict, *, headers: dict | None = None) -> dict:
         return json.loads(e.read() or b"{}") | {"_http_status": e.code}
 
 
+_GEMINI_CLI_UA  = "google-api-nodejs-client/9.15.1 (gzip)"
+_X_GOOG_CLIENT  = "gl-node/24.0.0"
+
+def _ca_headers(token: str) -> dict:
+    """Headers that match gemini-cli exactly — Code Assist may reject others."""
+    return {
+        "Content-Type":          "application/json",
+        "Accept":                "application/json",
+        "Authorization":         f"Bearer {token}",
+        "User-Agent":            _GEMINI_CLI_UA,
+        "X-Goog-Api-Client":     _X_GOOG_CLIENT,
+        "x-activity-request-id": secrets.token_hex(16),
+    }
+
+def _client_metadata() -> dict:
+    """Match gemini-cli's metadata fields exactly."""
+    return {
+        "ideType":    "IDE_UNSPECIFIED",
+        "platform":   "PLATFORM_UNSPECIFIED",
+        "pluginType": "GEMINI",
+    }
+
 def _post_json(url: str, payload: dict, token: str) -> dict:
     body = json.dumps(payload).encode()
-    req = urllib.request.Request(
-        url, data=body,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {token}",
-            "User-Agent": "gemini-cli/0.1.0-beta.5 (ama-bot)",
-        },
-        method="POST",
-    )
+    req = urllib.request.Request(url, data=body, headers=_ca_headers(token), method="POST")
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             return json.loads(resp.read())
@@ -110,11 +124,19 @@ def _refresh(refresh_token: str) -> dict:
     })
 
 
-def _load_code_assist(access_token: str) -> dict:
-    """Call loadCodeAssist and return the raw response."""
+def _load_code_assist(access_token: str, project_id: str = "") -> dict:
+    """Call loadCodeAssist matching hermes/gemini-cli request format exactly."""
+    body: dict = {
+        "metadata": {
+            "duetProject": project_id,
+            **_client_metadata(),
+        },
+    }
+    if project_id:
+        body["cloudaicompanionProject"] = project_id
     return _post_json(
         f"{CODE_ASSIST_ENDPOINT}/v1internal:loadCodeAssist",
-        {"product": "code_assist", "onboarding_flow": "default"},
+        body,
         access_token,
     )
 
@@ -132,27 +154,39 @@ def _retrieve_quota(access_token: str, project_id: str = "") -> list:
 
 
 def _best_model_for_tier(tier: str, buckets: list) -> str:
-    """Pick the best available model given tier + quota buckets."""
-    # Models available per tier (preference order)
-    tier_models = {
-        "standard-tier":  ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash-001"],
-        "enterprise":      ["gemini-2.5-pro", "gemini-2.5-flash"],
-        "free-tier":       ["gemini-2.5-flash", "gemini-2.0-flash-001"],
-        "legacy-tier":     ["gemini-2.5-flash", "gemini-2.0-flash-001"],
-    }
-    preferred = tier_models.get(tier, ["gemini-2.5-flash"])
+    """Pick the best available model from quota buckets (quota is authoritative).
 
-    # If we have quota info, only pick models with remaining quota
+    Preference order: gemini-3.1-pro > gemini-3-pro > gemini-3.1-flash > gemini-3-flash
+    > gemini-2.5-pro > gemini-2.5-flash > gemini-2.0-flash
+    """
+    # Preference order — best first
+    _PREFS = [
+        "gemini-3.1-pro-preview",
+        "gemini-3-pro-preview",
+        "gemini-3.1-flash-lite-preview",
+        "gemini-3-flash-preview",
+        "gemini-2.5-pro",
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-2.0-flash-001",
+    ]
+
     if buckets:
-        available = {b.get("modelId", "").split("/")[-1] for b in buckets
-                     if float(b.get("remainingFraction", 1.0)) > 0}
-        for m in preferred:
-            # Match by suffix (quota uses full paths like "publishers/google/models/gemini-2.5-flash")
-            if any(m in a or a in m for a in available):
+        # Build set of available model short-names with >0 quota
+        available = set()
+        for b in buckets:
+            mid = str(b.get("modelId", "")).split("/")[-1]
+            if mid and float(b.get("remainingFraction", 1.0)) > 0:
+                available.add(mid)
+        for m in _PREFS:
+            if m in available:
                 return m
+        # Quota available but none matched — use first available bucket
+        if available:
+            return next(iter(available))
 
-    # Fall back to tier preference without quota check
-    return preferred[0]
+    # No quota data — safe default
+    return "gemini-2.5-flash"
 
 
 def _discover_project(access_token: str) -> tuple:
@@ -174,7 +208,7 @@ def _discover_project(access_token: str) -> tuple:
         print("Onboarding free tier (one-time, may take ~30s)…", file=sys.stderr)
         onboard_resp = _post_json(
             f"{CODE_ASSIST_ENDPOINT}/v1internal:onboardUser",
-            {"tierId": "free-tier"},
+            {"tierId": "free-tier", "metadata": _client_metadata()},
             access_token,
         )
         if not onboard_resp.get("done"):
@@ -354,6 +388,33 @@ def cmd_status():
         print(f"needs_refresh  email={email}  tier={tier}  model={model}  project={project}")
 
 
+def cmd_rediscover():
+    """Re-run project/tier/model discovery using stored refresh token (no re-login)."""
+    creds = _load_creds()
+    if not creds or not creds.get("refresh_token"):
+        print("ERROR: not logged in. Run 'init' + 'finish'.", file=sys.stderr)
+        sys.exit(1)
+
+    # Refresh token to get fresh access token
+    token_data = _refresh(creds["refresh_token"])
+    if "error" in token_data:
+        print(f"ERROR: refresh failed: {token_data['error']}", file=sys.stderr)
+        sys.exit(1)
+    access_token = token_data.get("access_token", "")
+    creds["access_token"] = access_token
+    creds["expires_at"] = int(time.time()) + int(token_data.get("expires_in", 3600)) - 60
+
+    print("Re-discovering project, tier, and best model…", file=sys.stderr)
+    project_id, tier, best_model = _discover_project(access_token)
+
+    creds["project_id"] = project_id
+    creds["tier"]       = tier
+    creds["best_model"] = best_model
+    _save_creds(creds)
+
+    print(f"OK tier={tier} model={best_model} project={project_id or '(auto)'}")
+
+
 def cmd_quota():
     """Show available models and remaining quota for this account."""
     creds = _load_creds()
@@ -396,15 +457,17 @@ if __name__ == "__main__":
     p_f.add_argument("url", help="Full redirect URL, query string, or bare auth code")
     sub.add_parser("token",   help="Print valid access token")
     sub.add_parser("project", help="Print stored project_id")
-    sub.add_parser("model",   help="Print best model for this account")
-    sub.add_parser("quota",   help="Show available models and quota")
-    sub.add_parser("status",  help="Show login status")
+    sub.add_parser("model",      help="Print best model for this account")
+    sub.add_parser("quota",      help="Show available models and quota")
+    sub.add_parser("rediscover", help="Re-run project/tier/model discovery without re-login")
+    sub.add_parser("status",     help="Show login status")
 
     args = ap.parse_args()
-    if   args.cmd == "init":    cmd_init()
-    elif args.cmd == "finish":  cmd_finish(args.url)
-    elif args.cmd == "token":   cmd_token()
-    elif args.cmd == "project": cmd_project()
-    elif args.cmd == "model":   cmd_model()
-    elif args.cmd == "quota":   cmd_quota()
-    elif args.cmd == "status":  cmd_status()
+    if   args.cmd == "init":       cmd_init()
+    elif args.cmd == "finish":     cmd_finish(args.url)
+    elif args.cmd == "token":      cmd_token()
+    elif args.cmd == "project":    cmd_project()
+    elif args.cmd == "model":      cmd_model()
+    elif args.cmd == "quota":      cmd_quota()
+    elif args.cmd == "rediscover": cmd_rediscover()
+    elif args.cmd == "status":     cmd_status()
