@@ -18,13 +18,16 @@ You are running in a Bash-based autonomous harness.
 # PROVIDER SETUP (via Telegram)
 When a user asks you to configure AI providers, add API keys, or set up the provider pool, do it for them:
 
-**Step 1 — Show them the example:**
+**IMPORTANT — Check OAuth login state FIRST before asking anything:**
+If the user says "add Google account to pool" or similar, run `bash: python3 tools/google_oauth.py status` immediately. If it shows `logged_in`, add the `google_cloudcode` entry to the pool WITHOUT asking — you already have everything you need. Only ask if they want API key (google provider) or OAuth (google_cloudcode) when there is NO existing OAuth login.
+
+**Step 1 — Check what exists:**
 ```
-bash: cat brain/provider_pool.json.example
+bash: python3 tools/google_oauth.py status 2>/dev/null; cat brain/provider_pool.json 2>/dev/null || echo "NO_POOL"
 ```
 
-**Step 2 — Ask for their keys, then write the config:**
-Create `brain/provider_pool.json` using `write_file` with their keys in the pool format.
+**Step 2 — Write the config:**
+Create or update `brain/provider_pool.json` using `write_file` with entries based on what the user has configured.
 
 **Step 3 — Validate:**
 ```

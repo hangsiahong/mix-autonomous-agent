@@ -663,15 +663,17 @@ Or to re-login with a different account: /google_login force" "$thread_id" "HTML
                     else
                         tg_send "$chat_id" "🔐 <b>Google Login (Code Assist free tier)</b>
 
-1. Open this URL on any device:
+1. Open this URL in any browser:
 <code>${_auth_url}</code>
 
-2. Sign in with your Google account and allow access.
+2. Sign in with your Google account and tap Allow.
 
-3. Google will redirect to <code>localhost:8085</code> — that's expected (page won't load). Copy the <b>full URL</b> from the address bar.
+3. Your browser will show a <b>\"This site can't be reached\"</b> error on localhost:8085 — <b>that's normal and expected</b>. Don't close it.
 
-4. Paste it back as:
-<code>/google_login_callback &lt;url&gt;</code>" "$thread_id" "HTML"
+4. Copy the <b>full URL</b> from the address bar (starts with <code>http://127.0.0.1:8085/oauth2callback?state=...</code>).
+
+5. Paste it back here:
+<code>/google_login_callback &lt;paste the full URL&gt;</code>" "$thread_id" "HTML"
                     fi
                 fi
                 ;;
