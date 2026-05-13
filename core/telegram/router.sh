@@ -535,7 +535,8 @@ Use <code>/skill &lt;name&gt;</code> to bind a skill." "$thread_id" "HTML"
                         local _ppid _pmsg _pchat _pthread
                         IFS='|' read -r _ppid _pmsg _pchat _pthread <<< "$_pf_data"
                         if kill -0 "$_ppid" 2>/dev/null; then
-                            kill -TERM "-${_ppid}" 2>/dev/null || kill -TERM "$_ppid" 2>/dev/null
+                            kill -TERM "$_ppid" 2>/dev/null || true
+                            pkill -TERM -P "$_ppid" 2>/dev/null || true
                             if [[ -n "$_pmsg" && "$_pmsg" != "pending" && -n "$_pchat" ]]; then
                                 tg_edit "$_pchat" "$_pmsg" "🛑 <i>Stopped.</i>" "HTML" > /dev/null 2>&1 || true
                             fi
@@ -560,8 +561,10 @@ Use <code>/skill &lt;name&gt;</code> to bind a skill." "$thread_id" "HTML"
                         local run_pid _msg_id _orig_chat _orig_thread
                         IFS='|' read -r run_pid _msg_id _orig_chat _orig_thread <<< "$_pid_data"
                         echo "AMA: Stopping session $session_id (PID $run_pid)"
-                        # Kill the whole process group — takes down bash + python subprocesses
-                        kill -TERM "-${run_pid}" 2>/dev/null || kill -TERM "$run_pid" 2>/dev/null
+                        # Kill the agent process only (NOT its process group, which would kill bot.sh)
+                        kill -TERM "$run_pid" 2>/dev/null || true
+                        sleep 0.3
+                        pkill -TERM -P "$run_pid" 2>/dev/null || true
                         rm -f "$pid_file"
                         # Edit the dangling "Thinking…" or "Working…" bot message
                         if [[ -n "$_msg_id" && "$_msg_id" != "pending" ]]; then

@@ -34,12 +34,16 @@ run_agent() {
         msg_id=$(tg_send_r "$chat_id" "⏳ <i>Thinking…</i>" "$thread_id" "HTML" "$user_msg_id")
     fi
 
+    # Capture our own PID before entering subshell ($$  in subshell returns
+    # the invoking shell's PID, not ours; $BASHPID is the actual process PID)
+    local _agent_pid=$BASHPID
+
     # Session Lock block
     (
         # Wait for the lock — write PID file INSIDE lock so it always points
         # to the RUNNING process, never a queued one that hasn't started yet
         flock -x 200
-        echo "$$|${msg_id}|${chat_id}|${thread_id}" > "$pid_file"
+        echo "$_agent_pid|${msg_id}|${chat_id}|${thread_id}" > "$pid_file"
         trap 'rm -f "$pid_file"' EXIT INT TERM
 
         # Stop flag handling:

@@ -42,6 +42,16 @@ trap 'rm -f "$LOCK_FILE"; exit 0' EXIT INT TERM
 echo "AMA Bot Starting..."
 tg_set_commands
 
+# Clean up stale PID files left by a previous (crashed/killed) instance
+for _stale in "${DIR}/brain/state"/run_*.pid; do
+    [[ -f "$_stale" ]] || continue
+    _spid=$(cut -d'|' -f1 "$_stale" 2>/dev/null)
+    if [[ -n "$_spid" ]] && ! kill -0 "$_spid" 2>/dev/null; then
+        rm -f "$_stale"
+    fi
+done
+unset _stale _spid
+
 # Drain stale Telegram messages accumulated while bot was offline
 _DRAIN=$(curl -s "https://api.telegram.org/bot${TG_TOKEN}/getUpdates?timeout=0&limit=100&offset=$(cat "$OFFSET_FILE")")
 _DRAIN_LAST=$(echo "$_DRAIN" | python3 -c "import json,sys; r=json.load(sys.stdin); res=r.get('result',[]); print(res[-1].get('update_id','') if res else '')" 2>/dev/null)
@@ -98,8 +108,17 @@ for u in json.load(sys.stdin).get('result', []):
         fi
         echo "Processing update $UPDATE_ID..."
         # T1-2: Global agent process cap — reject new messages when overloaded
-        # Count live run_*.pid files (each = one active agent process)
-        _live_agents=$(ls "${DIR}/brain/state"/run_*.pid 2>/dev/null | wc -l | tr -d ' ')
+        # Count only PIDs whose processes are actually alive (also cleans stale files)
+        _live_agents=0
+        for _pf in "${DIR}/brain/state"/run_*.pid; do
+            [[ -f "$_pf" ]] || continue
+            _ppid=$(cut -d'|' -f1 "$_pf" 2>/dev/null)
+            if kill -0 "$_ppid" 2>/dev/null; then
+                _live_agents=$((_live_agents + 1))
+            else
+                rm -f "$_pf"
+            fi
+        done
         _max_agents="${MAX_CONCURRENT_AGENTS:-10}"
         if [[ "$_live_agents" -ge "$_max_agents" ]]; then
             echo "AMA: Queue full ($_live_agents active agents, max $_max_agents). Dropping update $UPDATE_ID." >&2
