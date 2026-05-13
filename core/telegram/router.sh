@@ -678,6 +678,19 @@ Or to re-login with a different account: /google_login force" "$thread_id" "HTML
                 fi
                 ;;
 
+            /google_quota)
+                local _oauth_tool="${DIR}/tools/google_oauth.py"
+                if [[ ! -f "$_oauth_tool" ]]; then
+                    tg_send "$chat_id" "google_oauth.py not found." "$thread_id"
+                elif [[ "$(python3 "$_oauth_tool" status 2>/dev/null)" != logged_in* ]]; then
+                    tg_send "$chat_id" "Not logged in. Use /google_login first." "$thread_id"
+                else
+                    local _quota_out
+                    _quota_out=$(python3 "$_oauth_tool" quota 2>/dev/null)
+                    tg_send "$chat_id" "<pre>${_quota_out}</pre>" "$thread_id" "HTML"
+                fi
+                ;;
+
             /google_login_callback)
                 # Step 2: exchange code for tokens, save, offer pool config
                 local _callback_val="$args"

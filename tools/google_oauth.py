@@ -110,14 +110,96 @@ def _refresh(refresh_token: str) -> dict:
     })
 
 
-def _discover_project(access_token: str) -> str:
-    """Call loadCodeAssist to get/register the free-tier managed project."""
-    resp = _post_json(
+def _load_code_assist(access_token: str) -> dict:
+    """Call loadCodeAssist and return the raw response."""
+    return _post_json(
         f"{CODE_ASSIST_ENDPOINT}/v1internal:loadCodeAssist",
         {"product": "code_assist", "onboarding_flow": "default"},
         access_token,
     )
-    return str(resp.get("cloudaicompanionProject") or "")
+
+
+def _retrieve_quota(access_token: str, project_id: str = "") -> list:
+    """Return list of quota bucket dicts from retrieveUserQuota."""
+    body = {}
+    if project_id:
+        body["project"] = project_id
+    resp = _post_json(
+        f"{CODE_ASSIST_ENDPOINT}/v1internal:retrieveUserQuota",
+        body, access_token,
+    )
+    return resp.get("buckets") or []
+
+
+def _best_model_for_tier(tier: str, buckets: list) -> str:
+    """Pick the best available model given tier + quota buckets."""
+    # Models available per tier (preference order)
+    tier_models = {
+        "standard-tier":  ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash-001"],
+        "enterprise":      ["gemini-2.5-pro", "gemini-2.5-flash"],
+        "free-tier":       ["gemini-2.5-flash", "gemini-2.0-flash-001"],
+        "legacy-tier":     ["gemini-2.5-flash", "gemini-2.0-flash-001"],
+    }
+    preferred = tier_models.get(tier, ["gemini-2.5-flash"])
+
+    # If we have quota info, only pick models with remaining quota
+    if buckets:
+        available = {b.get("modelId", "").split("/")[-1] for b in buckets
+                     if float(b.get("remainingFraction", 1.0)) > 0}
+        for m in preferred:
+            # Match by suffix (quota uses full paths like "publishers/google/models/gemini-2.5-flash")
+            if any(m in a or a in m for a in available):
+                return m
+
+    # Fall back to tier preference without quota check
+    return preferred[0]
+
+
+def _discover_project(access_token: str) -> tuple:
+    """Call loadCodeAssist; onboard free tier if needed.
+    Returns (cloudaicompanionProject, tier_id, best_model).
+    """
+    resp = _load_code_assist(access_token)
+
+    # Parse tier — field is currentTier.id in some responses, currentTierId in others
+    current_tier = resp.get("currentTier") or {}
+    tier = (str(current_tier.get("id") or "") if isinstance(current_tier, dict) else "") \
+        or str(resp.get("currentTierId") or "")
+    project = str(resp.get("cloudaicompanionProject") or "")
+
+    print(f"Tier: {tier or '(none yet)'}, Project: {project or '(none yet)'}", file=sys.stderr)
+
+    # New user — not onboarded yet. Provision free tier (LRO with polling).
+    if not tier:
+        print("Onboarding free tier (one-time, may take ~30s)…", file=sys.stderr)
+        onboard_resp = _post_json(
+            f"{CODE_ASSIST_ENDPOINT}/v1internal:onboardUser",
+            {"tierId": "free-tier"},
+            access_token,
+        )
+        if not onboard_resp.get("done"):
+            op_name = onboard_resp.get("name", "")
+            for _ in range(12):
+                time.sleep(5)
+                if not op_name:
+                    break
+                poll = _post_json(
+                    f"{CODE_ASSIST_ENDPOINT}/v1internal/{op_name}",
+                    {}, access_token,
+                )
+                if poll.get("done"):
+                    onboard_resp = poll
+                    break
+        body = onboard_resp.get("response") or onboard_resp
+        project = project or str(body.get("cloudaicompanionProject") or "")
+        tier = "free-tier"
+
+    # Get quota to pick best model
+    buckets = _retrieve_quota(access_token, project)
+    best_model = _best_model_for_tier(tier, buckets)
+    print(f"Selected model: {best_model}", file=sys.stderr)
+
+    return project, tier, best_model
 
 
 def _get_email(access_token: str) -> str:
@@ -189,15 +271,17 @@ def cmd_finish(raw: str):
     refresh_token = token_data.get("refresh_token", "")
     expires_in    = int(token_data.get("expires_in", 3600))
 
-    print("Discovering project (this may take a few seconds)…", file=sys.stderr)
-    project_id = _discover_project(access_token)
-    email      = _get_email(access_token)
+    print("Discovering project and quota (this may take ~10s)…", file=sys.stderr)
+    project_id, tier, best_model = _discover_project(access_token)
+    email = _get_email(access_token)
 
     creds = {
         "access_token":  access_token,
         "refresh_token": refresh_token,
         "expires_at":    int(time.time()) + expires_in - 60,
         "project_id":    project_id,
+        "tier":          tier,
+        "best_model":    best_model,
         "email":         email,
     }
     _save_creds(creds)
@@ -207,7 +291,7 @@ def cmd_finish(raw: str):
     except Exception:
         pass
 
-    print(f"OK email={email} project={project_id or '(auto)'}")
+    print(f"OK email={email} tier={tier} model={best_model} project={project_id or '(auto)'}")
 
 
 def cmd_token() -> str:
@@ -233,11 +317,18 @@ def cmd_token() -> str:
 
 
 def cmd_project() -> str:
-    """Print the stored project_id (for pool config generation)."""
+    """Print the stored project_id."""
     creds = _load_creds()
-    project_id = creds.get("project_id", "")
-    print(project_id)
-    return project_id
+    print(creds.get("project_id", ""))
+    return creds.get("project_id", "")
+
+
+def cmd_model() -> str:
+    """Print the best model for this account (from stored creds)."""
+    creds = _load_creds()
+    model = creds.get("best_model", "gemini-2.5-flash")
+    print(model)
+    return model
 
 
 def cmd_status():
@@ -250,15 +341,51 @@ def cmd_status():
     now       = int(time.time())
     expires   = int(creds.get("expires_at", 0))
     email     = creds.get("email", "?")
-    project   = creds.get("project_id") or "?"
+    project   = creds.get("project_id") or "auto"
+    tier      = creds.get("tier", "?")
+    model     = creds.get("best_model", "?")
     has_refresh = bool(creds.get("refresh_token"))
 
     if not has_refresh:
         print(f"needs_relogin  email={email}")
     elif expires > now:
-        print(f"logged_in  email={email}  project={project}  expires_in={expires - now}s")
+        print(f"logged_in  email={email}  tier={tier}  model={model}  project={project}  expires_in={expires - now}s")
     else:
-        print(f"needs_refresh  email={email}  project={project}")
+        print(f"needs_refresh  email={email}  tier={tier}  model={model}  project={project}")
+
+
+def cmd_quota():
+    """Show available models and remaining quota for this account."""
+    creds = _load_creds()
+    if not creds or not creds.get("refresh_token"):
+        print("ERROR: not logged in.", file=sys.stderr)
+        sys.exit(1)
+
+    # Get fresh token
+    import io
+    old_stdout = sys.stdout
+    sys.stdout = io.StringIO()
+    token = cmd_token()
+    sys.stdout = old_stdout
+    if not token:
+        token = creds.get("access_token", "")
+
+    project = creds.get("project_id", "")
+    buckets = _retrieve_quota(token, project)
+
+    if not buckets:
+        print(f"No quota data returned. Tier: {creds.get('tier','?')}")
+        return
+
+    print(f"Account: {creds.get('email','?')}  Tier: {creds.get('tier','?')}")
+    print(f"{'Model':<45} {'Remaining':>10}  Reset")
+    print("-" * 70)
+    for b in sorted(buckets, key=lambda x: x.get("modelId", "")):
+        model_id = str(b.get("modelId", "")).split("/")[-1]
+        fraction = float(b.get("remainingFraction", 0))
+        reset    = str(b.get("resetTime", ""))[:10]
+        bar = "█" * int(fraction * 10) + "░" * (10 - int(fraction * 10))
+        print(f"  {model_id:<43} {bar} {fraction*100:5.1f}%  {reset}")
 
 
 if __name__ == "__main__":
@@ -269,6 +396,8 @@ if __name__ == "__main__":
     p_f.add_argument("url", help="Full redirect URL, query string, or bare auth code")
     sub.add_parser("token",   help="Print valid access token")
     sub.add_parser("project", help="Print stored project_id")
+    sub.add_parser("model",   help="Print best model for this account")
+    sub.add_parser("quota",   help="Show available models and quota")
     sub.add_parser("status",  help="Show login status")
 
     args = ap.parse_args()
@@ -276,4 +405,6 @@ if __name__ == "__main__":
     elif args.cmd == "finish":  cmd_finish(args.url)
     elif args.cmd == "token":   cmd_token()
     elif args.cmd == "project": cmd_project()
+    elif args.cmd == "model":   cmd_model()
+    elif args.cmd == "quota":   cmd_quota()
     elif args.cmd == "status":  cmd_status()

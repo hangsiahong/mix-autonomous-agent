@@ -25,7 +25,7 @@ CODE_ASSIST_ENDPOINT = "https://cloudcode-pa.googleapis.com"
 
 access_token = os.environ.get("CODE_ASSIST_TOKEN", "")
 project_id   = os.environ.get("CODE_ASSIST_PROJECT", "")
-model_env    = os.environ.get("CODE_ASSIST_MODEL", "gemini-3-flash-preview")
+model_env    = os.environ.get("CODE_ASSIST_MODEL", "gemini-2.5-flash")
 tg_token     = os.environ.get("TG_TOKEN", "")
 chat_id      = os.environ.get("CHAT_ID", "")
 message_id   = os.environ.get("MESSAGE_ID", "")

@@ -43,7 +43,7 @@
       "label": "Google-OAuth",
       "provider": "google_cloudcode",
       "key": "",
-      "model": "gemini-3-flash-preview",
+      "model": "gemini-2.5-flash",
       "_note": "No key needed — uses OAuth token from ~/.mix/google_oauth.json. Run /google_login to authenticate."
     },
     {

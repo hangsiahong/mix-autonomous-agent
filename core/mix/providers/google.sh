@@ -819,13 +819,67 @@ print(json.dumps(history))
 _GOOGLE_OAUTH_TOOL="${AMA_DIR:-$(pwd)}/tools/google_oauth.py"
 
 google_cloudcode_activate() {
-  # Base URL is handled by the streaming script; set a placeholder for compatibility
-  BASE_URL="https://cloudcode-pa.googleapis.com/v1internal"
+  # Use a valid but unused BASE_URL — all calls are overridden by
+  # google_cloudcode_call_api and google_cloudcode_call_api_stream.
+  # Without this, call_api() would try BASE_URL+/chat/completions → 404.
+  BASE_URL="https://cloudcode-pa.googleapis.com"
   API_KEY="google-oauth"  # dummy — actual auth is the OAuth Bearer token
+  # Use the best model for this account (stored during /google_login)
+  # Standard/paid tier gets gemini-2.5-pro; free tier gets gemini-2.5-flash
+  local _stored_model
+  _stored_model=$(python3 "${_GOOGLE_OAUTH_TOOL}" model 2>/dev/null)
+  [[ -n "$_stored_model" ]] && MODEL="$_stored_model"
+  # Fallback: free tier default
+  [[ -z "${MODEL:-}" ]] && MODEL="gemini-2.5-flash"
 }
 
 google_cloudcode_get_api_key() {
   python3 "$_GOOGLE_OAUTH_TOOL" token 2>/dev/null
+}
+
+# Non-streaming call used by reflection/recap — hits :generateContent endpoint directly.
+google_cloudcode_call_api() {
+  local sys_prompt_override="$1"
+
+  local payload
+  payload=$(_api_build_payload "false" "$sys_prompt_override") || { echo "FAIL:payload"; return 1; }
+
+  local _token
+  _token=$(python3 "$_GOOGLE_OAUTH_TOOL" token 2>/dev/null)
+  [[ -z "$_token" ]] && { echo "FAIL:google_cloudcode_not_logged_in" >&2; return 1; }
+
+  local _project
+  _project=$(python3 "$_GOOGLE_OAUTH_TOOL" project 2>/dev/null)
+
+  local _model="${MODEL:-gemini-2.5-flash}"
+
+  local _result
+  _result=$(CODE_ASSIST_TOKEN="$_token" \
+    CODE_ASSIST_PROJECT="${_project:-}" \
+    CODE_ASSIST_MODEL="$_model" \
+    python3 -u "$(dirname "${BASH_SOURCE[0]}")/google_cloudcode_stream.py" <<< "$payload" 2>/dev/null)
+
+  if [[ -z "$_result" || "$_result" != *"TC:"* ]]; then
+    echo "FAIL:google_cloudcode_call_api_no_result"
+    return 1
+  fi
+
+  # Convert TC:/TEXT:/USAGE: format → OpenAI-compat JSON for call_api callers
+  python3 -c "
+import json, sys, re
+result = open(sys.argv[1]).read()
+text = ''
+tc_list = []
+m = re.search(r'(?m)^TEXT:(.*)', result, re.DOTALL)
+if m: text = m.group(1).split('\nUSAGE:')[0].split('\nTC:')[0]
+m2 = re.search(r'^TC:(.*)', result, re.MULTILINE)
+if m2:
+    try: tc_list = json.loads(m2.group(1))
+    except: pass
+msg = {'role': 'assistant', 'content': text}
+if tc_list: msg['tool_calls'] = tc_list
+print(json.dumps({'choices': [{'message': msg}]}))
+" <(printf '%s' "$_result") 2>/dev/null
 }
 
 google_cloudcode_call_api_stream() {
@@ -857,7 +911,7 @@ google_cloudcode_call_api_stream() {
   MESSAGE_ID="$message_id" \
   CODE_ASSIST_TOKEN="$_token" \
   CODE_ASSIST_PROJECT="${_project:-}" \
-  CODE_ASSIST_MODEL="${MODEL:-gemini-3-flash-preview}" \
+  CODE_ASSIST_MODEL="${MODEL:-$(python3 "$_GOOGLE_OAUTH_TOOL" model 2>/dev/null || echo 'gemini-2.5-flash')}" \
   python3 -u "$(dirname "${BASH_SOURCE[0]}")/google_cloudcode_stream.py" \
     > "$tmp_out" 2> "$tmp_err" <<< "$payload"
 
