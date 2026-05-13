@@ -7,19 +7,19 @@
       "label": "Google-1",
       "provider": "google",
       "key": "AIzaSy...",
-      "model": "gemini-2.5-flash-preview-04-17"
+      "model": "gemini-3-flash-preview"
     },
     {
       "label": "Google-2",
       "provider": "google",
       "key": "AIzaSy...",
-      "model": "gemini-2.5-flash-preview-04-17"
+      "model": "gemini-3-flash-preview"
     },
     {
       "label": "Google-3",
       "provider": "google",
       "key": "AIzaSy...",
-      "model": "gemini-2.5-flash-preview-04-17"
+      "model": "gemini-3-flash-preview"
     },
     {
       "label": "Z.AI",
@@ -43,7 +43,7 @@
       "label": "Google-OAuth",
       "provider": "google_cloudcode",
       "key": "",
-      "model": "gemini-2.5-flash-preview-04-17",
+      "model": "gemini-3-flash-preview",
       "_note": "No key needed — uses OAuth token from ~/.mix/google_oauth.json. Run /google_login to authenticate."
     },
     {

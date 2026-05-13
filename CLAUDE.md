@@ -72,7 +72,7 @@ Python scripts called from bash history filters must read from `sys.stdin`, not 
 - Gemini 3 thinking models attach `thought_signature` to every `functionCall` part.
 - Must be captured from stream, stored in history, re-sent on subsequent turns.
 - `google_filter_history` pipes via stdin; both native payload builders restore `thoughtSignature`.
-- Config: `PROVIDER=google`, `BASE_URL=...`, `MODEL=gemini-2.5-flash-preview-04-17` (or similar).
+- Config: `PROVIDER=google`, `BASE_URL=...`, `MODEL=gemini-3-flash-preview` (or similar).
 
 ## Toolsets (default loaded each turn)
 - `core`: bash, edit_code, patch, write_file, clarify

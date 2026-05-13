@@ -810,10 +810,10 @@ print(json.dumps(history))
 #
 # Config (.env or brain/provider_pool.json):
 #   PROVIDER=google_cloudcode
-#   MODEL=gemini-2.5-flash-preview-04-17
+#   MODEL=gemini-3-flash-preview
 #
 # Pool entry (no key needed — uses stored OAuth token):
-#   {"label": "Google-Free", "provider": "google_cloudcode", "model": "gemini-2.5-flash-preview-04-17"}
+#   {"label": "Google-Free", "provider": "google_cloudcode", "model": "gemini-3-flash-preview"}
 # ═══════════════════════════════════════════════════════════════════════════════
 
 _GOOGLE_OAUTH_TOOL="${AMA_DIR:-$(pwd)}/tools/google_oauth.py"
@@ -857,7 +857,7 @@ google_cloudcode_call_api_stream() {
   MESSAGE_ID="$message_id" \
   CODE_ASSIST_TOKEN="$_token" \
   CODE_ASSIST_PROJECT="${_project:-}" \
-  CODE_ASSIST_MODEL="${MODEL:-gemini-2.5-flash-preview-04-17}" \
+  CODE_ASSIST_MODEL="${MODEL:-gemini-3-flash-preview}" \
   python3 -u "$(dirname "${BASH_SOURCE[0]}")/google_cloudcode_stream.py" \
     > "$tmp_out" 2> "$tmp_err" <<< "$payload"
 

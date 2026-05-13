@@ -58,7 +58,7 @@ Format:
 {
   "strategy": "fallback",
   "providers": [
-    { "name": "google", "model": "gemini-2.5-flash-preview-04-17", "key": "..." },
+    { "name": "google", "model": "gemini-3-flash-preview", "key": "..." },
     { "name": "deepseek", "model": "deepseek-chat", "key": "..." },
     { "name": "openrouter", "model": "mistralai/mistral-7b-instruct", "key": "..." }
   ]
