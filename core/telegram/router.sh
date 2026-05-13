@@ -405,20 +405,55 @@ import json,os; d=json.load(open('brain/state/titles.json')); print(d.get(os.env
                 # Message count
                 local _msg_count=$(python3 -c "import json; print(len(json.load(open('${DIR}/brain/state/history_${session_id}.json'))))" 2>/dev/null || echo 0)
                 # Active agents & queue depth
-                local _active_agents=$(ls "${DIR}/brain/state"/run_*.pid 2>/dev/null | wc -l)
+                local _active_agents=0
+                for _pf in "${DIR}/brain/state"/run_*.pid; do
+                    [[ -f "$_pf" ]] || continue
+                    _ppid=$(cut -d'|' -f1 "$_pf" 2>/dev/null)
+                    kill -0 "$_ppid" 2>/dev/null && _active_agents=$((_active_agents+1))
+                done
                 local _queue_depth=0
                 [[ -f "${DIR}/brain/state/queue_${session_id}" ]] && _queue_depth=$(wc -l < "${DIR}/brain/state/queue_${session_id}" 2>/dev/null || echo 0)
+                # Delegate tmux sessions
+                local _delegate_info=""
+                _delegate_info=$(python3 -c "
+import os, json, time
+from pathlib import Path
+state = Path('${DIR}/brain/state')
+lines = []
+for meta_f in sorted(state.glob('delegate_ama_*.meta')):
+    session = meta_f.stem.replace('delegate_', '')
+    try:
+        m = json.loads(meta_f.read_text())
+        elapsed = round(time.time() - m.get('started_at', time.time()))
+        goal = m.get('goal','?')[:40]
+        done_f = state / f'delegate_{session}.done'
+        if done_f.exists():
+            status = '✅' if done_f.read_text().strip() == '0' else '❌'
+        else:
+            import subprocess
+            alive = subprocess.run(['tmux','has-session','-t',session],
+                                   capture_output=True).returncode == 0
+            status = '⏳' if alive else '💥'
+        lines.append(f'  {status} <code>{session}</code> ({elapsed}s) — {goal}')
+    except Exception:
+        pass
+print('\n'.join(lines) if lines else '')
+" 2>/dev/null)
                 # Model override
                 local _cur_model="${MODEL:-unknown}"
                 [[ -f "${DIR}/brain/state/model_${session_id}" ]] && _cur_model="$(cat "${DIR}/brain/state/model_${session_id}")* (override)"
                 local _sysinfo=$(bash tools/sys_info.sh 2>/dev/null || true)
+                local _delegate_block=""
+                [[ -n "$_delegate_info" ]] && _delegate_block="
+<b>Delegate tasks:</b>
+${_delegate_info}"
                 tg_send "$chat_id" "<b>Status</b>
 <b>Session:</b> <code>$session_id</code> (${_sess_age}, ${_msg_count} msgs)
 <b>Title:</b> ${_title}
 <b>Provider:</b> ${PROVIDER:-default}  <b>Model:</b> <code>${_cur_model}</code>
 <b>Skill:</b> ${skill:-none}  <b>Type:</b> $chat_type
 <b>Active agents:</b> ${_active_agents}  <b>Queued:</b> ${_queue_depth}
-<b>User:</b> ${username:-$user_id}
+<b>User:</b> ${username:-$user_id}${_delegate_block}
 
 ${_sysinfo}" "$thread_id" "HTML"
                 ;;
