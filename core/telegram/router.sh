@@ -646,11 +646,15 @@ Use <code>/skill &lt;name&gt;</code> to bind a skill." "$thread_id" "HTML"
                 if [[ ! -f "$_oauth_tool" ]]; then
                     tg_send "$chat_id" "google_oauth.py not found. Update your installation." "$thread_id"
                 elif [[ "$(python3 "$_oauth_tool" status 2>/dev/null)" == logged_in* && "$args" != "force" ]]; then
-                    local _gl_status _gl_email _gl_project
+                    local _gl_status _gl_email
                     _gl_status=$(python3 "$_oauth_tool" status 2>/dev/null)
                     _gl_email=$(echo "$_gl_status" | grep -oP 'email=\K\S+')
-                    _gl_project=$(echo "$_gl_status" | grep -oP 'project=\K\S+')
-                    tg_send "$chat_id" "✅ Already logged in as <code>${_gl_email}</code> (project: <code>${_gl_project}</code>)\n\nTo re-login: /google_login force\nTo add to pool: add <code>{\"provider\": \"google_cloudcode\", \"model\": \"gemini-2.5-flash-preview-04-17\"}</code> to <code>brain/provider_pool.json</code>" "$thread_id" "HTML"
+                    tg_send "$chat_id" "✅ <b>Already logged in</b>
+Account: <code>${_gl_email}</code>
+
+Next step — tell me: <i>add this Google account to my provider pool</i> and I'll configure it automatically.
+
+Or to re-login with a different account: /google_login force" "$thread_id" "HTML"
                 else
                     local _auth_url
                     _auth_url=$(python3 "$_oauth_tool" init 2>/dev/null)
@@ -664,10 +668,10 @@ Use <code>/skill &lt;name&gt;</code> to bind a skill." "$thread_id" "HTML"
 
 2. Sign in with your Google account and allow access.
 
-3. Google will redirect to <code>localhost:8085</code> which won't load — that's expected. Copy the <b>full URL from your browser address bar</b>.
+3. Google will redirect to <code>localhost:8085</code> — that's expected (page won't load). Copy the <b>full URL</b> from the address bar.
 
-4. Send it back as:
-<code>/google_login_callback &lt;paste URL here&gt;</code>" "$thread_id" "HTML"
+4. Paste it back as:
+<code>/google_login_callback &lt;url&gt;</code>" "$thread_id" "HTML"
                     fi
                 fi
                 ;;
@@ -680,25 +684,23 @@ Use <code>/skill &lt;name&gt;</code> to bind a skill." "$thread_id" "HTML"
                     tg_send "$chat_id" "Usage: /google_login_callback &lt;redirect URL or code&gt;" "$thread_id" "HTML"
                 else
                     tg_send "$chat_id" "⏳ Exchanging authorization code…" "$thread_id"
-                    local _finish_out _finish_err _finish_tmp
+                    local _finish_out _finish_tmp
                     _finish_tmp=$(mktemp)
                     python3 "$_oauth_tool" finish "$_callback_val" >"$_finish_tmp" 2>/dev/null
                     _finish_out=$(cat "$_finish_tmp"); rm -f "$_finish_tmp"
                     if [[ "$_finish_out" == OK* ]]; then
-                        local _fc_email _fc_project
+                        local _fc_email
                         _fc_email=$(echo "$_finish_out" | grep -oP 'email=\K\S+')
-                        _fc_project=$(echo "$_finish_out" | grep -oP 'project=\K[^\s]+')
-                        local _pool_entry="{\"label\": \"Google-OAuth-${_fc_email%%@*}\", \"provider\": \"google_cloudcode\", \"model\": \"gemini-2.5-flash-preview-04-17\"}"
                         tg_send "$chat_id" "✅ <b>Logged in!</b>
-Email: <code>${_fc_email}</code>
-Project: <code>${_fc_project:-auto}</code>
+Account: <code>${_fc_email}</code>
 
-Add this to <code>brain/provider_pool.json</code>:
-<pre>${_pool_entry}</pre>
-
-Or tell me: <i>add this Google account to my provider pool</i> and I'll do it for you." "$thread_id" "HTML"
+Now tell me: <i>add this Google account to my provider pool</i> and I'll configure it automatically." "$thread_id" "HTML"
                     else
-                        tg_send "$chat_id" "❌ Login failed: <code>${_finish_out}</code>\n\nTry /google_login again." "$thread_id" "HTML"
+                        tg_send "$chat_id" "❌ Login failed.
+
+<code>${_finish_out}</code>
+
+Try /google_login again." "$thread_id" "HTML"
                     fi
                 fi
                 ;;
