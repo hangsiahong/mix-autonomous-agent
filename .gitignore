@@ -60,3 +60,5 @@ node_modules/
 # ── Agent-generated output ─────────────────────────────────────────────────────
 max_agent_site*.html
 mix_agent.html
+
+*.html
