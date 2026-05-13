@@ -158,7 +158,8 @@ print(json.dumps(combined))
 /model &lt;name&gt; — switch model this session
 /skill &lt;name&gt; — activate a skill • /skill off to clear
 /skills — list available skills
-/providers — show provider pool status
+/providers — show all providers (main + pool) with status
+/models — list available models • /models &lt;name&gt; to switch
 /google_login — connect Google account (OAuth, free tier)
 /google_login_callback &lt;url&gt; — complete Google login
 
@@ -335,9 +336,52 @@ else:
                 local _pool_status
                 _pool_status=$(pool_status_html 2>/dev/null)
                 if [[ -z "$_pool_status" ]]; then
-                    tg_send "$chat_id" "No provider pool configured.\n\nCopy <code>brain/provider_pool.json.example</code> to <code>brain/provider_pool.json</code> and fill in your API keys." "$thread_id" "HTML"
+                    tg_send "$chat_id" "No providers configured.
+
+Copy <code>brain/provider_pool.json.example</code> to <code>brain/provider_pool.json</code> and fill in your keys." "$thread_id" "HTML"
                 else
                     tg_send "$chat_id" "$_pool_status" "$thread_id" "HTML"
+                fi
+                ;;
+
+            /models)
+                # List available models for each provider, or switch model
+                local _models_arg="$args"
+                if [[ -n "$_models_arg" ]]; then
+                    # Switch model — store as session override
+                    mkdir -p "${DIR}/brain/state"
+                    printf '%s' "$_models_arg" > "${DIR}/brain/state/model_${session_id}"
+                    tg_send "$chat_id" "✅ Model switched to <code>${_models_arg}</code> for this session.
+Use <code>/model default</code> to reset." "$thread_id" "HTML"
+                else
+                    # List available models per provider
+                    local _cur_model="${MODEL:-?}"
+                    [[ -f "${DIR}/brain/state/model_${session_id}" ]] && _cur_model=$(cat "${DIR}/brain/state/model_${session_id}" 2>/dev/null)
+                    local _cur_provider="${PROVIDER:-default}"
+                    local _cloudcode_models=""
+                    if [[ -f "${DIR}/tools/google_oauth.py" ]]; then
+                        _cloudcode_models=$(python3 "${DIR}/tools/google_oauth.py" quota 2>/dev/null | grep -oP '^\s+\K\S+(?=\s+█)' | head -10 | tr '\n' ' ')
+                    fi
+                    tg_send "$chat_id" "<b>Current:</b> <code>${_cur_provider}/${_cur_model}</code>
+
+<b>Switch:</b> <code>/models &lt;model-name&gt;</code>
+
+<b>Google (Vertex / main):</b>
+• <code>gemini-3-flash-preview</code>
+• <code>gemini-2.5-pro</code>
+• <code>gemini-2.0-flash-exp</code>
+
+<b>Google OAuth (Code Assist):</b>
+${_cloudcode_models:+$(echo "$_cloudcode_models" | tr ' ' '\n' | sed 's/^/• <code>/;s/$/<\/code>/' | head -7 | tr '\n' '\n')}
+
+<b>DeepSeek:</b>  <code>deepseek-chat</code>  <code>deepseek-reasoner</code>
+<b>Groq:</b>      <code>llama-3.3-70b-versatile</code>  <code>gemma2-9b-it</code>
+<b>Mistral:</b>   <code>mistral-large-latest</code>  <code>codestral-latest</code>
+<b>ZAI:</b>       <code>glm-4-plus</code>  <code>glm-4-flash</code>
+<b>MiniMax:</b>   <code>MiniMax-M1</code>
+<b>OpenRouter:</b> <code>/models openrouter/MODEL_SLUG</code>
+
+<i>Provider pool entries are managed via /providers</i>" "$thread_id" "HTML"
                 fi
                 ;;
 

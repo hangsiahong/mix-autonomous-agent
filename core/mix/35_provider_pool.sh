@@ -154,21 +154,46 @@ open(f, 'w').write(json.dumps(d))
 }
 
 # Returns formatted HTML status string for /providers command
+# Shows both the main provider (from env) AND all pool entries.
 pool_status_html() {
-    [[ "$(pool_is_enabled)" != "true" ]] && echo "No pool configured." && return 0
+    local _main_provider="${PROVIDER:-default}"
+    local _main_model="${MODEL:-?}"
 
+    # Resolve actual model for google_cloudcode from stored OAuth creds
+    local _cloudcode_model=""
+    if [[ -f "tools/google_oauth.py" ]]; then
+        _cloudcode_model=$(python3 tools/google_oauth.py model 2>/dev/null)
+    fi
+
+    MAIN_PROVIDER="$_main_provider" \
+    MAIN_MODEL="$_main_model" \
+    CLOUDCODE_MODEL="$_cloudcode_model" \
     python3 - <<'PYEOF' 2>/dev/null
 import json, time, os
 
 pool_file = 'brain/provider_pool.json'
 limits_file = 'brain/state/pool_limits.json'
+main_provider = os.environ.get('MAIN_PROVIDER', 'default')
+main_model    = os.environ.get('MAIN_MODEL', '?')
+cloudcode_model = os.environ.get('CLOUDCODE_MODEL', '')
 
+lines = []
+
+# ── Main provider (not in pool) ──────────────────────────────────────────────
+if main_provider and main_provider != 'default':
+    lines.append(f"<b>Main Provider</b>")
+    lines.append(f"✅ <code>{main_provider}</code>  {main_model}  [active]\n")
+
+# ── Pool entries ─────────────────────────────────────────────────────────────
 try:
     data = json.load(open(pool_file))
     pool = data.get('pool', [])
     strategy = data.get('strategy', 'fallback')
 except Exception:
-    print("Error reading pool config.")
+    if lines:
+        print("\n".join(lines))
+    else:
+        print("No pool configured. Add entries to brain/provider_pool.json")
     import sys; sys.exit(0)
 
 limits = {}
@@ -178,23 +203,27 @@ except Exception:
     pass
 
 now = time.time()
-lines = [f"<b>Provider Pool</b>  strategy: <code>{strategy}</code>  ({len(pool)} entries)\n"]
+lines.append(f"<b>Provider Pool</b>  strategy: <code>{strategy}</code>  ({len(pool)} entries)")
 
 for i, entry in enumerate(pool):
-    label = entry.get('label', f'pool-{i}')
+    label    = entry.get('label', f'pool-{i}')
     provider = entry.get('provider', '?')
-    model = (entry.get('model', '') or '')[:28]
-    key = entry.get('key', '')
+    model    = entry.get('model', '') or ''
+
+    # For google_cloudcode: show actual stored model (may differ from pool config)
+    if provider == 'google_cloudcode' and cloudcode_model:
+        model = cloudcode_model
+
+    model = model[:32]
+    key   = entry.get('key', '')
     key_hint = f"…{key[-5:]}" if len(key) >= 5 else ''
 
     limited_until = float(limits.get(str(i), 0))
     if limited_until > now:
         secs = int(limited_until - now)
-        icon = '🔴'
-        status = f"limited {secs}s"
+        icon, status = '🔴', f"limited {secs}s"
     else:
-        icon = '✅'
-        status = 'active'
+        icon, status = '✅', 'active'
 
     model_str = f"/{model}" if model else ''
     lines.append(f"{icon} <code>{label}</code>  {provider}{model_str}  {key_hint}  [{status}]")
