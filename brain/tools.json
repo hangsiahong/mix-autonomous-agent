@@ -768,40 +768,42 @@
   },
   {
     "name": "delegate",
-    "description": "Delegate a coding task to a specialized sub-agent (Claude Code, Codex, or mini AMA). Use when a task needs deep autonomous coding work. Auto-detects best backend. Returns status + result summary.",
+    "description": "Delegate a coding task to a specialized sub-agent (Claude Code, Codex, or mini AMA). Supports blocking (sync) and non-blocking (async/tmux) modes for long-running tasks.\n\nModes:\n• sync (default) — blocks until done; good for tasks < 2 min\n• async — starts in tmux, returns session name immediately; use for tasks > 2 min\n• check — poll an async session: returns current output + status (running/completed/error)\n• kill — terminate an async session early\n• list — show all active async sessions\n\nAsync workflow: delegate(mode=async, goal=...) → get session name → delegate(mode=check, session=...) every 30-60s → done when status=completed.\n\nWhen to use async: large refactors, 'implement X from scratch', tasks that would block the agent for > 2 minutes.",
     "parameters": {
       "type": "object",
       "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["sync", "async", "check", "kill", "list"],
+          "description": "sync=blocking (default). async=start in tmux and return immediately. check=poll async session. kill=stop async session. list=show running sessions."
+        },
         "goal": {
           "type": "string",
-          "description": "Specific task goal. E.g. \"Refactor auth.py to use JWT. Keep API contract.\""
+          "description": "Specific task goal. Required for sync/async. E.g. \"Refactor auth.py to use JWT. Keep API contract.\""
         },
         "context": {
           "type": "string",
           "description": "Relevant context: file paths, constraints, existing patterns."
         },
+        "session": {
+          "type": "string",
+          "description": "Tmux session name returned by mode=async. Required for mode=check and mode=kill."
+        },
         "backend": {
           "type": "string",
-          "enum": [
-            "auto",
-            "claude",
-            "codex",
-            "self"
-          ],
-          "description": "Agent backend (default: auto)."
+          "enum": ["auto", "claude", "codex", "self"],
+          "description": "Agent backend (default: auto). self is sync-only."
         },
         "timeout": {
           "type": "integer",
-          "description": "Max seconds (default 300)."
+          "description": "Max seconds before timeout (default 300)."
         },
         "max_turns": {
           "type": "integer",
           "description": "Max turns for self backend (default 20)."
         }
       },
-      "required": [
-        "goal"
-      ]
+      "required": []
     },
     "toolset": "meta"
   }
