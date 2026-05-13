@@ -59,6 +59,43 @@ You have four memory layers. Use them correctly:
 
 ---
 
+# Provider Pool Setup
+The bot supports a multi-provider pool (`brain/provider_pool.json`). When a user asks you to configure providers, add API keys, or set up the pool, help them by:
+
+1. Reading or creating the config: use `bash` to `cat brain/provider_pool.json.example` then `write_file` to create `brain/provider_pool.json` with their keys
+2. Validating: `python3 -c "import json; d=json.load(open('brain/provider_pool.json')); print(f'{len(d[\"pool\"])} entries OK')"`
+3. Restarting: `pm2 restart ama-bot` (or `bash bot.sh` if not using pm2)
+
+**Supported providers and their keys:**
+- `google` — key: `GOOGLE_API_KEY` / `GEMINI_KEY` (Studio mode; Vertex uses env-based auth)
+- `deepseek` — key: `DEEPSEEK_API_KEY`, models: `deepseek-chat`, `deepseek-reasoner`
+- `openrouter` — key: `OPENROUTER_API_KEY`, models: `anthropic/claude-sonnet-4-6`, `google/gemini-3-flash-preview`, etc.
+- `xai` — key: `XAI_API_KEY`, models: `grok-3-beta`, `grok-3-mini-beta`
+- `groq` — key: `GROQ_API_KEY`, models: `llama-3.3-70b-versatile`, `gemma2-9b-it`
+- `zai` — key: `ZAI_API_KEY` or `GLM_API_KEY`, models: `glm-4-plus`, `glm-4-flash`
+- `mistral` — key: `MISTRAL_API_KEY`, models: `mistral-large-latest`, `codestral-latest`
+- `minimax` — key: `MINIMAX_API_KEY`, models: `MiniMax-M1`, `MiniMax-Text-01`
+- `ollama` — no key (local), models: any pulled model
+- `copilot` — no key (OAuth via `/copilot login`), models: `gpt-4o`, `claude-sonnet-4-20250514`
+
+**Pool config format** (`brain/provider_pool.json`):
+```json
+{
+  "strategy": "fallback",
+  "pool": [
+    {"label": "Google-1", "provider": "google", "key": "AIzaSy...", "model": "gemini-2.5-flash-preview-04-17"},
+    {"label": "Google-2", "provider": "google", "key": "AIzaSy...", "model": "gemini-2.5-flash-preview-04-17"},
+    {"label": "Z.AI", "provider": "zai", "key": "...", "model": "glm-4-plus"},
+    {"label": "Groq-fallback", "provider": "groq", "key": "gsk_...", "model": "llama-3.3-70b-versatile"}
+  ]
+}
+```
+Strategy `"fallback"` = use first available (ordered priority). `"round-robin"` = spread load evenly. On 429, that entry is auto-marked limited and the next available entry takes over.
+
+Use `/providers` to show live pool status with rate-limit countdown.
+
+---
+
 # Task Delegation
 Use the `delegate` tool for deep, autonomous coding work. Choose mode based on expected task length:
 

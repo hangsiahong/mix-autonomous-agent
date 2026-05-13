@@ -10,7 +10,7 @@ A self-evolving autonomous agent that lives in Telegram. Pure Bash harness, 30+ 
 - Linux / macOS
 - `bash`, `curl`, `python3`
 - A Telegram bot token from [@BotFather](https://t.me/BotFather)
-- An LLM API key (Google Vertex AI, Gemini API, Anthropic, or OpenAI)
+- An LLM API key (Google Vertex AI, Gemini API, Anthropic, OpenAI, DeepSeek, OpenRouter, xAI/Grok, Groq, Zai/GLM, Mistral, MiniMax, or local Ollama/Copilot)
 
 ### Install
 ```bash
@@ -43,6 +43,31 @@ MODEL=gemini-3-flash-preview
 # Optional fallback if primary provider fails
 FALLBACK_PROVIDER=default:gpt-4o-mini
 ```
+
+#### Provider Pool (optional)
+
+Pool multiple API keys or accounts per provider, with automatic rotation on rate limits:
+
+```bash
+cp brain/provider_pool.json.example brain/provider_pool.json
+# Edit brain/provider_pool.json with your keys
+```
+
+Format:
+```json
+{
+  "strategy": "fallback",
+  "providers": [
+    { "name": "google", "model": "gemini-2.5-flash-preview-04-17", "key": "..." },
+    { "name": "deepseek", "model": "deepseek-chat", "key": "..." },
+    { "name": "openrouter", "model": "mistralai/mistral-7b-instruct", "key": "..." }
+  ]
+}
+```
+
+Strategies:
+- `fallback` — try providers in order; advance on error/rate-limit
+- `round-robin` — distribute requests evenly across all entries
 
 Other useful env vars:
 ```env
@@ -97,6 +122,7 @@ docker logs -f ama
 | Command | Description |
 |---------|-------------|
 | `/model <name>` | Switch model for this session (`/model default` to reset) |
+| `/providers` | Show provider pool status and rate limits |
 | `/skill <name>` | Activate a skill for this session |
 | `/skill off` | Clear active skill |
 | `/skills` | List all available skills |
@@ -160,6 +186,7 @@ core/
     30_compression.sh     Context compression (token-based, hermes format)
     32_usage.sh           Token usage logging + SQLite sync
     34_error_classifier.sh HTTP error → retry/fallback classification
+    35_provider_pool.sh   Multi-provider pool with auto-routing
     36_think_scrubber.sh  Strip thinking blocks from response
     38_rate_limit.sh      Per-provider backoff tracking
     40_trajectory.sh      Session metadata log
@@ -168,6 +195,13 @@ core/
       google_stream.py    Native Gemini SSE streaming + retry
       ollama.sh           Local Ollama provider
       copilot.sh          GitHub Copilot OAuth provider
+      deepseek.sh         OpenAI-compatible provider shim
+      groq.sh             OpenAI-compatible provider shim
+      minimax.sh          OpenAI-compatible provider shim
+      mistral.sh          OpenAI-compatible provider shim
+      openrouter.sh       OpenAI-compatible provider shim
+      xai.sh              OpenAI-compatible provider shim
+      zai.sh              OpenAI-compatible provider shim
   telegram/
     api.sh                tg_send, tg_edit, tg_react, tg_download (with timeout)
     media.sh              Photo/voice/video download and base64 encoding
@@ -218,7 +252,8 @@ extensions/
 
 ### Reliability
 - **Stream retry**: Auto-reconnects once on network drop before showing error
-- **Provider fallback chain**: `FALLBACK_PROVIDER=provider:model` activates on 2nd retry
+- **Provider fallback chain**: `FALLBACK_PROVIDER=provider:model` activates on 2nd retry; pools chain through all entries automatically
+- **Multi-provider pool**: `brain/provider_pool.json` — pool multiple keys/accounts per provider, auto-rotate on rate limit, strategies: `fallback` or `round-robin`
 - **Agent process cap**: Rejects new messages when `MAX_CONCURRENT_AGENTS` exceeded
 - **Atomic writes**: History, config use `mktemp + mv` to prevent corruption
 - **Compression**: Token-based trigger (80K), hermes-style 7-section summary
