@@ -42,14 +42,17 @@ trap 'rm -f "$LOCK_FILE"; exit 0' EXIT INT TERM
 echo "AMA Bot Starting..."
 tg_set_commands
 
-# Recover tools.json if a previous instance was killed mid-reflection/recap
-# (those functions swap tools.json to [] and restore via trap; SIGKILL skips traps)
+# Recover tools.json if it was wiped (e.g. old bot killed mid-reflection before this fix)
 _tools_cur=$(python3 -c "import json; d=json.load(open('brain/tools.json')); print(len(d))" 2>/dev/null || echo 0)
 if [[ "$_tools_cur" -eq 0 ]]; then
+    # Try legacy .bak file first, then fall back to git
     _latest_bak=$(ls -t brain/tools.json.bak.* 2>/dev/null | head -1)
     if [[ -n "$_latest_bak" ]]; then
-        echo "AMA: Recovering tools.json from $_latest_bak (was wiped by killed reflection)"
+        echo "AMA: Recovering tools.json from backup"
         mv "$_latest_bak" brain/tools.json
+    else
+        echo "AMA: tools.json is empty — restoring from git"
+        git checkout brain/tools.json 2>/dev/null || true
     fi
 fi
 rm -f brain/tools.json.bak.* 2>/dev/null || true

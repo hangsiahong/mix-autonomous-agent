@@ -34,12 +34,11 @@ save_session_recap() {
 Rules: Be concise. Total under 200 words. No preamble. Respond ONLY with the structured document."
 
     local saved_history="$HISTORY"
-    local _saved_tools; _saved_tools=$(cat brain/tools.json 2>/dev/null || echo '[]')
-    # Use trap so tools.json is ALWAYS restored — on normal return, signal, or crash
-    local _recap_tools_bak; _recap_tools_bak=$(mktemp "brain/tools.json.bak.XXXXXX")
-    printf '%s' "$_saved_tools" > "$_recap_tools_bak"
-    printf '[]' > brain/tools.json
-    trap 'mv "$_recap_tools_bak" brain/tools.json 2>/dev/null; HISTORY="$saved_history"' EXIT INT TERM
+    # Use AMA_TOOLS_OVERRIDE to pass [] without touching brain/tools.json.
+    # Avoids the race condition where concurrent reflect_turn reads [] as its backup.
+    local _saved_override="${AMA_TOOLS_OVERRIDE:-}"
+    export AMA_TOOLS_OVERRIDE="[]"
+    trap 'export AMA_TOOLS_OVERRIDE="$_saved_override"; HISTORY="$saved_history"' EXIT INT TERM
 
     local _sp_tmp; _sp_tmp=$(mktemp)
     printf '%s' "$recap_prompt" > "$_sp_tmp"
@@ -148,12 +147,13 @@ If there is nothing worth noting, respond with exactly: NO_ACTION
     local temp_history="$HISTORY"
 
     # Override HISTORY to only include safe/read-only tools for reflection
+    # Build safe tool subset from the real tools.json (before any override)
+    local _real_tools; _real_tools=$(cat brain/tools.json 2>/dev/null || echo '[]')
     local _safe_tools
     _safe_tools=$(python3 -c "
 import json, sys
 try:
-    tools = json.load(open('brain/tools.json'))
-    # Reflection allowed: read-only + memory + diagnostic tools
+    tools = json.loads(sys.argv[1])
     allowed = {'memory_remember','memory_recall','session_search','memory',
                'read_error_log','check_health','sys_info','insights',
                'search_files','web_search','fetch_url','todo','clarify'}
@@ -161,15 +161,13 @@ try:
     print(json.dumps(safe, separators=(',',':')))
 except:
     print('[]')
-" 2>/dev/null)
+" "$_real_tools" 2>/dev/null)
 
-    # Call API (Non-streaming for reflection)
-    # T1-5: Use a unique per-process backup path so concurrent reflection calls
-    # don't stomp each other, and always restore via trap (survives crashes/kills)
-    local _tools_bak; _tools_bak=$(mktemp "brain/tools.json.bak.XXXXXX")
-    cp brain/tools.json "$_tools_bak" 2>/dev/null || true
-    printf '%s' "$_safe_tools" > brain/tools.json
-    trap 'mv "$_tools_bak" brain/tools.json 2>/dev/null; HISTORY="$temp_history"' EXIT INT TERM
+    # Use AMA_TOOLS_OVERRIDE instead of touching brain/tools.json —
+    # eliminates the race condition with concurrent save_session_recap
+    local _saved_override="${AMA_TOOLS_OVERRIDE:-}"
+    export AMA_TOOLS_OVERRIDE="$_safe_tools"
+    trap 'export AMA_TOOLS_OVERRIDE="$_saved_override"; HISTORY="$temp_history"' EXIT INT TERM
 
     local turn=0
     while [ "$turn" -lt 5 ]; do

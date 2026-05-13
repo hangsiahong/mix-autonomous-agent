@@ -147,12 +147,16 @@ ${system_prompt}"
   # brain/tools_extra.json (gitignored) holds agent-added custom tools.
   # It is merged at runtime so upstream brain/tools.json never conflicts.
   local _all_tools
-  _all_tools=$(python3 -c "
+  # AMA_TOOLS_OVERRIDE: reflection/recap use this to pass their own tool subset
+  # without touching the shared brain/tools.json (prevents race condition corruption)
+  if [[ -n "${AMA_TOOLS_OVERRIDE:-}" ]]; then
+    _all_tools="$AMA_TOOLS_OVERRIDE"
+  else
+    _all_tools=$(python3 -c "
 import json, sys
 base = json.load(open('brain/tools.json'))
 try:
     extra = json.load(open('brain/tools_extra.json'))
-    # Merge: extra tools that aren't already in base (by name)
     base_names = {t.get('name') for t in base}
     base += [t for t in extra if t.get('name') not in base_names]
 except FileNotFoundError:
@@ -161,6 +165,7 @@ except Exception as e:
     sys.stderr.write(f'tools_extra merge warning: {e}\n')
 print(json.dumps(base))
 " 2>/dev/null || cat brain/tools.json)
+  fi
   local _default_ts
   _default_ts=$(python3 -c "
 import json, sys
