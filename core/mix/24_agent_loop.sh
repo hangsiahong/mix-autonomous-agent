@@ -44,14 +44,14 @@ run_agent() {
         # to the RUNNING process, never a queued one that hasn't started yet
         flock -x 200
         echo "$_agent_pid|${msg_id}|${chat_id}|${thread_id}" > "$pid_file"
-        trap 'rm -f "$pid_file"' EXIT INT TERM
+        trap 'rm -f "$pid_file"; exit 0' INT TERM
+        trap 'rm -f "$pid_file"' EXIT
 
         # Stop flag handling:
         # - Queued processes: /stop was issued while waiting → exit immediately
         # - Non-queued (fresh start): clean up any stale flag and continue normally
         if [[ "$initial_status" == "Queued" && -f "$stop_flag" ]]; then
-            rm -f "$stop_flag"
-            tg_edit "$chat_id" "$msg_id" "🛑 <i>Stopped.</i>" "HTML" > /dev/null 2>&1
+            ( tg_edit "$chat_id" "$msg_id" "🛑 <i>Stopped.</i>" "HTML" > /dev/null 2>&1 & )
             exit 0
         else
             rm -f "$stop_flag" 2>/dev/null || true  # clean up stale flag from prior /stop
@@ -122,7 +122,7 @@ run_agent() {
             
             if [[ -z "$result" || "$result" == "FAIL:"* ]]; then
                 local err_info="${result#FAIL:}"
-                tg_edit "$chat_id" "$msg_id" "Error: Failed to get response from AI. ${err_info:-'Please try again later.'}"
+                tg_edit "$chat_id" "$msg_id" "Error: Failed to get response from AI. ${err_info:-'Please try again later.'}" > /dev/null 2>&1
                 break
             fi
 
@@ -257,7 +257,8 @@ print('<i>Thinking…</i>\n' + '\n'.join(lines) if lines else '⏳ <i>Thinking�
     ) 200>"$lock_file"
 
     # Process queued message after lock is released (hermes /queue pattern)
-    if [[ -f "$queue_file" ]]; then
+    # Check stop flag again just in case a /stop hit right as the lock released
+    if [[ -f "$queue_file" && ! -f "$stop_flag" ]]; then
         local _queued_text
         _queued_text=$(head -1 "$queue_file" 2>/dev/null)
         # Pop the first line

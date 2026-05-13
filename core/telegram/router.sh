@@ -520,6 +520,19 @@ Use <code>/skill &lt;name&gt;</code> to bind a skill." "$thread_id" "HTML"
                 fi
                 ;;
             /stop)
+                kill_tree() {
+                    local _pid=$1
+                    local _pids="$_pid"
+                    get_children() {
+                        local _parent=$1
+                        for _child in $(pgrep -P "$_parent" 2>/dev/null); do
+                            _pids="$_pids $_child"
+                            get_children "$_child"
+                        done
+                    }
+                    get_children "$_pid"
+                    kill -TERM $_pids 2>/dev/null || true
+                }
                 local _stop_args=$(echo "$args" | awk '{print $1}')
                 if [[ "$_stop_args" == "all" ]]; then
                     # /stop all — kill every running session + flag all queued ones
@@ -531,12 +544,12 @@ Use <code>/skill &lt;name&gt;</code> to bind a skill." "$thread_id" "HTML"
                         _sf="${_sf##*/run_}"
                         # Set stop flag so any queued process for this session exits too
                         touch "${DIR}/brain/state/stop_${_sf}" 2>/dev/null || true
+                        rm -f "${DIR}/brain/state/queue_${_sf}" 2>/dev/null || true
                         local _pf_data; _pf_data=$(cat "$_pf" 2>/dev/null) || continue
                         local _ppid _pmsg _pchat _pthread
                         IFS='|' read -r _ppid _pmsg _pchat _pthread <<< "$_pf_data"
                         if kill -0 "$_ppid" 2>/dev/null; then
-                            kill -TERM "$_ppid" 2>/dev/null || true
-                            pkill -TERM -P "$_ppid" 2>/dev/null || true
+                            kill_tree "$_ppid"
                             if [[ -n "$_pmsg" && "$_pmsg" != "pending" && -n "$_pchat" ]]; then
                                 tg_edit "$_pchat" "$_pmsg" "🛑 <i>Stopped.</i>" "HTML" > /dev/null 2>&1 || true
                             fi
@@ -544,6 +557,8 @@ Use <code>/skill &lt;name&gt;</code> to bind a skill." "$thread_id" "HTML"
                         fi
                         rm -f "$_pf"
                     done
+                    # Also clear any orphaned queues
+                    rm -f "${DIR}/brain/state"/queue_* 2>/dev/null || true
                     if [[ "$_stopped" -gt 0 ]]; then
                         tg_send "$chat_id" "🛑 Stopped $_stopped running task(s)." "$thread_id"
                     else
@@ -556,15 +571,14 @@ Use <code>/skill &lt;name&gt;</code> to bind a skill." "$thread_id" "HTML"
                     # Always set stop flag first — catches queued processes that get the
                     # lock AFTER we kill the running one (they check the flag and exit)
                     touch "$stop_flag"
+                    rm -f "${DIR}/brain/state/queue_${session_id}" 2>/dev/null || true
                     if [[ -f "$pid_file" ]]; then
                         local _pid_data; _pid_data=$(cat "$pid_file" 2>/dev/null)
                         local run_pid _msg_id _orig_chat _orig_thread
                         IFS='|' read -r run_pid _msg_id _orig_chat _orig_thread <<< "$_pid_data"
                         echo "AMA: Stopping session $session_id (PID $run_pid)"
-                        # Kill the agent process only (NOT its process group, which would kill bot.sh)
-                        kill -TERM "$run_pid" 2>/dev/null || true
-                        sleep 0.3
-                        pkill -TERM -P "$run_pid" 2>/dev/null || true
+                        # Kill the agent process tree (NOT its process group, which would kill bot.sh)
+                        kill_tree "$run_pid"
                         rm -f "$pid_file"
                         # Edit the dangling "Thinking…" or "Working…" bot message
                         if [[ -n "$_msg_id" && "$_msg_id" != "pending" ]]; then
