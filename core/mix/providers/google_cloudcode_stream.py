@@ -248,6 +248,13 @@ for attempt in range(1, MAX_ATTEMPTS + 1):
                 if r.status_code in (429, 503) and attempt < MAX_ATTEMPTS:
                     time.sleep(2 ** attempt)
                     continue
+                if r.status_code == 404 and model != "gemini-2.5-flash" and attempt < MAX_ATTEMPTS:
+                    # Model not deployed — auto-fallback to safe default
+                    sys.stderr.write(f"Model {model} not found, falling back to gemini-2.5-flash\n")
+                    model = "gemini-2.5-flash"
+                    wrapped["model"] = model
+                    attempt += 1
+                    continue
                 sys.exit(1)
 
             for raw_line in r.iter_lines():

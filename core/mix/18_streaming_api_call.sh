@@ -19,7 +19,8 @@ call_api_stream() {
             if [[ $_ret -eq 0 ]]; then return 0; fi
             # Stream failed — if pool has another entry, rotate and retry
             if [[ "$(pool_is_enabled)" == "true" && "$attempt" -lt "$max_attempts" ]]; then
-                pool_mark_limited "${_POOL_IDX:-}" 60
+                # Only mark rate-limited for actual rate limits, not model errors
+                # (pool_mark_limited for model 404s just wastes 60s)
                 local _delay=$((2 ** attempt))
                 echo "AMA: Stream failed for pool entry ${_POOL_IDX:-}, retrying in ${_delay}s..." >&2
                 sleep "$_delay"
