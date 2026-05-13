@@ -62,3 +62,6 @@ max_agent_site*.html
 mix_agent.html
 
 *.html
+
+project*
+ama-website
