@@ -85,6 +85,8 @@ run_agent() {
                 local topic_name=$(python3 -c "import json,sys; print(json.loads(open(sys.argv[1]).read()).get('name',''))" <(printf '%s' "$topic_config") 2>/dev/null)
                 [[ -n "$topic_name" ]] && context_prompt+="- **Topic Name**: $topic_name\n"
             fi
+            # Fall back to DEFAULT_SKILL when no per-session or topic skill is set
+            [[ -z "$skill" && -n "${DEFAULT_SKILL:-}" ]] && skill="$DEFAULT_SKILL"
         fi
         [[ -n "$skill" ]] && context_prompt+="- **Active Skill**: $skill\n"
 

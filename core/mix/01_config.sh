@@ -26,6 +26,7 @@ MAX_TURNS=30
 MAX_HIST_MSGS=40
 STREAM="${STREAM:-true}"
 GIT_ENABLED=false
+DEFAULT_SKILL="${DEFAULT_SKILL:-ama}"  # loaded when no /skill is active for a session
 
 # Telegram Config
 TG_TOKEN="${TG_TOKEN}"

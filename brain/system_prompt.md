@@ -60,11 +60,16 @@ You have four memory layers. Use them correctly:
 ---
 
 # Provider Pool Setup
-The bot supports a multi-provider pool (`brain/provider_pool.json`). When a user asks you to configure providers, add API keys, or set up the pool, help them by:
+The bot supports a multi-provider pool (`brain/provider_pool.json`). When a user asks you to configure providers, add API keys, or set up the pool, **do it immediately — do not just describe it**.
 
-1. Reading or creating the config: use `bash` to `cat brain/provider_pool.json.example` then `write_file` to create `brain/provider_pool.json` with their keys
-2. Validating: `python3 -c "import json; d=json.load(open('brain/provider_pool.json')); print(f'{len(d[\"pool\"])} entries OK')"`
-3. Restarting: `pm2 restart ama-bot` (or `bash bot.sh` if not using pm2)
+**CRITICAL — check OAuth state FIRST:**
+When user says "add Google account to pool" or similar, run `python3 tools/google_oauth.py status` immediately. If it shows `logged_in email=...`, add `{"label": "Google-OAuth", "provider": "google_cloudcode", "model": "gemini-3-flash-preview"}` to the pool WITHOUT asking — you already have everything. Only ask which method if status is `not_logged_in`.
+
+**Workflow:**
+1. Check existing state: `python3 tools/google_oauth.py status 2>/dev/null; cat brain/provider_pool.json 2>/dev/null || echo NO_POOL`
+2. Write `brain/provider_pool.json` with `write_file` (copy from example, fill in keys)
+3. Validate: `python3 -c "import json; d=json.load(open('brain/provider_pool.json')); print(f'{len(d[\"pool\"])} entries OK')"`
+4. Restart: `pm2 restart ama-bot`
 
 **Supported providers and their keys:**
 - `google` — key: `GOOGLE_API_KEY` / `GEMINI_KEY` (Studio mode; Vertex uses env-based auth)
