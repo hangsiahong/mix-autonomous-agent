@@ -69,20 +69,23 @@ def _claude_subprocess_env() -> dict:
     Build a clean env dict for a claude -p subprocess.
 
     Key concerns:
-    - HOME must point to the real user home so the binary finds ~/.claude/.credentials.json
-    - ANTHROPIC_API_KEY must NOT be set to a non-Anthropic value (e.g. a Vertex gcloud token
-      from the bot's env) — that causes "Not logged in" because the binary validates key format
-    - CLAUDE_CODE_SIMPLE=1 suppresses interactive prompts
+    - HOME must be the real passwd-db home (immune to env var pollution / pm2 weirdness)
+    - ANTHROPIC_API_KEY must NOT be set to a non-Anthropic value — a Vertex gcloud token
+      (ya29.*) or any other foreign key causes "Not logged in"
+    - Do NOT set CLAUDE_CODE_SIMPLE=1 — it suppresses the OAuth token-refresh flow,
+      causing headless calls to fail when the access token has expired
     """
-    # Start from current env
+    import pwd as _pwd
+
     env = dict(os.environ)
 
-    # Ensure HOME is the real user home (pm2/nohup may leave it unset or wrong)
-    env["HOME"] = str(Path.home())
-    env["CLAUDE_CODE_SIMPLE"] = "1"
+    # Always use the real passwd home, not the env var (pm2 may set HOME wrong)
+    env["HOME"] = _pwd.getpwuid(os.getuid()).pw_dir
 
-    # Remove any ANTHROPIC_API_KEY that isn't actually an Anthropic key.
-    # Vertex gcloud tokens (ya29.*) or empty strings would cause auth failures.
+    # Remove CLAUDE_CODE_SIMPLE so the binary runs its full auth flow (incl. token refresh)
+    env.pop("CLAUDE_CODE_SIMPLE", None)
+
+    # Strip any non-Anthropic value from ANTHROPIC_API_KEY
     existing_key = env.get("ANTHROPIC_API_KEY", "")
     if existing_key and not existing_key.startswith("sk-ant-"):
         del env["ANTHROPIC_API_KEY"]
@@ -543,20 +546,19 @@ def list_tmux() -> dict:
 def detect_backend() -> str:
     """Pick best available authenticated backend: claude → codex → self."""
     if shutil.which("claude"):
-        # ANTHROPIC_API_KEY set explicitly — use it, no probe needed
-        if os.environ.get("ANTHROPIC_API_KEY"):
+        # Explicit API key always works
+        if os.environ.get("ANTHROPIC_API_KEY", "").startswith("sk-ant-"):
             return "claude"
-        # Check OAuth credentials file for a valid (or refreshable) token
-        creds_file = Path(os.environ.get("HOME") or str(Path.home())) / ".claude" / ".credentials.json"
+        # OAuth credentials exist and have a refresh token (binary handles refresh)
+        import pwd as _pwd
+        home = _pwd.getpwuid(os.getuid()).pw_dir
+        creds_file = Path(home) / ".claude" / ".credentials.json"
         if creds_file.exists():
             try:
                 creds = json.loads(creds_file.read_text())
                 oauth = creds.get("claudeAiOauth", {})
-                token = oauth.get("accessToken", "")
-                expires_at = oauth.get("expiresAt", 0) / 1000
-                refresh_token = oauth.get("refreshToken", "")
-                # Valid token OR expired but refreshable
-                if token and (time.time() < expires_at or refresh_token):
+                # Has a refresh token → binary can renew the access token itself
+                if oauth.get("refreshToken") and oauth.get("accessToken"):
                     return "claude"
             except Exception:
                 pass
