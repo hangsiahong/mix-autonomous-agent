@@ -791,7 +791,11 @@
         },
         "notify_session": {
           "type": "string",
-          "description": "AMA session_id (e.g. tg_670967877). When set with mode=async, spawns a background watcher that writes to the queue when the task finishes, triggering an automatic follow-up turn. Always pass this so you can report completion without the user having to ask."
+          "description": "AMA session_id (e.g. tg_670967877). When set with mode=async, spawns a background watcher that sends Telegram messages directly every 3min and on completion. Always pass this — messages fire immediately without waiting for user input."
+        },
+        "notify_msg_id": {
+          "type": "string",
+          "description": "Telegram message_id of the user's request. Used by the watcher to reply-to the original message. Pass the user_msg_id from session context."
         },
         "backend": {
           "type": "string",

@@ -298,10 +298,11 @@ def _session_name(goal: str) -> str:
 
 
 def run_tmux_async(goal: str, context: str, timeout: int, workdir: str,
-                   backend: str, notify_session: str = "") -> dict:
+                   backend: str, notify_session: str = "",
+                   notify_msg_id: str = "") -> dict:
     """Start task in a detached tmux session. Returns immediately with session name.
-    If notify_session is set, spawns a background watcher that writes to the AMA
-    queue when the task completes — triggering an automatic follow-up agent turn."""
+    If notify_session is set, spawns a background watcher that sends Telegram messages
+    directly (progress every 3min + completion) without waiting for a user turn."""
     if not shutil.which("tmux"):
         return {"status": "error", "backend": f"tmux/{backend}",
                 "result": "tmux is not installed. Install: sudo pacman -S tmux  (or apt/brew)",
@@ -371,12 +372,13 @@ def run_tmux_async(goal: str, context: str, timeout: int, workdir: str,
                      "AMA_DIR": str(DIR),
                      "DELEGATE_SESSION": session,
                      "NOTIFY_SESSION": notify_session,
+                     "NOTIFY_MSG_ID": notify_msg_id,
                      "POLL_INTERVAL": "15",
-                     "PROGRESS_INTERVAL": "180",   # ping every 3 min while running
+                     "PROGRESS_INTERVAL": "180",
                      "WATCH_TIMEOUT": str(max(timeout + 120, 1800))},
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                start_new_session=True,   # detach from parent — survives turn end
+                start_new_session=True,
             )
 
     auto_msg = (
@@ -614,6 +616,7 @@ if __name__ == "__main__":
     workdir         = os.environ.get("TOOL_workdir", str(DIR)).strip() or str(DIR)
     session         = os.environ.get("TOOL_session", "").strip()
     notify_session  = os.environ.get("TOOL_notify_session", "").strip()
+    notify_msg_id   = os.environ.get("TOOL_notify_msg_id", "").strip()
 
     # Modes that don't need a goal
     if mode == "check":
@@ -656,7 +659,7 @@ if __name__ == "__main__":
                 print("Error: async mode needs claude or codex CLI. Use mode=sync for self backend.")
                 sys.exit(1)
         print(f"[delegate/async → tmux/{backend}] {goal[:80]}...")
-        result = run_tmux_async(goal, context, timeout, workdir, backend, notify_session)
+        result = run_tmux_async(goal, context, timeout, workdir, backend, notify_session, notify_msg_id)
 
     else:  # mode == "sync"
         if backend == "auto":
