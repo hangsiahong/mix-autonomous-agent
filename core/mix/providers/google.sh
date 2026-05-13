@@ -795,3 +795,100 @@ for msg in history:
 print(json.dumps(history))
 '
 }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Provider: google_cloudcode — Google Code Assist OAuth (gemini-cli free tier)
+#
+# Auth: OAuth PKCE flow via tools/google_oauth.py (no API key required)
+# API:  cloudcode-pa.googleapis.com/v1internal (free tier via personal Google account)
+#
+# Setup flow:
+#   1. /google_login  → bot sends auth URL, user opens in browser
+#   2. /google_login_callback <redirect_url>  → bot completes login
+#   3. account is added to pool automatically
+#
+# Config (.env or brain/provider_pool.json):
+#   PROVIDER=google_cloudcode
+#   MODEL=gemini-2.5-flash-preview-04-17
+#
+# Pool entry (no key needed — uses stored OAuth token):
+#   {"label": "Google-Free", "provider": "google_cloudcode", "model": "gemini-2.5-flash-preview-04-17"}
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_GOOGLE_OAUTH_TOOL="${AMA_DIR:-$(pwd)}/tools/google_oauth.py"
+
+google_cloudcode_activate() {
+  # Base URL is handled by the streaming script; set a placeholder for compatibility
+  BASE_URL="https://cloudcode-pa.googleapis.com/v1internal"
+  API_KEY="google-oauth"  # dummy — actual auth is the OAuth Bearer token
+}
+
+google_cloudcode_get_api_key() {
+  python3 "$_GOOGLE_OAUTH_TOOL" token 2>/dev/null
+}
+
+google_cloudcode_call_api_stream() {
+  local chat_id="$1"
+  local message_id="$2"
+  local skill="$3"
+  local sys_prompt_override="$4"
+
+  local payload
+  payload=$(_api_build_payload "true" "$sys_prompt_override" "$skill") || {
+    echo "FAIL:payload"; return 1
+  }
+
+  local _token
+  _token=$(python3 "$_GOOGLE_OAUTH_TOOL" token 2>/dev/null)
+  if [[ -z "$_token" ]]; then
+    echo "FAIL:google_cloudcode_not_logged_in" >&2
+    return 1
+  fi
+
+  local _project
+  _project=$(python3 "$_GOOGLE_OAUTH_TOOL" project 2>/dev/null)
+
+  local tmp_out; tmp_out=$(mktemp)
+  local tmp_err; tmp_err=$(mktemp)
+
+  TG_TOKEN="$TG_TOKEN" \
+  CHAT_ID="$chat_id" \
+  MESSAGE_ID="$message_id" \
+  CODE_ASSIST_TOKEN="$_token" \
+  CODE_ASSIST_PROJECT="${_project:-}" \
+  CODE_ASSIST_MODEL="${MODEL:-gemini-2.5-flash-preview-04-17}" \
+  python3 -u "$(dirname "${BASH_SOURCE[0]}")/google_cloudcode_stream.py" \
+    > "$tmp_out" 2> "$tmp_err" <<< "$payload"
+
+  local status=$?
+  local result; result=$(cat "$tmp_out")
+  local err_out; err_out=$(cat "$tmp_err")
+  rm -f "$tmp_out" "$tmp_err"
+  [[ -n "$err_out" ]] && echo "DBG_ERR: $err_out" >&2
+
+  if [[ $status -ne 0 || "$result" != *"TC:"* ]]; then
+    echo "AMA: google_cloudcode stream error (status $status)" >&2
+    return 1
+  fi
+
+  echo "$result"
+  return 0
+}
+
+# History filter: strip thought_signature sentinel before sending back to Code Assist
+# (the adapter re-adds it on outgoing requests)
+google_cloudcode_filter_history() {
+  python3 -c '
+import sys, json
+h = json.loads(sys.stdin.read())
+out = []
+for msg in h:
+    if msg.get("role") == "assistant":
+        for tc in (msg.get("tool_calls") or []):
+            # Keep thought_signature — the stream adapter re-uses it
+            pass
+    out.append(msg)
+print(json.dumps(out))
+'
+}

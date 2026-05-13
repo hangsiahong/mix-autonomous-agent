@@ -68,6 +68,7 @@ The bot supports a multi-provider pool (`brain/provider_pool.json`). When a user
 
 **Supported providers and their keys:**
 - `google` — key: `GOOGLE_API_KEY` / `GEMINI_KEY` (Studio mode; Vertex uses env-based auth)
+- `google_cloudcode` — **no key needed** — OAuth via personal Google account (free tier); `/google_login` to set up; stored in `~/.mix/google_oauth.json`; pool entry: `{"provider": "google_cloudcode", "model": "gemini-2.5-flash-preview-04-17"}`
 - `deepseek` — key: `DEEPSEEK_API_KEY`, models: `deepseek-chat`, `deepseek-reasoner`
 - `openrouter` — key: `OPENROUTER_API_KEY`, models: `anthropic/claude-sonnet-4-6`, `google/gemini-3-flash-preview`, etc.
 - `xai` — key: `XAI_API_KEY`, models: `grok-3-beta`, `grok-3-mini-beta`

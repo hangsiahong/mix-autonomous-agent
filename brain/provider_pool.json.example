@@ -40,6 +40,13 @@
       "_note": "Leave key empty — copilot uses OAuth token from ~/.mix/copilot_github_token"
     },
     {
+      "label": "Google-OAuth",
+      "provider": "google_cloudcode",
+      "key": "",
+      "model": "gemini-2.5-flash-preview-04-17",
+      "_note": "No key needed — uses OAuth token from ~/.mix/google_oauth.json. Run /google_login to authenticate."
+    },
+    {
       "label": "Groq-fallback",
       "provider": "groq",
       "key": "gsk_...",

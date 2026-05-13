@@ -39,6 +39,7 @@ After restart, use `/providers` to confirm pool is active.
 
 **Supported providers and where to get keys:**
 - `google` → aistudio.google.com → API Keys (GOOGLE_API_KEY), model: `gemini-2.5-flash-preview-04-17`
+- `google_cloudcode` → **no key** — OAuth via personal Google account (free tier); guide user through `/google_login` flow
 - `deepseek` → platform.deepseek.com (DEEPSEEK_API_KEY), model: `deepseek-chat`
 - `openrouter` → openrouter.ai/keys (OPENROUTER_API_KEY), model: `anthropic/claude-sonnet-4-6`
 - `xai` → x.ai (XAI_API_KEY), model: `grok-3-beta`
