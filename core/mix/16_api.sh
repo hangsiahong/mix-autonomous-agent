@@ -438,26 +438,45 @@ print(json.dumps(body))
 call_api() {
   local sys_prompt_override="$1"
 
-  if [ "$PROVIDER" != "default" ] && type "${PROVIDER}_call_api" >/dev/null 2>&1; then
-    "${PROVIDER}_call_api" "$sys_prompt_override"
-    return $?
-  fi
+  local attempt=1
+  local max_attempts=3
+  while [ "$attempt" -le "$max_attempts" ]; do
+      # Pool: pick best available provider/key for this attempt
+      pool_apply "$attempt"
 
-  local payload
-  payload=$(_api_build_payload "false" "$sys_prompt_override") || { echo "FAIL:payload"; return 1; }
+      # Provider-specific call_api override (e.g. ollama native API)
+      if [ "$PROVIDER" != "default" ] && type "${PROVIDER}_call_api" >/dev/null 2>&1; then
+          "${PROVIDER}_call_api" "$sys_prompt_override"
+          local _ret=$?
+          if [[ $_ret -eq 0 ]]; then return 0; fi
+          # Failed — if pool can try another entry, rotate
+          if [[ "$(pool_is_enabled)" == "true" && "$attempt" -lt "$max_attempts" ]]; then
+              pool_mark_limited "${_POOL_IDX:-}" 60
+              attempt=$((attempt + 1)); sleep $((2 ** (attempt - 1))); continue
+          fi
+          return $_ret
+      fi
 
-  local _api_key="$API_KEY"
-  if [ "$PROVIDER" != "default" ] && type "${PROVIDER}_get_api_key" >/dev/null 2>&1; then
-    local _pkey; _pkey=$(${PROVIDER}_get_api_key 2>/dev/null) || true
-    [ -n "$_pkey" ] && _api_key="$_pkey"
-  fi
+      if ! check_rate_limit "$PROVIDER" "$MODEL"; then
+          sleep 5
+      fi
 
-  local _suppress_auth=false
-  local _extra_pairs=""
-  if [ "$PROVIDER" != "default" ] && type "${PROVIDER}_extra_headers_json" >/dev/null 2>&1; then
-    local _pheaders; _pheaders=$(${PROVIDER}_extra_headers_json 2>/dev/null) || true
-    if [ -n "$_pheaders" ]; then
-      _extra_pairs=$(python3 -c '
+      # Build payload and request args fresh for this attempt (provider/model may differ)
+      local payload
+      payload=$(_api_build_payload "false" "$sys_prompt_override") || { echo "FAIL:payload"; return 1; }
+
+      local _api_key="$API_KEY"
+      if [ "$PROVIDER" != "default" ] && type "${PROVIDER}_get_api_key" >/dev/null 2>&1; then
+        local _pkey; _pkey=$(${PROVIDER}_get_api_key 2>/dev/null) || true
+        [ -n "$_pkey" ] && _api_key="$_pkey"
+      fi
+
+      local _suppress_auth=false
+      local _extra_pairs=""
+      if [ "$PROVIDER" != "default" ] && type "${PROVIDER}_extra_headers_json" >/dev/null 2>&1; then
+        local _pheaders; _pheaders=$(${PROVIDER}_extra_headers_json 2>/dev/null) || true
+        if [ -n "$_pheaders" ]; then
+          _extra_pairs=$(python3 -c '
 import json,sys
 for k,v in json.loads(open(sys.argv[1]).read()).items():
     if v is None:
@@ -465,29 +484,19 @@ for k,v in json.loads(open(sys.argv[1]).read()).items():
     else:
         print(f"{k}\t{v}")
 ' <(printf '%s' "$_pheaders") 2>/dev/null) || true
-      echo "$_extra_pairs" | grep -q '^SUPPRESS_AUTH' && _suppress_auth=true
-    fi
-  fi
+          echo "$_extra_pairs" | grep -q '^SUPPRESS_AUTH' && _suppress_auth=true
+        fi
+      fi
 
-  local _curl_args=(-s -w "%{http_code}" --max-time 1800
-    "${BASE_URL}/chat/completions"
-    -H "Content-Type: application/json")
-  [ "$_suppress_auth" = "false" ] && _curl_args+=(-H "Authorization: Bearer $_api_key")
-
-  if [ -n "$_extra_pairs" ]; then
-    while IFS=$'\t' read -r _hk _hv; do
-      [ "$_hk" = "SUPPRESS_AUTH" ] && continue
-      [ -n "$_hk" ] && [ -n "$_hv" ] && _curl_args+=(-H "$_hk: $_hv")
-    done <<< "$_extra_pairs"
-  fi
-
-  local attempt=1
-  local max_attempts=3
-  while [ "$attempt" -le "$max_attempts" ]; do
-      if ! check_rate_limit "$PROVIDER" "$MODEL"; then
-          # If rate limited, we might want to fail fast or try a fallback model
-          # For now, just wait if it's the first attempt, or fail if we've waited enough
-          sleep 5
+      local _curl_args=(-s -w "%{http_code}" --max-time 1800
+        "${BASE_URL}/chat/completions"
+        -H "Content-Type: application/json")
+      [ "$_suppress_auth" = "false" ] && _curl_args+=(-H "Authorization: Bearer $_api_key")
+      if [ -n "$_extra_pairs" ]; then
+        while IFS=$'\t' read -r _hk _hv; do
+          [ "$_hk" = "SUPPRESS_AUTH" ] && continue
+          [ -n "$_hk" ] && [ -n "$_hv" ] && _curl_args+=(-H "$_hk: $_hv")
+        done <<< "$_extra_pairs"
       fi
 
       local tmp; tmp=$(mktemp)
@@ -495,7 +504,7 @@ for k,v in json.loads(open(sys.argv[1]).read()).items():
       local curl_err=0
       code=$(curl "${_curl_args[@]}" -o "$tmp" -d "$payload" 2>/dev/null) || curl_err=$?
       local body; body=$(cat "$tmp" 2>/dev/null || true); rm -f "$tmp"
-      
+
       if [ "$curl_err" -ne 0 ]; then
         echo "FAIL:curl_error_$curl_err"
         return 1
@@ -521,6 +530,7 @@ print(d.get('should_compress','false'))
 
       if [[ "$reason" == "rate_limit" ]]; then
           mark_rate_limited "$PROVIDER" "$MODEL" 60
+          pool_mark_limited "${_POOL_IDX:-}" 60
       fi
 
       # Log error for reflection
@@ -537,25 +547,24 @@ print(json.dumps({'ts': ts, 'provider': prov, 'model': mod, 'code': code, 'reaso
           local delay=$((2 ** attempt + RANDOM % 5))
           echo "AMA: API Error $code ($reason), retrying in ${delay}s ($attempt/$max_attempts)" >&2
 
-          # Provider fallback chain (hermes pattern): on persistent rate-limit/auth/server errors,
-          # try FALLBACK_PROVIDER=provider:model (e.g. "default:gpt-4o-mini") before giving up
-          if [[ "$attempt" -ge 2 && -n "${FALLBACK_PROVIDER:-}" ]]; then
-              local _fb_provider _fb_model
-              _fb_provider=$(echo "$FALLBACK_PROVIDER" | cut -d: -f1)
-              _fb_model=$(echo "$FALLBACK_PROVIDER" | cut -d: -f2-)
-              if [[ -n "$_fb_provider" && "$PROVIDER" != "$_fb_provider" ]]; then
-                  echo "AMA: Activating fallback provider $_fb_provider:${_fb_model}" >&2
-                  PROVIDER="$_fb_provider"
-                  [[ -n "$_fb_model" ]] && MODEL="$_fb_model"
-                  if type "${PROVIDER}_activate" >/dev/null 2>&1; then
-                      ${PROVIDER}_activate 2>/dev/null || true
+          # Pool handles rotation; static FALLBACK_PROVIDER only applies when pool is off
+          if [[ "$(pool_is_enabled)" != "true" ]]; then
+              if [[ "$attempt" -ge 2 && -n "${FALLBACK_PROVIDER:-}" ]]; then
+                  local _fb_provider _fb_model
+                  _fb_provider=$(echo "$FALLBACK_PROVIDER" | cut -d: -f1)
+                  _fb_model=$(echo "$FALLBACK_PROVIDER" | cut -d: -f2-)
+                  if [[ -n "$_fb_provider" && "$PROVIDER" != "$_fb_provider" ]]; then
+                      echo "AMA: Activating fallback provider $_fb_provider:${_fb_model}" >&2
+                      PROVIDER="$_fb_provider"
+                      [[ -n "$_fb_model" ]] && MODEL="$_fb_model"
+                      if type "${PROVIDER}_activate" >/dev/null 2>&1; then
+                          ${PROVIDER}_activate 2>/dev/null || true
+                      fi
                   fi
-                  payload=$(_api_build_payload "false" "$sys_prompt_override")
+              elif [[ ("$reason" == "rate_limit" || "$reason" == "server_error") && -n "${FALLBACK_MODEL:-}" && "$MODEL" != "$FALLBACK_MODEL" ]]; then
+                  echo "AMA: Switching to fallback model $FALLBACK_MODEL" >&2
+                  MODEL="$FALLBACK_MODEL"
               fi
-          elif [[ ("$reason" == "rate_limit" || "$reason" == "server_error") && -n "${FALLBACK_MODEL:-}" && "$MODEL" != "$FALLBACK_MODEL" ]]; then
-              echo "AMA: Switching to fallback model $FALLBACK_MODEL" >&2
-              MODEL="$FALLBACK_MODEL"
-              payload=$(_api_build_payload "false" "$sys_prompt_override")
           fi
 
           sleep "$delay"

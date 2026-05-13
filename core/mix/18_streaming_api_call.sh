@@ -5,15 +5,30 @@ call_api_stream() {
     local skill="$3"
     local sys_prompt_override="$4"
 
-    if [ "$PROVIDER" != "default" ] && type "${PROVIDER}_call_api_stream" >/dev/null 2>&1; then
-      "${PROVIDER}_call_api_stream" "$chat_id" "$message_id" "$skill" "$sys_prompt_override"
-      return $?
-    fi
-
     local attempt=1
     local max_attempts=3
 
     while [ "$attempt" -le "$max_attempts" ]; do
+        # Pool: pick best available provider/key for this attempt
+        pool_apply "$attempt"
+
+        # Provider-specific streaming override (e.g. google_call_api_stream for Vertex SSE)
+        if [ "$PROVIDER" != "default" ] && type "${PROVIDER}_call_api_stream" >/dev/null 2>&1; then
+            "${PROVIDER}_call_api_stream" "$chat_id" "$message_id" "$skill" "$sys_prompt_override"
+            local _ret=$?
+            if [[ $_ret -eq 0 ]]; then return 0; fi
+            # Stream failed — if pool has another entry, rotate and retry
+            if [[ "$(pool_is_enabled)" == "true" && "$attempt" -lt "$max_attempts" ]]; then
+                pool_mark_limited "${_POOL_IDX:-}" 60
+                local _delay=$((2 ** attempt))
+                echo "AMA: Stream failed for pool entry ${_POOL_IDX:-}, retrying in ${_delay}s..." >&2
+                sleep "$_delay"
+                attempt=$((attempt + 1))
+                continue
+            fi
+            return $_ret
+        fi
+
         local payload=$(_api_build_payload "true" "$sys_prompt_override" "$skill")
 
         # Resolve API key and headers from Mix logic
@@ -299,9 +314,12 @@ EOF
         if [[ $status -ne 0 || "$result" != *"TC:"* ]]; then
              echo "AMA: Stream Error (Status $status). Err: $err_out" >&2
 
-             # Try to classify error from err_out if possible, or just retry
              if [[ "$attempt" -lt "$max_attempts" ]]; then
-                 if [[ -n "$FALLBACK_MODEL" && "$MODEL" != "$FALLBACK_MODEL" ]]; then
+                 # Mark pool entry limited if it was a 429/503
+                 if [[ "$err_out" == *"API HTTP 429"* || "$err_out" == *"API HTTP 503"* ]]; then
+                     pool_mark_limited "${_POOL_IDX:-}" 60
+                 fi
+                 if [[ "$(pool_is_enabled)" != "true" && -n "$FALLBACK_MODEL" && "$MODEL" != "$FALLBACK_MODEL" ]]; then
                      echo "AMA: Switching to fallback model $FALLBACK_MODEL" >&2
                      MODEL="$FALLBACK_MODEL"
                  fi

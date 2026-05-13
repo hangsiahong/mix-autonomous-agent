@@ -158,6 +158,7 @@ print(json.dumps(combined))
 /model &lt;name&gt; — switch model this session
 /skill &lt;name&gt; — activate a skill • /skill off to clear
 /skills — list available skills
+/providers — show provider pool status
 
 <b>Info</b>
 /status — model, session, system info
@@ -325,6 +326,16 @@ else:
                     mkdir -p "${DIR}/brain/state"
                     printf '%s' "$_model_arg" > "${DIR}/brain/state/model_${session_id}"
                     tg_send "$chat_id" "✅ Model set to <code>${_model_arg}</code> for this session." "$thread_id" "HTML"
+                fi
+                ;;
+
+            /providers)
+                local _pool_status
+                _pool_status=$(pool_status_html 2>/dev/null)
+                if [[ -z "$_pool_status" ]]; then
+                    tg_send "$chat_id" "No provider pool configured.\n\nCopy <code>brain/provider_pool.json.example</code> to <code>brain/provider_pool.json</code> and fill in your API keys." "$thread_id" "HTML"
+                else
+                    tg_send "$chat_id" "$_pool_status" "$thread_id" "HTML"
                 fi
                 ;;
 

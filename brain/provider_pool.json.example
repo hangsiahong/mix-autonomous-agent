@@ -1,0 +1,49 @@
+{
+  "_comment": "Copy to provider_pool.json and fill in your keys. Remove _comment lines.",
+  "strategy": "fallback",
+  "_strategy_options": "fallback (ordered priority) | round-robin (distribute load)",
+  "pool": [
+    {
+      "label": "Google-1",
+      "provider": "google",
+      "key": "AIzaSy...",
+      "model": "gemini-2.5-flash-preview-04-17"
+    },
+    {
+      "label": "Google-2",
+      "provider": "google",
+      "key": "AIzaSy...",
+      "model": "gemini-2.5-flash-preview-04-17"
+    },
+    {
+      "label": "Google-3",
+      "provider": "google",
+      "key": "AIzaSy...",
+      "model": "gemini-2.5-flash-preview-04-17"
+    },
+    {
+      "label": "Z.AI",
+      "provider": "zai",
+      "key": "...",
+      "model": "glm-4-plus"
+    },
+    {
+      "label": "DeepSeek",
+      "provider": "deepseek",
+      "key": "sk-...",
+      "model": "deepseek-chat"
+    },
+    {
+      "label": "Copilot",
+      "provider": "copilot",
+      "key": "",
+      "_note": "Leave key empty — copilot uses OAuth token from ~/.mix/copilot_github_token"
+    },
+    {
+      "label": "Groq-fallback",
+      "provider": "groq",
+      "key": "gsk_...",
+      "model": "llama-3.3-70b-versatile"
+    }
+  ]
+}

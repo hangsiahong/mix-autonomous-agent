@@ -185,6 +185,7 @@ tg_set_commands() {
         {"command": "usage",    "description": "Show token usage for this session"},
         {"command": "skill",    "description": "View or set active skill: /skill <name> or off"},
         {"command": "skills",   "description": "List all available skills"},
+        {"command": "providers","description": "Show provider pool status and rate limits"},
         {"command": "insights", "description": "Token and tool usage statistics"},
         {"command": "whitelist","description": "Whitelist a user or chat ID (admin)"},
         {"command": "restart",  "description": "Restart the bot (admin)"},
