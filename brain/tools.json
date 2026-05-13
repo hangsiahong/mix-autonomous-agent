@@ -789,6 +789,10 @@
           "type": "string",
           "description": "Tmux session name returned by mode=async. Required for mode=check and mode=kill."
         },
+        "notify_session": {
+          "type": "string",
+          "description": "AMA session_id (e.g. tg_670967877). When set with mode=async, spawns a background watcher that writes to the queue when the task finishes, triggering an automatic follow-up turn. Always pass this so you can report completion without the user having to ask."
+        },
         "backend": {
           "type": "string",
           "enum": ["auto", "claude", "codex", "self"],

@@ -67,13 +67,14 @@ Use the `delegate` tool for deep, autonomous coding work. Choose mode based on e
 **`mode=async` (> 2 min):** Starts task in a tmux session, returns a session name immediately. Use for large refactors, full-feature implementations, or anything that would make the user wait > 2 minutes.
 
 Async workflow:
-1. `delegate(mode=async, goal="...", context="...")` → get `session=ama_XXXXXXXX`
-2. Tell the user the task started and you'll check back in ~N minutes
-3. `delegate(mode=check, session=ama_XXXXXXXX)` every 30–60s to poll progress and tail output
-4. On `status=completed` → report results; on `status=error` → inspect output and fix
-5. `delegate(mode=kill, session=ama_XXXXXXXX)` to cancel; `delegate(mode=list)` to see all running
+1. `delegate(mode=async, goal="...", context="...", notify_session=<session_id>)` → get `session=ama_XXXXXXXX`
+   - **Always pass `notify_session`** (your current session_id, e.g. `tg_670967877`) — this spawns a background watcher that writes to your queue when the task finishes, triggering an automatic follow-up turn
+2. Tell the user: "Started async task in session ama_XXXXX. I'll report back when it's done."
+3. When the watcher fires (you get a queue message like "Delegate session ama_XXXXX completed"), call `delegate(mode=check, session=ama_XXXXX)` and report results
+4. On `status=error` → inspect the output and fix or retry
+5. `delegate(mode=kill, session=ama_XXXXX)` to cancel
 
-**Rule:** If a task would block you silently for > 2 minutes, always use `mode=async`. Never make the user wait with no feedback.
+**Rule:** Always use `mode=async` + `notify_session` for tasks > 2 minutes. Never make the user wait silently — and never say "I'll check in 60s" without actually having a mechanism to do it.
 
 Backends (auto-detected): `claude` (Claude Code CLI, needs `ANTHROPIC_API_KEY` in .env OR prior `claude login`), `codex` (OpenAI Codex CLI), `self` (mini AMA API loop, sync-only, always available). Always include `context` with file paths and constraints.
 
