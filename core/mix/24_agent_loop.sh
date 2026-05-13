@@ -193,14 +193,11 @@ print(json.dumps(h, separators=(',',':')))
                 fi
 
                 # Show completed tool names + session prefix + elapsed timer
-                local _elapsed=$(( $(date +%s) - _turn_start ))
                 local _between_msg
                 _between_msg=$(TOOL_NAMES="$batch_names" \
-                               SESSION_ID="$session_id" \
-                               ELAPSED="$_elapsed" \
                                STATUS_WORD="$_status_pick" \
                                python3 -c "
-import os, re
+import os
 EMOJI = {'bash':'🛠️','web_search':'🔍','fetch_url':'🌐','read_file':'📖','write_file':'✍️',
          'edit_code':'📝','search_files':'🔎','todo':'📋','memory':'🧠','memory_remember':'🧠',
          'memory_recall':'🧠','process':'⚙️','browser':'🌍','image_generate':'🎨','patch':'🩹',
@@ -210,12 +207,8 @@ EMOJI = {'bash':'🛠️','web_search':'🔍','fetch_url':'🌐','read_file':'�
          'delegate':'🤖','ast_edit':'🔬','last_session':'🗓️'}
 names = [n.strip() for n in os.environ.get('TOOL_NAMES','').split(',') if n.strip()]
 lines = ['<code>' + EMOJI.get(n,'🧩') + ' ' + n.replace('_',' ') + '</code>' for n in names[:4]]
-sid   = os.environ.get('SESSION_ID','')[:14]   # tg_670967877 → tg_67096...
-ela   = int(os.environ.get('ELAPSED','0'))
 word  = os.environ.get('STATUS_WORD','Thinking')
-timer = f'T+{ela}s' if ela >= 3 else ''
-meta  = ' '.join(filter(None, [f'<code>{sid}</code>' if sid else '', f'<i>{timer}</i>' if timer else '']))
-header = f'<i>{word}…</i>  {meta}' if meta else f'<i>{word}…</i>'
+header = f'<i>{word}…</i>'
 print(header + '\n' + '\n'.join(lines) if lines else f'⏳ {header}')
 " 2>/dev/null || echo "⏳ <i>Thinking…</i>")
                 tg_edit "$chat_id" "$msg_id" "$_between_msg" "HTML" > /dev/null 2>&1
@@ -241,7 +234,7 @@ print(header + '\n' + '\n'.join(lines) if lines else f'⏳ {header}')
         if [[ "$loop_completed" == true ]]; then
             local _elapsed_total=$(( $(date +%s) - _turn_start ))
             local _elapsed_str=""
-            [[ $_elapsed_total -ge 3 ]] && _elapsed_str=" · T+${_elapsed_total}s"
+            [[ $_elapsed_total -ge 10 ]] && _elapsed_str=" ⏱ ${_elapsed_total}s"
             if [[ $total_tool_calls -gt 0 && -n "$text" ]]; then
                 local footer_parts=$(echo "$all_tool_names" | tr ',' '\n' | sed 's/^ *//' | grep -v '^$' | sort | uniq -c | sort -rn | awk '{cnt=$1; name=$2; for(i=3;i<=NF;i++) name=name" "$i; if(cnt>1) print name" ×"cnt; else print name}' | paste -sd ', ')
                 local full_md="${text}"$'\n\n'"_🔧 ${total_tool_calls} tool call$([[ $total_tool_calls -ne 1 ]] && echo 's'): ${footer_parts}${_elapsed_str}_"
@@ -250,7 +243,7 @@ print(header + '\n' + '\n'.join(lines) if lines else f'⏳ {header}')
             elif [[ -n "$text" && "$text" != "null" && $total_tool_calls -eq 0 ]]; then
                 local _final_html; _final_html="$(md_to_tg_html "$text")"
                 [[ -n "$_ctx_warn" ]] && _final_html+=$'\n'"${_ctx_warn}"
-                [[ -n "$_elapsed_str" ]] && _final_html+=$'\n'"<i>${_elapsed_str:3}</i>"
+                [[ -n "$_elapsed_str" ]] && _final_html+=$'\n'"<i>${_elapsed_str:1}</i>"
                 tg_edit "$chat_id" "$msg_id" "$_final_html" "HTML" > /dev/null
             else
                 # Empty response — Gemini thinking-only output or scrubbed content.
