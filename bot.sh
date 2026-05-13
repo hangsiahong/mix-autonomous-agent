@@ -42,6 +42,19 @@ trap 'rm -f "$LOCK_FILE"; exit 0' EXIT INT TERM
 echo "AMA Bot Starting..."
 tg_set_commands
 
+# Recover tools.json if a previous instance was killed mid-reflection/recap
+# (those functions swap tools.json to [] and restore via trap; SIGKILL skips traps)
+_tools_cur=$(python3 -c "import json; d=json.load(open('brain/tools.json')); print(len(d))" 2>/dev/null || echo 0)
+if [[ "$_tools_cur" -eq 0 ]]; then
+    _latest_bak=$(ls -t brain/tools.json.bak.* 2>/dev/null | head -1)
+    if [[ -n "$_latest_bak" ]]; then
+        echo "AMA: Recovering tools.json from $_latest_bak (was wiped by killed reflection)"
+        mv "$_latest_bak" brain/tools.json
+    fi
+fi
+rm -f brain/tools.json.bak.* 2>/dev/null || true
+unset _tools_cur _latest_bak
+
 # Clean up stale PID files left by a previous (crashed/killed) instance
 for _stale in "${DIR}/brain/state"/run_*.pid; do
     [[ -f "$_stale" ]] || continue

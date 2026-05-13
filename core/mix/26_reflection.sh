@@ -35,7 +35,11 @@ Rules: Be concise. Total under 200 words. No preamble. Respond ONLY with the str
 
     local saved_history="$HISTORY"
     local _saved_tools; _saved_tools=$(cat brain/tools.json 2>/dev/null || echo '[]')
+    # Use trap so tools.json is ALWAYS restored — on normal return, signal, or crash
+    local _recap_tools_bak; _recap_tools_bak=$(mktemp "brain/tools.json.bak.XXXXXX")
+    printf '%s' "$_saved_tools" > "$_recap_tools_bak"
     printf '[]' > brain/tools.json
+    trap 'mv "$_recap_tools_bak" brain/tools.json 2>/dev/null; HISTORY="$saved_history"' EXIT INT TERM
 
     local _sp_tmp; _sp_tmp=$(mktemp)
     printf '%s' "$recap_prompt" > "$_sp_tmp"
@@ -51,9 +55,6 @@ PYEOF
     HISTORY="${_recap_hist:-$saved_history}"
     local recap_response
     recap_response=$(call_api "You are a session summarizer. Be concise and factual.")
-
-    printf '%s' "$_saved_tools" > brain/tools.json
-    HISTORY="$saved_history"
 
     [[ -z "$recap_response" || "$recap_response" == "FAIL:"* ]] && return
 
