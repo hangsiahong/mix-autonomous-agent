@@ -177,8 +177,15 @@ except:
         # Call API with system prompt override
         local response=$(call_api "$reflection_sys_prompt")
 
-        # Break immediately on API failure — don't retry empty/broken payloads
+        # On API failure: retry 429/503 with backoff; stop on hard failures
         if [[ -z "$response" || "$response" == "FAIL:"* ]]; then
+            local _err_code; _err_code=$(echo "$response" | grep -oP '(?<=FAIL:)\d+' | head -1)
+            if [[ "$_err_code" == "429" || "$_err_code" == "503" ]] && [[ "$turn" -lt 5 ]]; then
+                local _delay=$(( 15 * turn ))
+                echo "Reflection: API rate-limited ($response), retrying in ${_delay}s ($turn/5)" >&2
+                sleep "$_delay"
+                continue
+            fi
             echo "Reflection: API call failed ($response), stopping" >&2
             break
         fi
