@@ -645,25 +645,19 @@ Use <code>/skill &lt;name&gt;</code> to bind a skill." "$thread_id" "HTML"
                 local _oauth_tool="${DIR}/tools/google_oauth.py"
                 if [[ ! -f "$_oauth_tool" ]]; then
                     tg_send "$chat_id" "google_oauth.py not found. Update your installation." "$thread_id"
-                    break
-                fi
-                # Check if already logged in
-                local _oauth_status
-                _oauth_status=$(python3 "$_oauth_tool" status 2>/dev/null)
-                if [[ "$_oauth_status" == logged_in* ]]; then
-                    local _email _project
-                    _email=$(echo "$_oauth_status" | grep -oP 'email=\K\S+')
-                    _project=$(echo "$_oauth_status" | grep -oP 'project=\K\S+')
-                    tg_send "$chat_id" "✅ Already logged in as <code>${_email}</code> (project: <code>${_project}</code>)\n\nTo re-login, use /google_login force.\nTo add to pool: edit <code>brain/provider_pool.json</code> — add an entry with <code>\"provider\": \"google_cloudcode\"</code> (no key needed)." "$thread_id" "HTML"
-                    break
-                fi
-                local _auth_url
-                _auth_url=$(python3 "$_oauth_tool" init 2>/dev/null)
-                if [[ -z "$_auth_url" ]]; then
-                    tg_send "$chat_id" "Failed to generate auth URL." "$thread_id"
-                    break
-                fi
-                tg_send "$chat_id" "🔐 <b>Google Login (Code Assist free tier)</b>
+                elif [[ "$(python3 "$_oauth_tool" status 2>/dev/null)" == logged_in* && "$args" != "force" ]]; then
+                    local _gl_status _gl_email _gl_project
+                    _gl_status=$(python3 "$_oauth_tool" status 2>/dev/null)
+                    _gl_email=$(echo "$_gl_status" | grep -oP 'email=\K\S+')
+                    _gl_project=$(echo "$_gl_status" | grep -oP 'project=\K\S+')
+                    tg_send "$chat_id" "✅ Already logged in as <code>${_gl_email}</code> (project: <code>${_gl_project}</code>)\n\nTo re-login: /google_login force\nTo add to pool: add <code>{\"provider\": \"google_cloudcode\", \"model\": \"gemini-2.5-flash-preview-04-17\"}</code> to <code>brain/provider_pool.json</code>" "$thread_id" "HTML"
+                else
+                    local _auth_url
+                    _auth_url=$(python3 "$_oauth_tool" init 2>/dev/null)
+                    if [[ -z "$_auth_url" ]]; then
+                        tg_send "$chat_id" "Failed to generate auth URL." "$thread_id"
+                    else
+                        tg_send "$chat_id" "🔐 <b>Google Login (Code Assist free tier)</b>
 
 1. Open this URL on any device:
 <code>${_auth_url}</code>
@@ -674,34 +668,38 @@ Use <code>/skill &lt;name&gt;</code> to bind a skill." "$thread_id" "HTML"
 
 4. Send it back as:
 <code>/google_login_callback &lt;paste URL here&gt;</code>" "$thread_id" "HTML"
+                    fi
+                fi
                 ;;
 
             /google_login_callback)
-                # Step 2: exchange code from redirect URL, save tokens, offer pool config
+                # Step 2: exchange code for tokens, save, offer pool config
                 local _callback_val="$args"
                 local _oauth_tool="${DIR}/tools/google_oauth.py"
                 if [[ -z "$_callback_val" ]]; then
-                    tg_send "$chat_id" "Usage: /google_login_callback <redirect URL or code>" "$thread_id"
-                    break
-                fi
-                tg_send "$chat_id" "⏳ Exchanging authorization code…" "$thread_id"
-                local _finish_out
-                _finish_out=$(python3 "$_oauth_tool" finish "$_callback_val" 2>&1)
-                if [[ "$_finish_out" == OK* ]]; then
-                    local _email _project
-                    _email=$(echo "$_finish_out" | grep -oP 'email=\K\S+')
-                    _project=$(echo "$_finish_out" | grep -oP 'project=\K\S+')
-                    local _pool_entry="{\"label\": \"Google-OAuth-${_email%%@*}\", \"provider\": \"google_cloudcode\", \"model\": \"gemini-2.5-flash-preview-04-17\"}"
-                    tg_send "$chat_id" "✅ <b>Logged in!</b>
-Email: <code>${_email}</code>
-Project: <code>${_project}</code>
+                    tg_send "$chat_id" "Usage: /google_login_callback &lt;redirect URL or code&gt;" "$thread_id" "HTML"
+                else
+                    tg_send "$chat_id" "⏳ Exchanging authorization code…" "$thread_id"
+                    local _finish_out _finish_err _finish_tmp
+                    _finish_tmp=$(mktemp)
+                    python3 "$_oauth_tool" finish "$_callback_val" >"$_finish_tmp" 2>/dev/null
+                    _finish_out=$(cat "$_finish_tmp"); rm -f "$_finish_tmp"
+                    if [[ "$_finish_out" == OK* ]]; then
+                        local _fc_email _fc_project
+                        _fc_email=$(echo "$_finish_out" | grep -oP 'email=\K\S+')
+                        _fc_project=$(echo "$_finish_out" | grep -oP 'project=\K[^\s]+')
+                        local _pool_entry="{\"label\": \"Google-OAuth-${_fc_email%%@*}\", \"provider\": \"google_cloudcode\", \"model\": \"gemini-2.5-flash-preview-04-17\"}"
+                        tg_send "$chat_id" "✅ <b>Logged in!</b>
+Email: <code>${_fc_email}</code>
+Project: <code>${_fc_project:-auto}</code>
 
-To add to provider pool, add this entry to <code>brain/provider_pool.json</code>:
+Add this to <code>brain/provider_pool.json</code>:
 <pre>${_pool_entry}</pre>
 
 Or tell me: <i>add this Google account to my provider pool</i> and I'll do it for you." "$thread_id" "HTML"
-                else
-                    tg_send "$chat_id" "❌ Login failed:\n<code>${_finish_out}</code>\n\nTry /google_login again." "$thread_id" "HTML"
+                    else
+                        tg_send "$chat_id" "❌ Login failed: <code>${_finish_out}</code>\n\nTry /google_login again." "$thread_id" "HTML"
+                    fi
                 fi
                 ;;
 
