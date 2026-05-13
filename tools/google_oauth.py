@@ -153,13 +153,40 @@ def _retrieve_quota(access_token: str, project_id: str = "") -> list:
     return resp.get("buckets") or []
 
 
-def _best_model_for_tier(tier: str, buckets: list) -> str:
-    """Pick the best available model from quota buckets (quota is authoritative).
+def _probe_model(access_token: str, project_id: str, model: str) -> bool:
+    """Send a 1-token request to verify the model is actually deployed on Code Assist.
 
-    Preference order: gemini-3.1-pro > gemini-3-pro > gemini-3.1-flash > gemini-3-flash
-    > gemini-2.5-pro > gemini-2.5-flash > gemini-2.0-flash
+    Returns True if the model works (200) or is just rate-limited (429).
+    Returns False for 404 (model not found) or 400 (bad request for this model).
     """
-    # Preference order — best first
+    wrapped = {
+        "project": project_id,
+        "model":   model,
+        "user_prompt_id": secrets.token_hex(8),
+        "request": {
+            "contents": [{"role": "user", "parts": [{"text": "hi"}]}],
+            "generationConfig": {"maxOutputTokens": 1},
+        },
+    }
+    resp = _post_json(
+        f"{CODE_ASSIST_ENDPOINT}/v1internal:generateContent",
+        wrapped, access_token,
+    )
+    http_code = int(resp.get("_http_status", 200))
+    if http_code == 200:
+        return True
+    if http_code == 429:
+        return True   # rate-limited but model exists
+    # 404 or 400 → model not deployed
+    return False
+
+
+def _best_model_for_tier(tier: str, buckets: list,
+                          access_token: str = "", project_id: str = "") -> str:
+    """Pick best model: use quota list to get candidates, probe each to confirm it works.
+
+    Preference order: newest/most capable first.
+    """
     _PREFS = [
         "gemini-3.1-pro-preview",
         "gemini-3-pro-preview",
@@ -171,21 +198,37 @@ def _best_model_for_tier(tier: str, buckets: list) -> str:
         "gemini-2.0-flash-001",
     ]
 
+    # Build candidate list from quota (non-zero quota only)
+    candidates = []
     if buckets:
-        # Build set of available model short-names with >0 quota
         available = set()
         for b in buckets:
             mid = str(b.get("modelId", "")).split("/")[-1]
             if mid and float(b.get("remainingFraction", 1.0)) > 0:
                 available.add(mid)
+        # Keep preference order, filtered to what quota says is available
         for m in _PREFS:
             if m in available:
-                return m
-        # Quota available but none matched — use first available bucket
-        if available:
-            return next(iter(available))
+                candidates.append(m)
+        # Append any extras not in our list
+        for m in available:
+            if m not in candidates:
+                candidates.append(m)
 
-    # No quota data — safe default
+    if not candidates:
+        candidates = _PREFS
+
+    # Probe each candidate to find one that actually works
+    if access_token:
+        print(f"Probing {len(candidates)} models to find best working one…", file=sys.stderr)
+        for m in candidates:
+            print(f"  Testing {m}…", file=sys.stderr)
+            if _probe_model(access_token, project_id, m):
+                print(f"  ✓ {m} works", file=sys.stderr)
+                return m
+            print(f"  ✗ {m} not available", file=sys.stderr)
+
+    # No probe (or all failed) — return safest default
     return "gemini-2.5-flash"
 
 
@@ -228,10 +271,10 @@ def _discover_project(access_token: str) -> tuple:
         project = project or str(body.get("cloudaicompanionProject") or "")
         tier = "free-tier"
 
-    # Get quota to pick best model
+    # Get quota then probe to find best actually-working model
     buckets = _retrieve_quota(access_token, project)
-    best_model = _best_model_for_tier(tier, buckets)
-    print(f"Selected model: {best_model}", file=sys.stderr)
+    best_model = _best_model_for_tier(tier, buckets, access_token, project)
+    print(f"Best working model: {best_model}", file=sys.stderr)
 
     return project, tier, best_model
 
