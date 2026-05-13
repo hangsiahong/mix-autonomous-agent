@@ -22,16 +22,21 @@ run_agent() {
     local lock_file="${DIR}/brain/state/locks/${session_id}.lock"
     local initial_status="Thinking"
     local msg_id
+    local _turn_start; _turn_start=$(date +%s)
 
     # React 👀 on the user's message to signal we received it (hermes pattern)
     [[ -n "$user_msg_id" && "$user_msg_id" != "0" ]] && tg_react "$chat_id" "$user_msg_id" "👀"
+
+    # Dynamic status verb — rotates through words to avoid stale "Thinking…" feel
+    local _status_words=("Thinking" "Analyzing" "Synthesizing" "Cooking" "Architecting" "Reasoning" "Processing")
+    local _status_pick="${_status_words[$(( RANDOM % ${#_status_words[@]} ))]}"
 
     # Try non-blocking lock to check if busy
     if ! flock -n "${lock_file}" true 2>/dev/null; then
         initial_status="Queued"
         msg_id=$(tg_send_r "$chat_id" "🕒 <i>Queued</i>" "$thread_id" "HTML" "$user_msg_id")
     else
-        msg_id=$(tg_send_r "$chat_id" "⏳ <i>Thinking…</i>" "$thread_id" "HTML" "$user_msg_id")
+        msg_id=$(tg_send_r "$chat_id" "⏳ <i>${_status_pick}…</i>" "$thread_id" "HTML" "$user_msg_id")
     fi
 
     # Capture our own PID before entering subshell ($$  in subshell returns
@@ -59,7 +64,7 @@ run_agent() {
 
         # Optimization: Only edit if we were actually queued
         if [[ "$initial_status" == "Queued" ]]; then
-            tg_edit "$chat_id" "$msg_id" "⏳ <i>Thinking…</i>" "HTML" > /dev/null 2>&1
+            tg_edit "$chat_id" "$msg_id" "⏳ <i>${_status_pick}…</i>" "HTML" > /dev/null 2>&1
         fi
 
         tg_send_action "$chat_id" "typing" "$thread_id"
@@ -132,6 +137,8 @@ run_agent() {
             text=$(printf '%s' "$result" | python3 -c "import sys, re; c = sys.stdin.read(); m = re.search(r'(?m)^TEXT:(.*?)(?=\nUSAGE:|\Z)', c, re.DOTALL); print(m.group(1) if m else '', end='')" 2>/dev/null)
             
             [[ -n "$usage" ]] && log_usage "$session_id" "$usage" "$MODEL"
+            local _ctx_warn=""
+            [[ -n "$usage" ]] && _ctx_warn=$(context_warning "$usage" "$MODEL")
             [[ -n "$text" && "$text" != "null" ]] && append_text "assistant" "$text"
 
             if [[ -n "$tool_calls" && "$tool_calls" != "[]" && "$tool_calls" != "null" ]]; then
@@ -185,19 +192,31 @@ print(json.dumps(h, separators=(',',':')))
                     fi
                 fi
 
-                # Show completed tool names then reset to thinking for next turn
+                # Show completed tool names + session prefix + elapsed timer
+                local _elapsed=$(( $(date +%s) - _turn_start ))
                 local _between_msg
-                _between_msg=$(TOOL_NAMES="$batch_names" python3 -c "
+                _between_msg=$(TOOL_NAMES="$batch_names" \
+                               SESSION_ID="$session_id" \
+                               ELAPSED="$_elapsed" \
+                               STATUS_WORD="$_status_pick" \
+                               python3 -c "
 import os, re
 EMOJI = {'bash':'🛠️','web_search':'🔍','fetch_url':'🌐','read_file':'📖','write_file':'✍️',
          'edit_code':'📝','search_files':'🔎','todo':'📋','memory':'🧠','memory_remember':'🧠',
          'memory_recall':'🧠','process':'⚙️','browser':'🌍','image_generate':'🎨','patch':'🩹',
          'repo_map':'🗺️','clarify':'💬','session_search':'🗂️','sys_info':'📊','recap':'📝',
          'custom_tool_manager':'🔧','skill_manager':'🎯','skill_install':'📦','insights':'📈',
-         'kanban_show':'📌','kanban_create':'📌','kanban_complete':'✅','kanban_block':'🚧'}
+         'kanban_show':'📌','kanban_create':'📌','kanban_complete':'✅','kanban_block':'🚧',
+         'delegate':'🤖','ast_edit':'🔬','last_session':'🗓️'}
 names = [n.strip() for n in os.environ.get('TOOL_NAMES','').split(',') if n.strip()]
 lines = ['<code>' + EMOJI.get(n,'🧩') + ' ' + n.replace('_',' ') + '</code>' for n in names[:4]]
-print('<i>Thinking…</i>\n' + '\n'.join(lines) if lines else '⏳ <i>Thinking…</i>')
+sid   = os.environ.get('SESSION_ID','')[:14]   # tg_670967877 → tg_67096...
+ela   = int(os.environ.get('ELAPSED','0'))
+word  = os.environ.get('STATUS_WORD','Thinking')
+timer = f'T+{ela}s' if ela >= 3 else ''
+meta  = ' '.join(filter(None, [f'<code>{sid}</code>' if sid else '', f'<i>{timer}</i>' if timer else '']))
+header = f'<i>{word}…</i>  {meta}' if meta else f'<i>{word}…</i>'
+print(header + '\n' + '\n'.join(lines) if lines else f'⏳ {header}')
 " 2>/dev/null || echo "⏳ <i>Thinking…</i>")
                 tg_edit "$chat_id" "$msg_id" "$_between_msg" "HTML" > /dev/null 2>&1
                 export _AMA_REASONING_HTML=""
@@ -220,12 +239,19 @@ print('<i>Thinking…</i>\n' + '\n'.join(lines) if lines else '⏳ <i>Thinking�
         done
 
         if [[ "$loop_completed" == true ]]; then
+            local _elapsed_total=$(( $(date +%s) - _turn_start ))
+            local _elapsed_str=""
+            [[ $_elapsed_total -ge 3 ]] && _elapsed_str=" · T+${_elapsed_total}s"
             if [[ $total_tool_calls -gt 0 && -n "$text" ]]; then
                 local footer_parts=$(echo "$all_tool_names" | tr ',' '\n' | sed 's/^ *//' | grep -v '^$' | sort | uniq -c | sort -rn | awk '{cnt=$1; name=$2; for(i=3;i<=NF;i++) name=name" "$i; if(cnt>1) print name" ×"cnt; else print name}' | paste -sd ', ')
-                local full_md="${text}"$'\n\n'"_🔧 ${total_tool_calls} tool call$([[ $total_tool_calls -ne 1 ]] && echo 's'): ${footer_parts}_"
+                local full_md="${text}"$'\n\n'"_🔧 ${total_tool_calls} tool call$([[ $total_tool_calls -ne 1 ]] && echo 's'): ${footer_parts}${_elapsed_str}_"
+                [[ -n "$_ctx_warn" ]] && full_md+=$'\n'"${_ctx_warn}"
                 tg_edit "$chat_id" "$msg_id" "$(md_to_tg_html "$full_md")" "HTML" > /dev/null
             elif [[ -n "$text" && "$text" != "null" && $total_tool_calls -eq 0 ]]; then
-                tg_edit "$chat_id" "$msg_id" "$(md_to_tg_html "$text")" "HTML" > /dev/null
+                local _final_html; _final_html="$(md_to_tg_html "$text")"
+                [[ -n "$_ctx_warn" ]] && _final_html+=$'\n'"${_ctx_warn}"
+                [[ -n "$_elapsed_str" ]] && _final_html+=$'\n'"<i>${_elapsed_str:3}</i>"
+                tg_edit "$chat_id" "$msg_id" "$_final_html" "HTML" > /dev/null
             else
                 # Empty response — Gemini thinking-only output or scrubbed content.
                 # The ⏳ placeholder is still showing. Replace it with a retry prompt.
