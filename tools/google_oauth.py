@@ -154,31 +154,39 @@ def _retrieve_quota(access_token: str, project_id: str = "") -> list:
 
 
 def _probe_model(access_token: str, project_id: str, model: str) -> bool:
-    """Send a 1-token request to verify the model is actually deployed on Code Assist.
+    """Probe the STREAMING endpoint (:streamGenerateContent?alt=sse) — that's what we
+    actually use for inference. :generateContent may support models that streaming doesn't.
 
-    Returns True if the model works (200) or is just rate-limited (429).
-    Returns False for 404 (model not found) or 400 (bad request for this model).
+    Returns True if streaming endpoint responds (200 or 429).
+    Returns False for 404/400 (model not available on streaming).
     """
-    wrapped = {
-        "project": project_id,
-        "model":   model,
-        "user_prompt_id": secrets.token_hex(8),
-        "request": {
-            "contents": [{"role": "user", "parts": [{"text": "hi"}]}],
-            "generationConfig": {"maxOutputTokens": 1},
-        },
-    }
-    resp = _post_json(
-        f"{CODE_ASSIST_ENDPOINT}/v1internal:generateContent",
-        wrapped, access_token,
-    )
-    http_code = int(resp.get("_http_status", 200))
-    if http_code == 200:
-        return True
-    if http_code == 429:
-        return True   # rate-limited but model exists
-    # 404 or 400 → model not deployed
-    return False
+    try:
+        import urllib.request as _ur
+        wrapped = {
+            "project": project_id,
+            "model":   model,
+            "user_prompt_id": secrets.token_hex(8),
+            "request": {
+                "contents": [{"role": "user", "parts": [{"text": "hi"}]}],
+                "generationConfig": {"maxOutputTokens": 1},
+            },
+        }
+        body = json.dumps(wrapped).encode()
+        h = _ca_headers(access_token)
+        h["Accept"] = "text/event-stream"
+        req = _ur.Request(
+            f"{CODE_ASSIST_ENDPOINT}/v1internal:streamGenerateContent?alt=sse",
+            data=body, headers=h, method="POST",
+        )
+        try:
+            with _ur.urlopen(req, timeout=15) as resp:
+                # 200 → read a few bytes to confirm it's actually streaming
+                resp.read(64)
+                return True
+        except urllib.error.HTTPError as e:
+            return e.code in (429, 503)  # rate-limited but model exists
+    except Exception:
+        return False
 
 
 def _best_model_for_tier(tier: str, buckets: list,
