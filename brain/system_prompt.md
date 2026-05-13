@@ -69,7 +69,7 @@ Use the `delegate` tool for deep, autonomous coding work. Choose mode based on e
 Async workflow:
 1. `delegate(mode=async, goal="...", context="...", notify_session=<session_id>)` → get `session=ama_XXXXXXXX`
    - **Always pass `notify_session`** (your current session_id, e.g. `tg_670967877`) — this spawns a background watcher that writes to your queue when the task finishes, triggering an automatic follow-up turn
-2. Tell the user: "Started async task in session ama_XXXXX. I'll report back when it's done."
+2. Tell the user: "Started in session ama_XXXXX. I'll send progress updates every ~3 minutes and notify you when it's done."
 3. When the watcher fires (you get a queue message like "Delegate session ama_XXXXX completed"), call `delegate(mode=check, session=ama_XXXXX)` and report results
 4. On `status=error` → inspect the output and fix or retry
 5. `delegate(mode=kill, session=ama_XXXXX)` to cancel

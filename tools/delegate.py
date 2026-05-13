@@ -371,8 +371,9 @@ def run_tmux_async(goal: str, context: str, timeout: int, workdir: str,
                      "AMA_DIR": str(DIR),
                      "DELEGATE_SESSION": session,
                      "NOTIFY_SESSION": notify_session,
-                     "POLL_INTERVAL": "30",
-                     "WATCH_TIMEOUT": str(timeout + 120)},
+                     "POLL_INTERVAL": "15",
+                     "PROGRESS_INTERVAL": "180",   # ping every 3 min while running
+                     "WATCH_TIMEOUT": str(max(timeout + 120, 1800))},
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 start_new_session=True,   # detach from parent — survives turn end
