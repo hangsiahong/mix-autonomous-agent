@@ -316,10 +316,10 @@ def run_tmux_async(goal: str, context: str, timeout: int, workdir: str,
     prompt = goal + (f"\n\nContext:\n{context}" if context else "")
 
     if backend == "claude":
-        # Refresh OAuth token now so the tmux shell finds a valid one
-        claude_env = _claude_subprocess_env()
-        home_val = shlex.quote(claude_env.get("HOME", str(Path.home())))
-        inner = (f"HOME={home_val} CLAUDE_CODE_SIMPLE=1 "
+        # Use real passwd home — do NOT set CLAUDE_CODE_SIMPLE (suppresses token refresh)
+        import pwd as _pwd
+        home_val = shlex.quote(_pwd.getpwuid(os.getuid()).pw_dir)
+        inner = (f"HOME={home_val} "
                  f"claude -p {shlex.quote(prompt)}"
                  f" --add-dir {shlex.quote(workdir)}"
                  f" --dangerously-skip-permissions")
