@@ -2,24 +2,32 @@ version: "3.9"
 
 services:
   ama-bot:
-    build: .
+    build:
+      context: .
+      args:
+        # Match container UID/GID to host user so volume files are always
+        # owned by you — no more "Permission denied" on git diff or log reads.
+        # These default to 1000 (first user on most Linux systems).
+        # Override in .env: UID=1000  GID=1000
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
     restart: unless-stopped
     env_file: .env
+    # Run as the same user as the build so mounted volume writes match host ownership
+    user: "${UID:-1000}:${GID:-1000}"
     volumes:
-      # Persist all user data (installed skills, conversation history,
-      # state, usage logs) across image rebuilds and container restarts.
-      # Core code comes from the image; only brain/ is user-mutable.
+      # Persist all user data across image rebuilds and container restarts.
+      # Core code comes from the image; only these dirs are user-mutable.
       - ./brain:/opt/ama/brain
       - ./logs:/opt/ama/logs
-      # Skill repos cloned by the agent (cache — can be deleted freely)
-      - ./skills:/opt/ama/skills
       # Agent-created custom tools (gitignored, excluded from image build)
-      # Without this mount they are wiped on every docker compose up --build
       - ./tools/custom:/opt/ama/tools/custom
-      # LanceDB vector memory — persists across rebuilds (stored at ~/ama_memory in container)
-      - ama_memory:/root/ama_memory
+      # Skill repos cloned by the agent
+      - ./skills:/opt/ama/skills
+      # LanceDB vector memory — persists across rebuilds
+      - ama_memory:/home/ama/ama_memory
       # Workspace for real projects the agent creates outside the harness.
-      # Set WORKSPACE_DIR=/workspace in .env, then uncomment this line:
+      # Set WORKSPACE_DIR=/workspace in .env, then uncomment:
       # - ./workspace:/workspace
 
 volumes:
