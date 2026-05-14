@@ -16,9 +16,17 @@ load_config() {
 }
 
 save_config() {
+    local _data="$1"
+    # Validate JSON before touching the file — never save garbage
+    if ! printf '%s' "$_data" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null; then
+        echo "save_config: refusing to save invalid JSON (data discarded)" >&2
+        return 1
+    fi
+    # Keep a rolling backup so bot startup can self-heal a corrupt file
+    [[ -f "$CONFIG_FILE" ]] && cp "$CONFIG_FILE" "${CONFIG_FILE}.bak" 2>/dev/null || true
     # Atomic write: prevents corruption when concurrent sessions call save_config
     local _tmp; _tmp=$(mktemp "${CONFIG_FILE}.XXXXXX")
-    printf '%s' "$1" > "$_tmp" && mv "$_tmp" "$CONFIG_FILE" || { rm -f "$_tmp"; return 1; }
+    printf '%s' "$_data" > "$_tmp" && mv "$_tmp" "$CONFIG_FILE" || { rm -f "$_tmp"; return 1; }
 }
 
 is_whitelisted() {
@@ -92,16 +100,27 @@ set_topic_config() {
     local key="$3"
     local val="$4"
 
+    # Reject keys that aren't simple identifiers — prevents JSON object strings
+    # from being written as dict keys (the corruption seen in the wild)
+    if ! [[ "$key" =~ ^[a-zA-Z_][a-zA-Z0-9_]{0,40}$ ]]; then
+        echo "set_topic_config: invalid key '$key' (must be a simple identifier)" >&2
+        return 1
+    fi
+
     local config=$(load_config)
 
     local updated_config
     updated_config=$(CID="$chat_id" TID="$thread_id" KEY="$key" VAL="$val" python3 -c "
-import json, os, sys
+import json, os, sys, re
 d = json.load(sys.stdin)
 cid = os.environ['CID']
 tid = os.environ['TID']
 key = os.environ['KEY']
 val = os.environ['VAL']
+# Extra guard: key must be a plain identifier (belt-and-suspenders)
+if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]{0,40}$', key):
+    sys.stderr.write(f'set_topic_config: key rejected: {key!r}\n')
+    sys.exit(1)
 if 'group_topics' not in d:
     d['group_topics'] = []
 group = next((g for g in d['group_topics'] if g.get('chat_id') == cid), None)

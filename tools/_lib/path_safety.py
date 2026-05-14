@@ -26,6 +26,24 @@ _HOME_SENSITIVE_SUFFIXES = (
     "/.netrc", "/.pgpass", "/.kube/config",
 )
 
+# Project files the agent must never overwrite directly.
+# These are managed by dedicated functions/tools — direct writes corrupt state.
+_AGENT_PROTECTED_SUFFIXES = (
+    "brain/tools.json",    # use brain/tools_extra.json + custom_tool_manager
+    "brain/config.json",   # use set_topic_config / set_group_mode / add_to_whitelist
+)
+_AGENT_PROTECTED_MESSAGES = {
+    "brain/tools.json": (
+        "Use custom_tool_manager(action=create, ...) to add tools — "
+        "they go into brain/tools_extra.json which is safe to modify. "
+        "Direct writes to brain/tools.json corrupt the base tool list."
+    ),
+    "brain/config.json": (
+        "Use the config helper functions (set_topic_config, set_group_mode, "
+        "add_to_whitelist) — never write brain/config.json directly."
+    ),
+}
+
 # Block paths that would hang the process on read.
 _BLOCKED_DEVICES = {
     "/dev/stdin", "/dev/stdout", "/dev/stderr",
@@ -64,6 +82,13 @@ def check_sensitive_path(filepath: str) -> Optional[str]:
     except (OSError, ValueError):
         resolved = filepath
     normalized = os.path.normpath(os.path.expanduser(filepath))
+
+    # Block direct writes to agent-protected project files
+    for suffix in _AGENT_PROTECTED_SUFFIXES:
+        if resolved.endswith(suffix) or normalized.endswith(suffix):
+            return _AGENT_PROTECTED_MESSAGES.get(suffix,
+                f"Protected project file: {filepath}"
+            )
 
     for prefix in _SENSITIVE_PREFIXES:
         if resolved.startswith(prefix) or normalized.startswith(prefix):

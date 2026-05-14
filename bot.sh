@@ -62,6 +62,26 @@ _hot_reload() {
 trap '_hot_reload' HUP
 
 echo "AMA Bot Starting..."
+
+# Validate critical JSON files and restore from backup if corrupt.
+# Protects against the agent writing malformed JSON to brain/config.json
+# or brain/tools.json getting corrupted mid-session.
+for _jf in "brain/config.json" "brain/tools.json"; do
+    if [[ -f "$_jf" ]]; then
+        if ! python3 -c "import json; json.load(open('$_jf'))" 2>/dev/null; then
+            echo "AMA: WARNING — $_jf is invalid JSON!"
+            if [[ -f "${_jf}.bak" ]] && python3 -c "import json; json.load(open('${_jf}.bak'))" 2>/dev/null; then
+                cp "${_jf}.bak" "$_jf"
+                echo "AMA: Restored $_jf from backup."
+            else
+                echo "AMA: No valid backup found for $_jf — attempting git restore."
+                git checkout "$_jf" 2>/dev/null && echo "AMA: Restored $_jf from git." || \
+                    echo "AMA: Could not restore $_jf — bot may behave incorrectly."
+            fi
+        fi
+    fi
+done
+
 tg_set_commands
 
 # Recover tools.json if it was wiped (e.g. old bot killed mid-reflection before this fix)
