@@ -39,6 +39,28 @@ fi
 echo $$ > "$LOCK_FILE"
 trap 'rm -f "$LOCK_FILE"; exit 0' EXIT INT TERM
 
+# Hot-reload on SIGHUP: re-sources all core files without restarting the long-poll loop.
+# Bash only runs trap handlers between commands, so this is safe — no mid-command interruption.
+# Trigger: kill -HUP $(cat brain/state/bot.pid)  or  /reload command in Telegram.
+_hot_reload() {
+    echo "AMA: Hot-reload triggered (SIGHUP) — re-sourcing core files..."
+    # Re-load env in case .env changed
+    if [ -f "${DIR}/.env" ]; then
+        set -a; source "${DIR}/.env"; set +a
+    fi
+    source "${DIR}/core/mix/init.sh"
+    source "${DIR}/core/config.sh"
+    source "${DIR}/core/telegram/init.sh"
+    source "${DIR}/core/ui.sh"
+    if [ -d "${DIR}/extensions" ]; then
+        for ext in "${DIR}/extensions"/*/init.sh; do
+            [ -f "$ext" ] && source "$ext"
+        done
+    fi
+    echo "AMA: Hot-reload complete. New function definitions active from next call."
+}
+trap '_hot_reload' HUP
+
 echo "AMA Bot Starting..."
 tg_set_commands
 

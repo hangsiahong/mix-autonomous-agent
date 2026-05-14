@@ -170,7 +170,8 @@ print(json.dumps(combined))
 
 <b>Admin</b>
 /whitelist &lt;id&gt; — add user/chat
-/restart — restart bot
+/reload — hot-reload core files (no restart, in-place)
+/restart — full restart via pm2
 /shutdown — shut down bot" "$thread_id" "HTML"
                 ;;
             /whitelist)
@@ -798,6 +799,23 @@ Try /google_login again." "$thread_id" "HTML"
                     [[ -n "$_bot_pid" ]] && kill -TERM "$_bot_pid" 2>/dev/null
                     kill -TERM "$$" 2>/dev/null
                     exit 0
+                else
+                    tg_send "$chat_id" "Admin only." "$thread_id"
+                fi
+                ;;
+            /reload)
+                if [[ "$user_id" == "${TG_ADMIN}" ]]; then
+                    local _bot_pid; _bot_pid=$(cat "${DIR}/brain/state/bot.pid" 2>/dev/null)
+                    if [[ -n "$_bot_pid" ]] && kill -0 "$_bot_pid" 2>/dev/null; then
+                        tg_send "$chat_id" "🔄 <b>Hot-reload triggered</b>
+Sending SIGHUP to bot (PID <code>${_bot_pid}</code>).
+Core files will be re-sourced between the current long-poll iteration.
+<i>Changes to core/mix/, core/telegram/, providers/ take effect immediately — no restart needed.</i>
+<i>Use /restart only if env vars (.env) changed.</i>" "$thread_id" "HTML"
+                        kill -HUP "$_bot_pid" 2>/dev/null
+                    else
+                        tg_send "$chat_id" "⚠️ Bot PID not found — try /restart instead." "$thread_id" "HTML"
+                    fi
                 else
                     tg_send "$chat_id" "Admin only." "$thread_id"
                 fi
