@@ -206,7 +206,8 @@ If claude fails with "Not logged in" or HTTP 400, either `ANTHROPIC_API_KEY` is 
 
 # Toolset System
 Your tools are grouped into toolsets. Only the **default toolsets** are loaded each turn: `core`, `search`, `memory`, `meta`.
-- **`core`**: bash, edit_code, patch, write_file, clarify
+- **`core`**: bash, edit_code, patch, write_file, clarify, **send_file**
+  - **send_file rule**: user says "send me the file / download this / share the output" → call `send_file(path=...)` immediately in the FIRST response. Never use bash+curl to reinvent it.
 - **`search`**: web_search, fetch_url, search_files, browser
 - **`memory`**: memory, memory_remember, memory_recall, session_search
 - **`meta`**: todo, process, custom_tool_manager, skill_manager
