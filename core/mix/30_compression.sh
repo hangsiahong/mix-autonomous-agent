@@ -1,8 +1,9 @@
 #!/bin/bash
 # core/mix/30_compression.sh - Summary-based context compression
 
-# Thresholds — token-based (rough estimate: chars / 4)
-COMPRESSION_TOKEN_THRESHOLD=80000  # ~80K tokens: start compressing (fits most 128K models at 62%)
+# Thresholds — token_counter.py provides model-aware values (55% of context window)
+# Fallback hardcoded threshold used only when token_counter.py is unavailable
+_COMPRESSION_THRESHOLD_FALLBACK=70000
 KEEP_LAST_N=40                     # Keep the last 40 messages verbatim for continuity
 KEEP_FIRST_N=5                     # Keep early setup messages
 TOOL_RESULT_PRUNE_CHARS=400        # Truncate tool results > this before feeding to summarizer
@@ -13,25 +14,18 @@ compress_history() {
     local thread_id="$3"
     local msg_id="$4"
 
-    # Rough token estimate: total chars / 4
+    # Accurate token count via token_counter.py (tiktoken or improved char estimate)
     local rough_tokens
-    rough_tokens=$(python3 -c "
-import json, sys
-h = json.loads(open(sys.argv[1]).read())
-total = 0
-for m in h:
-    c = m.get('content') or ''
-    if isinstance(c, list):
-        c = ' '.join(p.get('text','') for p in c if isinstance(p,dict))
-    total += len(str(c))
-    for tc in (m.get('tool_calls') or []):
-        total += len(str(tc.get('function',{}).get('arguments','')))
-print(total // 4)
-" <(printf '%s' "$HISTORY") 2>/dev/null); rough_tokens=${rough_tokens:-0}
+    rough_tokens=$(printf '%s' "$HISTORY" | python3 tools/token_counter.py count 2>/dev/null); rough_tokens=${rough_tokens:-0}
+
+    # Model-aware compression threshold (55% of context window for current MODEL)
+    local _threshold
+    _threshold=$(python3 tools/token_counter.py threshold "${MODEL:-}" 2>/dev/null)
+    _threshold=${_threshold:-$_COMPRESSION_THRESHOLD_FALLBACK}
 
     local count; count=$(python3 -c "import json,sys; print(len(json.loads(open(sys.argv[1]).read())))" <(printf '%s' "$HISTORY") 2>/dev/null); count=${count:-0}
 
-    if [ "$rough_tokens" -lt "$COMPRESSION_TOKEN_THRESHOLD" ]; then
+    if [ "$rough_tokens" -lt "$_threshold" ]; then
         return
     fi
 

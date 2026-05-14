@@ -56,6 +56,10 @@ except Exception:
 now = time.time()
 strategy = data.get('strategy', 'fallback')
 
+# Tier-based routing: TASK_TIER=fast → prefer entries with tier=="fast"
+# Set TASK_TIER=fast in env for simple Q&A; leave unset for standard tasks.
+task_tier = os.environ.get('TASK_TIER', 'standard').lower()
+
 # Entries not currently rate-limited
 available = [(i, e) for i, e in enumerate(pool)
              if now >= float(limits.get(str(i), 0))]
@@ -64,23 +68,34 @@ if not available:
     # All limited — pick entry whose limit expires soonest
     idx = min(range(len(pool)), key=lambda i: float(limits.get(str(i), 0)))
     entry = pool[idx]
-elif strategy == 'round-robin':
-    counter_file = 'brain/state/pool_counter'
-    try:
-        c = int(open(counter_file).read().strip())
-    except Exception:
-        c = 0
-    pick = c % len(available)
-    try:
-        open(counter_file, 'w').write(str(c + 1))
-    except Exception:
-        pass
-    idx, entry = available[pick]
 else:
-    # fallback: rotate through available entries by attempt number
-    # so attempt 1→first, attempt 2→second, etc.
-    pick = (attempt - 1) % len(available)
-    idx, entry = available[pick]
+    # Filter to preferred tier first; fall back to all available if none match
+    if task_tier == 'fast':
+        fast_entries = [(i, e) for i, e in available if e.get('tier', 'standard') == 'fast']
+        if fast_entries:
+            available = fast_entries
+    elif task_tier == 'power':
+        power_entries = [(i, e) for i, e in available if e.get('tier') == 'power']
+        if power_entries:
+            available = power_entries
+
+    if strategy == 'round-robin':
+        counter_file = 'brain/state/pool_counter'
+        try:
+            c = int(open(counter_file).read().strip())
+        except Exception:
+            c = 0
+        pick = c % len(available)
+        try:
+            open(counter_file, 'w').write(str(c + 1))
+        except Exception:
+            pass
+        idx, entry = available[pick]
+    else:
+        # fallback: rotate through available entries by attempt number
+        # so attempt 1→first, attempt 2→second, etc.
+        pick = (attempt - 1) % len(available)
+        idx, entry = available[pick]
 
 print(json.dumps({
     'idx': idx,

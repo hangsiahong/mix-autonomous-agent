@@ -2,41 +2,65 @@
   "_comment": "Copy to provider_pool.json and fill in your keys. Remove _comment lines.",
   "strategy": "fallback",
   "_strategy_options": "fallback (ordered priority) | round-robin (distribute load)",
+  "_tier_note": "Optional 'tier' field: 'fast' (cheap/quick) | 'standard' (default) | 'power' (best quality). Set TASK_TIER=fast env var to prefer fast-tier entries for simple Q&A.",
+  "_thinking_note": "Set THINKING_BUDGET env var per-session: none|low|medium|high. Controls Gemini thinking depth. 'none' is fastest/cheapest.",
   "pool": [
     {
       "label": "Google-1",
       "provider": "google",
       "key": "AIzaSy...",
-      "model": "gemini-3-flash-preview"
+      "model": "gemini-3-flash-preview",
+      "tier": "standard"
     },
     {
       "label": "Google-2",
       "provider": "google",
       "key": "AIzaSy...",
-      "model": "gemini-3-flash-preview"
+      "model": "gemini-3-flash-preview",
+      "tier": "standard"
     },
     {
       "label": "Google-3",
       "provider": "google",
       "key": "AIzaSy...",
-      "model": "gemini-3-flash-preview"
+      "model": "gemini-3-flash-preview",
+      "tier": "standard"
+    },
+    {
+      "label": "Anthropic-Claude",
+      "provider": "anthropic",
+      "key": "sk-ant-...",
+      "model": "claude-sonnet-4-6",
+      "tier": "power",
+      "_note": "Prompt caching enabled automatically — 90% cost reduction on repeated system prompts"
+    },
+    {
+      "label": "Groq-fast",
+      "provider": "groq",
+      "key": "gsk_...",
+      "model": "llama-3.3-70b-versatile",
+      "tier": "fast",
+      "_note": "Use for simple Q&A (set TASK_TIER=fast). Very cheap and fast."
     },
     {
       "label": "Z.AI",
       "provider": "zai",
       "key": "...",
-      "model": "glm-4-plus"
+      "model": "glm-4-plus",
+      "tier": "standard"
     },
     {
       "label": "DeepSeek",
       "provider": "deepseek",
       "key": "sk-...",
-      "model": "deepseek-chat"
+      "model": "deepseek-chat",
+      "tier": "standard"
     },
     {
       "label": "Copilot",
       "provider": "copilot",
       "key": "",
+      "tier": "fast",
       "_note": "Leave key empty — copilot uses OAuth token from ~/.mix/copilot_github_token"
     },
     {
@@ -44,13 +68,8 @@
       "provider": "google_cloudcode",
       "key": "",
       "model": "gemini-2.5-flash",
+      "tier": "fast",
       "_note": "No key needed — uses OAuth token from ~/.mix/google_oauth.json. Run /google_login to authenticate."
-    },
-    {
-      "label": "Groq-fallback",
-      "provider": "groq",
-      "key": "gsk_...",
-      "model": "llama-3.3-70b-versatile"
     }
   ]
 }

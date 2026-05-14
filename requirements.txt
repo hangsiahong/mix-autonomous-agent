@@ -12,3 +12,7 @@ lancedb>=0.6.0
 
 # Browser automation (browser.sh)
 playwright>=1.40.0
+
+# Accurate token counting for context compression (token_counter.py)
+# Falls back to improved char-based estimate if unavailable — install for precision
+tiktoken>=0.7.0

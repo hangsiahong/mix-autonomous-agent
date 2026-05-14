@@ -21,7 +21,8 @@ call_api_stream() {
             if [[ "$(pool_is_enabled)" == "true" && "$attempt" -lt "$max_attempts" ]]; then
                 # Only mark rate-limited for actual rate limits, not model errors
                 # (pool_mark_limited for model 404s just wastes 60s)
-                local _delay=$((2 ** attempt))
+                local _delay
+                _delay=$(python3 -c "import random,time; a=$attempt; d=min(5.0*(2**(a-1)),60.0); print(f'{d+random.uniform(0,0.5*d):.1f}')" 2>/dev/null || echo $((5 * attempt)))
                 echo "AMA: Stream failed for pool entry ${_POOL_IDX:-}, retrying in ${_delay}s..." >&2
                 sleep "$_delay"
                 attempt=$((attempt + 1))
@@ -324,7 +325,8 @@ EOF
                      echo "AMA: Switching to fallback model $FALLBACK_MODEL" >&2
                      MODEL="$FALLBACK_MODEL"
                  fi
-                 local delay=$((2 ** attempt))
+                 local delay
+                 delay=$(python3 -c "import random; a=$attempt; d=min(5.0*(2**(a-1)),60.0); print(f'{d+random.uniform(0,0.5*d):.1f}')" 2>/dev/null || echo $((5 * attempt)))
                  sleep "$delay"
                  attempt=$((attempt + 1))
                  continue

@@ -413,6 +413,7 @@ for msg in reversed(h):
   MODEL_NAME="$_model" \
   EXTRA_PAYLOAD="$_extra_payload" \
   STREAM_MODE="$stream" \
+  PROVIDER_NAME="$PROVIDER" \
   python3 -c '
 import json, os, sys
 s = open(os.environ["SYS_FILE"]).read()
@@ -466,8 +467,19 @@ if not h or not has_user:
     sys.stderr.write("GUARD: empty history — no user messages, skipping API call\n")
     sys.exit(2)
 
-msg = [{"role": "system", "content": s}] + h
-body = {"model": m, "messages": msg}
+provider = os.environ.get("PROVIDER_NAME", "")
+is_anthropic = provider == "anthropic"
+
+if is_anthropic:
+    # Anthropic native format: system as array + cache_control for 90% cost reduction
+    # System prompt is stable across turns → qualifies for 5-min ephemeral cache
+    system_msg = [{"type": "text", "text": s, "cache_control": {"type": "ephemeral"}}]
+    msg = h  # no system role in messages for Anthropic native
+    body = {"model": m, "system": system_msg, "messages": msg}
+else:
+    msg = [{"role": "system", "content": s}] + h
+    body = {"model": m, "messages": msg}
+
 if t:
     wrapped_tools = []
     for tool in t:
@@ -479,7 +491,8 @@ if t:
     body["tool_choice"] = "auto"
 if stream:
     body["stream"] = True
-    body["stream_options"] = {"include_usage": True}
+    if not is_anthropic:
+        body["stream_options"] = {"include_usage": True}
 body.update(ex)
 print(json.dumps(body))
 '
@@ -505,7 +518,8 @@ call_api() {
           # Failed — if pool can try another entry, rotate
           if [[ "$(pool_is_enabled)" == "true" && "$attempt" -lt "$max_attempts" ]]; then
               pool_mark_limited "${_POOL_IDX:-}" 60
-              attempt=$((attempt + 1)); sleep $((2 ** (attempt - 1))); continue
+              local _jdelay; _jdelay=$(python3 -c "import random; a=$attempt; d=min(5.0*(2**(a-1)),60.0); print(f'{d+random.uniform(0,0.5*d):.1f}')" 2>/dev/null || echo $((5 * attempt)))
+              attempt=$((attempt + 1)); sleep "$_jdelay"; continue
           fi
           return $_ret
       fi

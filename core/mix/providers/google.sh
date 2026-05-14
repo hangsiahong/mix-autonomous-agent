@@ -298,14 +298,21 @@ google_extra_payload_json() {
   # Remove provider prefix if present
   model_lower="${model_lower#google/}"
 
-  # Default thinking config for Gemini 3+
-  if [[ "$model_lower" =~ gemini-3 ]]; then
-      local level="${_GOOGLE_THINKING_LEVEL:-medium}"
+  # Default thinking config for Gemini 3+ (and 2.5 thinking variants)
+  if [[ "$model_lower" =~ gemini-3 || "$model_lower" =~ gemini-2\.5 ]]; then
+      # THINKING_BUDGET env var overrides level: "none"|"low"|"medium"|"high"|"max"
+      # Set THINKING_BUDGET=none to disable thinking (faster + cheaper for simple tasks)
+      # Set THINKING_BUDGET=high for hard reasoning (math, complex code, debugging)
+      local level="${THINKING_BUDGET:-${_GOOGLE_THINKING_LEVEL:-medium}}"
       # Gemini 3 Pro only supports low/high
       if [[ "$model_lower" =~ pro ]]; then
-          [[ "$level" != "high" ]] && level="low"
+          [[ "$level" != "high" && "$level" != "none" ]] && level="low"
       fi
-
+      # Disable thinking entirely
+      if [[ "$level" == "none" ]]; then
+          printf '{"include_thoughts": false}'
+          return 0
+      fi
       # OpenAI-compatible field names for Gemini Thinking
       printf '{"include_thoughts": true, "thinking_level": "%s"}' "$level"
       return 0
