@@ -75,6 +75,29 @@ tg_extract_media() {
             fi
             rm -f "$tmp_file"
         fi
+    elif [[ -n "$doc_id" ]]; then
+        # Non-image document (PDF, txt, csv, py, docx …)
+        # Download to brain/state/uploads/ and pass path to agent — no extraction in harness.
+        # Agent uses bash tool: pdftotext /path - | head -200  or  cat /path | head -100
+        local _doc_name
+        _doc_name=$(echo "$update" | python3 -c "
+import json,sys
+print(json.load(sys.stdin).get('message',{}).get('document',{}).get('file_name','document'))" 2>/dev/null)
+        local file_info
+        file_info=$(tg_get_file "$doc_id")
+        local file_path
+        file_path=$(echo "$file_info" | python3 -c "import json,sys; print(json.load(sys.stdin).get('result',{}).get('file_path',''))" 2>/dev/null)
+        if [[ -n "$file_path" ]]; then
+            local _uploads="${DIR}/brain/state/uploads"
+            mkdir -p "$_uploads"
+            # Safe filename: timestamp prefix avoids collisions, strips path traversal
+            local _safe; _safe=$(echo "$_doc_name" | tr ' /' '__' | tr -dc 'a-zA-Z0-9._-')
+            local _dest="${_uploads}/$(date +%s)_${_safe}"
+            tg_download "$file_path" "$_dest"
+            if [[ -s "$_dest" ]]; then
+                echo "MEDIA_FILE:${_dest} [${doc_mime:-file}]"
+            fi
+        fi
     fi
 
     # 3. Handle Voice/Audio

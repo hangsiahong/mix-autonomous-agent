@@ -66,7 +66,15 @@ for k, v in vals.items():
     local media_file=$(echo "$media_out" | grep "MEDIA_FILE:" | cut -d: -f2- || true)
 
     if [[ -n "$media_file" ]]; then
-        text="$text [Attached File: $media_file]"
+        # Strip the [type] suffix for cleaner context, keep full path
+        local _mf_path; _mf_path=$(echo "$media_file" | sed 's/ \[.*\]$//')
+        local _mf_type; _mf_type=$(echo "$media_file" | grep -oP '\[\K[^\]]+' || true)
+        text="$text
+
+[User attached file: ${_mf_path}]
+Read it with bash: cat \"${_mf_path}\" | head -200
+For PDFs: pdftotext \"${_mf_path}\" - | head -200
+For code/text: cat \"${_mf_path}\""
     fi
 
     # Ignore empty messages unless there is media

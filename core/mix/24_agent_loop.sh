@@ -48,7 +48,7 @@ run_agent() {
         # Wait for the lock — write PID file INSIDE lock so it always points
         # to the RUNNING process, never a queued one that hasn't started yet
         flock -x 200
-        echo "$_agent_pid|${msg_id}|${chat_id}|${thread_id}" > "$pid_file"
+        echo "$_agent_pid|${msg_id}|${chat_id}|${thread_id}|${user_id}" > "$pid_file"
         trap 'rm -f "$pid_file"; exit 0' INT TERM
         trap 'rm -f "$pid_file"' EXIT
 

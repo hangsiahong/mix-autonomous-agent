@@ -145,23 +145,49 @@ for u in json.load(sys.stdin).get('result', []):
             continue
         fi
         echo "Processing update $UPDATE_ID..."
-        # T1-2: Global agent process cap — reject new messages when overloaded
-        # Count only PIDs whose processes are actually alive (also cleans stale files)
+        # T1-2: Global + per-user agent cap — reject when overloaded
+        # Parse sender once; used for both per-user cap and drop notification
+        _update_user=$(echo "$update" | python3 -c "
+import json,sys
+u=json.loads(sys.stdin.read())
+msg=u.get('message') or {}
+cbq=u.get('callback_query') or {}
+frm=(msg.get('from') or cbq.get('from')) or {}
+print(str(frm.get('id','')))" 2>/dev/null)
+        _update_chat=$(echo "$update" | python3 -c "
+import json,sys
+u=json.loads(sys.stdin.read())
+print((u.get('message') or {}).get('chat',{}).get('id',''))" 2>/dev/null)
+
         _live_agents=0
+        _user_agents=0
         for _pf in "${DIR}/brain/state"/run_*.pid; do
             [[ -f "$_pf" ]] || continue
             _ppid=$(cut -d'|' -f1 "$_pf" 2>/dev/null)
             if kill -0 "$_ppid" 2>/dev/null; then
                 _live_agents=$((_live_agents + 1))
+                # Field 5 = user_id (added alongside the existing 4 fields)
+                _pf_user=$(cut -d'|' -f5 "$_pf" 2>/dev/null)
+                [[ "$_pf_user" == "$_update_user" ]] && _user_agents=$((_user_agents + 1))
             else
                 rm -f "$_pf"
             fi
         done
+
+        # Global cap
         _max_agents="${MAX_CONCURRENT_AGENTS:-10}"
         if [[ "$_live_agents" -ge "$_max_agents" ]]; then
-            echo "AMA: Queue full ($_live_agents active agents, max $_max_agents). Dropping update $UPDATE_ID." >&2
-            _drop_chat=$(echo "$update" | python3 -c "import json,sys; u=json.load(sys.stdin); print((u.get('message') or {}).get('chat',{}).get('id',''))" 2>/dev/null)
-            [[ -n "$_drop_chat" ]] && tg_send "$_drop_chat" "⚠️ Bot is busy with too many requests. Please try again in a moment." "" || true
+            echo "AMA: Global queue full ($_live_agents/$_max_agents). Dropping $UPDATE_ID." >&2
+            [[ -n "$_update_chat" ]] && tg_send "$_update_chat" "⚠️ Bot is at capacity. Please try again shortly." "" || true
+            echo $((UPDATE_ID + 1)) > "$OFFSET_FILE"
+            continue
+        fi
+
+        # Per-user cap — prevents one user from monopolising the pool (important for groups)
+        _max_per_user="${MAX_AGENTS_PER_USER:-3}"
+        if [[ -n "$_update_user" && "$_user_agents" -ge "$_max_per_user" ]]; then
+            echo "AMA: User $_update_user at per-user limit ($_user_agents/$_max_per_user). Dropping $UPDATE_ID." >&2
+            [[ -n "$_update_chat" ]] && tg_send "$_update_chat" "⚠️ You already have $_user_agents tasks running. Please wait for one to finish before sending more." "" || true
             echo $((UPDATE_ID + 1)) > "$OFFSET_FILE"
             continue
         fi

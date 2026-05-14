@@ -59,7 +59,14 @@ else
 fi
 rm -f /tmp/ama_error_report.txt
 
-# 2. Cleanup log files (keep last N lines)
+# 2a. Cleanup user-uploaded files older than 2 hours
+_uploads_dir="${DIR}/brain/state/uploads"
+if [[ -d "$_uploads_dir" ]]; then
+    find "$_uploads_dir" -maxdepth 1 -type f -mmin +120 -delete 2>/dev/null
+    echo "[$(date)] Upload cleanup: removed files older than 2h from brain/state/uploads/"
+fi
+
+# 2b. Cleanup log files (keep last N lines)
 for logfile in "${DIR}/brain/state/trajectories.jsonl" \
                "${DIR}/brain/state/tool_usage.jsonl" \
                "${DIR}/brain/state/usage_log.jsonl" \
