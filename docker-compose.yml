@@ -13,8 +13,14 @@ services:
       - ./logs:/opt/ama/logs
       # Skill repos cloned by the agent (cache — can be deleted freely)
       - ./skills:/opt/ama/skills
+      # Agent-created custom tools (gitignored, excluded from image build)
+      # Without this mount they are wiped on every docker compose up --build
+      - ./tools/custom:/opt/ama/tools/custom
       # LanceDB vector memory — persists across rebuilds (stored at ~/ama_memory in container)
       - ama_memory:/root/ama_memory
+      # Workspace for real projects the agent creates outside the harness.
+      # Set WORKSPACE_DIR=/workspace in .env, then uncomment this line:
+      # - ./workspace:/workspace
 
 volumes:
   ama_memory:

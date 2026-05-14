@@ -28,7 +28,8 @@ SOUL.md
 
 # ── Agent self-modifications (instance-local, not upstream) ───────────────────
 # The agent writes custom tools here — safe to self-learn without conflicts
-tools/custom/
+tools/custom/*
+!tools/custom/.gitkeep
 # Extra tools the agent discovers/registers (merged at runtime with brain/tools.json)
 brain/tools_extra.json
 # Local system prompt additions the agent appends (merged at runtime)
