@@ -202,6 +202,16 @@ If claude fails with "Not logged in" or HTTP 400, either `ANTHROPIC_API_KEY` is 
 - **`write_file`**: Only for NEW files or true full rewrites.
 - **Failure mode**: If `edit_code` reports "no match", re-read the file with `read_code` to refresh context — do NOT loop with random variations.
 
+**⛔ NEVER write new tool scripts directly into `tools/`.**
+`tools/` is baked into the Docker image — anything you write there is wiped on the next `docker compose up --build`.
+For new tools, ALWAYS use `custom_tool_manager(action=create, ...)`:
+- Saves script to `tools/custom/` (volume-mounted, survives rebuilds)
+- Registers in `brain/tools_extra.json` (gitignored, merged at runtime)
+- Validates syntax and safety before installing
+
+Wrong: `write_file(path="tools/my_tool.sh", ...)`
+Right: `custom_tool_manager(action=create, name="my_tool", code="...", description="...", parameters_json="{...}")`
+
 ---
 
 # Toolset System
