@@ -768,13 +768,19 @@
   },
   {
     "name": "delegate",
-    "description": "Delegate a coding task to a specialized sub-agent (Claude Code, Codex, or mini AMA). Supports blocking (sync) and non-blocking (async/tmux) modes for long-running tasks.\n\nModes:\n• sync (default) — blocks until done; good for tasks < 2 min\n• async — starts in tmux, returns session name immediately; use for tasks > 2 min\n• check — poll an async session: returns current output + status (running/completed/error)\n• kill — terminate an async session early\n• list — show all active async sessions\n\nAsync workflow: delegate(mode=async, goal=...) → get session name → delegate(mode=check, session=...) every 30-60s → done when status=completed.\n\nWhen to use async: large refactors, 'implement X from scratch', tasks that would block the agent for > 2 minutes.",
+    "description": "Delegate a coding task to a specialized sub-agent (Claude Code, Codex, or mini AMA). Supports blocking (sync) and non-blocking (async/tmux) modes for long-running tasks.\n\nModes:\n\u2022 sync (default) \u2014 blocks until done; good for tasks < 2 min\n\u2022 async \u2014 starts in tmux, returns session name immediately; use for tasks > 2 min\n\u2022 check \u2014 poll an async session: returns current output + status (running/completed/error)\n\u2022 kill \u2014 terminate an async session early\n\u2022 list \u2014 show all active async sessions\n\nAsync workflow: delegate(mode=async, goal=...) \u2192 get session name \u2192 delegate(mode=check, session=...) every 30-60s \u2192 done when status=completed.\n\nWhen to use async: large refactors, 'implement X from scratch', tasks that would block the agent for > 2 minutes.",
     "parameters": {
       "type": "object",
       "properties": {
         "mode": {
           "type": "string",
-          "enum": ["sync", "async", "check", "kill", "list"],
+          "enum": [
+            "sync",
+            "async",
+            "check",
+            "kill",
+            "list"
+          ],
           "description": "sync=blocking (default). async=start in tmux and return immediately. check=poll async session. kill=stop async session. list=show running sessions."
         },
         "goal": {
@@ -791,7 +797,7 @@
         },
         "notify_session": {
           "type": "string",
-          "description": "AMA session_id (e.g. tg_670967877). When set with mode=async, spawns a background watcher that sends Telegram messages directly every 3min and on completion. Always pass this — messages fire immediately without waiting for user input."
+          "description": "AMA session_id (e.g. tg_670967877). When set with mode=async, spawns a background watcher that sends Telegram messages directly every 3min and on completion. Always pass this \u2014 messages fire immediately without waiting for user input."
         },
         "notify_msg_id": {
           "type": "string",
@@ -799,7 +805,12 @@
         },
         "backend": {
           "type": "string",
-          "enum": ["auto", "claude", "codex", "self"],
+          "enum": [
+            "auto",
+            "claude",
+            "codex",
+            "self"
+          ],
           "description": "Agent backend (default: auto). self is sync-only."
         },
         "timeout": {
@@ -814,5 +825,34 @@
       "required": []
     },
     "toolset": "meta"
+  },
+  {
+    "name": "send_file",
+    "description": "Send a file from the server directly to the Telegram chat. Use this when the user asks for a file, a log, or a generated asset.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Absolute or relative path to the file on disk."
+        },
+        "caption": {
+          "type": "string",
+          "description": "Optional text to accompany the file."
+        },
+        "chat_id": {
+          "type": "string",
+          "description": "Optional: telegram chat id. Defaults to current chat."
+        },
+        "thread_id": {
+          "type": "string",
+          "description": "Optional: telegram thread/topic id."
+        }
+      },
+      "required": [
+        "path"
+      ]
+    },
+    "toolset": "core"
   }
 ]
