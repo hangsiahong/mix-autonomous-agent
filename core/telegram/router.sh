@@ -90,15 +90,75 @@ For code/text: cat \"${_mf_path}\""
         fi
     fi
 
-    # Group @mention gate (hermes-style): in groups only respond when @mentioned or replied-to
-    # Controlled by env REQUIRE_MENTION=1 or for all groups when not DM
+    # Per-group mode gate
+    # Mode resolved: per-group setting > REQUIRE_MENTION env fallback > active
+    # Modes: active (reply all) | mention_only (reply only @mention/reply) | silent (never reply)
+    local _group_mode="active"
+    if [[ "$chat_type" != "private" ]]; then
+        _group_mode=$(get_group_mode "$chat_id")
+        # If no per-group setting, fall back to global REQUIRE_MENTION env var
+        if [[ "$_group_mode" == "active" && "${REQUIRE_MENTION:-0}" == "1" ]]; then
+            _group_mode="mention_only"
+        fi
+    fi
+
+    # Determine whether to respond — slash commands always pass through
+    local _should_respond=true
     if [[ "$chat_type" != "private" && "$text" != /* ]]; then
-        local _require_mention="${REQUIRE_MENTION:-0}"
-        # If REQUIRE_MENTION is set, skip unless @mentioned or reply to bot
-        if [[ "$_require_mention" == "1" || "$_require_mention" == "true" ]]; then
-            if [[ "$is_mention" != "1" && "$is_reply_to_bot" != "1" ]]; then
-                return  # Silent drop — bot not addressed
+        case "$_group_mode" in
+            mention_only)
+                if [[ "$is_mention" != "1" && "$is_reply_to_bot" != "1" ]]; then
+                    _should_respond=false
+                fi
+                ;;
+            silent)
+                _should_respond=false
+                ;;
+        esac
+    fi
+
+    # Passive context: when not responding, save message to a rolling buffer
+    # so the agent has context when it IS eventually mentioned/called
+    if [[ "$_should_respond" == "false" ]]; then
+        local _passive_file="${DIR}/brain/state/passive_${session_id}.jsonl"
+        python3 -c "
+import json, sys, time
+entry = {'ts': time.time(), 'user': sys.argv[1], 'text': sys.argv[2]}
+path = sys.argv[3]
+with open(path, 'a') as f:
+    f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+lines = open(path).readlines()
+if len(lines) > 40:
+    open(path, 'w').writelines(lines[-40:])
+" "${username:-$user_id}" "$text" "$_passive_file" 2>/dev/null || true
+        return
+    fi
+
+    # When responding in mention_only mode: inject recent passive context so agent
+    # knows what was discussed before it was called
+    if [[ "$chat_type" != "private" && "$_group_mode" == "mention_only" ]]; then
+        local _passive_file="${DIR}/brain/state/passive_${session_id}.jsonl"
+        if [[ -f "$_passive_file" && -s "$_passive_file" ]]; then
+            local _pctx
+            _pctx=$(python3 -c "
+import json, sys
+lines = open(sys.argv[1]).readlines()[-20:]
+entries = []
+for l in lines:
+    try:
+        e = json.loads(l)
+        entries.append(f\"{e.get('user','?')}: {e.get('text','').strip()}\")
+    except: pass
+print('\n'.join(entries))
+" "$_passive_file" 2>/dev/null)
+            if [[ -n "$_pctx" ]]; then
+                text="[Recent group messages before you were mentioned — for context only, do NOT re-answer these]
+${_pctx}
+[End context]
+
+${text}"
             fi
+            rm -f "$_passive_file"
         fi
     fi
 
@@ -168,6 +228,7 @@ print(json.dumps(combined))
 /skills — list available skills
 /providers — show all providers (main + pool) with status
 /models — list available models • /models &lt;name&gt; to switch
+/group mode [active|mention_only|silent] — per-group reply behaviour (admin, groups only)
 /google_login — connect Google account (OAuth, free tier)
 /google_login_callback &lt;url&gt; — complete Google login
 
@@ -600,6 +661,51 @@ total = len(h)
 print(f'<b>History</b> (last {min(n,len(lines))} of {total} messages)\n\n' + '\n'.join(lines[-10:]) if lines else 'Session has no visible turns yet.')
 " 2>/dev/null || echo "Could not read history.")
                     tg_send "$chat_id" "$_hist_out" "$thread_id" "HTML"
+                fi
+                ;;
+
+            /group)
+                if [[ "$chat_type" == "private" ]]; then
+                    tg_send "$chat_id" "This command only works in groups." "$thread_id"
+                elif [[ "$user_id" != "${TG_ADMIN}" ]]; then
+                    tg_send "$chat_id" "Admin only." "$thread_id"
+                else
+                    local _gcmd; _gcmd=$(echo "$args" | awk '{print $1}')
+                    local _gval; _gval=$(echo "$args" | awk '{print $2}')
+                    case "$_gcmd" in
+                        mode)
+                            case "$_gval" in
+                                active|mention_only|silent)
+                                    set_group_mode "$chat_id" "$_gval"
+                                    local _desc=""
+                                    case "$_gval" in
+                                        active)       _desc="replies to all messages" ;;
+                                        mention_only) _desc="replies only when @mentioned or replied-to; reads everything silently" ;;
+                                        silent)       _desc="never replies; reads and learns silently" ;;
+                                    esac
+                                    tg_send "$chat_id" "✅ Group mode: <b>${_gval}</b>
+<i>${_desc}</i>" "$thread_id" "HTML"
+                                    ;;
+                                *)
+                                    tg_send "$chat_id" "Valid modes: <code>active</code> | <code>mention_only</code> | <code>silent</code>
+Example: <code>/group mode mention_only</code>" "$thread_id" "HTML"
+                                    ;;
+                            esac
+                            ;;
+                        status)
+                            local _cur; _cur=$(get_group_mode "$chat_id")
+                            tg_send "$chat_id" "Group mode: <b>${_cur}</b>
+Change with <code>/group mode [active|mention_only|silent]</code>" "$thread_id" "HTML"
+                            ;;
+                        *)
+                            tg_send "$chat_id" "<b>/group</b> — per-group behaviour
+
+<code>/group mode active</code> — reply to all messages
+<code>/group mode mention_only</code> — reply only when @mentioned; reads everything silently for context
+<code>/group mode silent</code> — never reply; reads and learns silently
+<code>/group status</code> — show current mode" "$thread_id" "HTML"
+                            ;;
+                    esac
                 fi
                 ;;
 

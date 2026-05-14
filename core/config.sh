@@ -120,3 +120,36 @@ print(json.dumps(d))
 
     save_config "$updated_config"
 }
+
+# Per-group mode config (independent of per-thread topic config above)
+# Modes: active (default) | mention_only | silent
+get_group_mode() {
+    local chat_id="$1"
+    CID="$chat_id" CF="$CONFIG_FILE" python3 -c "
+import json, os
+try:
+    d = json.load(open(os.environ['CF']))
+    gs = d.get('group_settings', {})
+    print(gs.get(os.environ['CID'], {}).get('mode', 'active'))
+except:
+    print('active')
+" 2>/dev/null
+}
+
+set_group_mode() {
+    local chat_id="$1"
+    local mode="$2"
+    local config; config=$(load_config)
+    local updated
+    updated=$(CID="$chat_id" MODE="$mode" python3 -c "
+import json, os, sys
+d = json.load(sys.stdin)
+if 'group_settings' not in d:
+    d['group_settings'] = {}
+if os.environ['CID'] not in d['group_settings']:
+    d['group_settings'][os.environ['CID']] = {}
+d['group_settings'][os.environ['CID']]['mode'] = os.environ['MODE']
+print(json.dumps(d))
+" <<< "$config")
+    save_config "$updated"
+}

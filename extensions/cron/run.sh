@@ -66,6 +66,11 @@ if [[ -d "$_uploads_dir" ]]; then
     echo "[$(date)] Upload cleanup: removed files older than 2h from brain/state/uploads/"
 fi
 
+# 2a2. Cleanup passive context buffers for idle sessions (older than 24h)
+# These accumulate in mention_only/silent groups — remove when session is long-gone
+find "${DIR}/brain/state" -maxdepth 1 -name "passive_*.jsonl" -mmin +1440 -delete 2>/dev/null && \
+    echo "[$(date)] Passive context cleanup: removed stale passive_*.jsonl files"
+
 # 2b. Cleanup log files (keep last N lines)
 for logfile in "${DIR}/brain/state/trajectories.jsonl" \
                "${DIR}/brain/state/tool_usage.jsonl" \
