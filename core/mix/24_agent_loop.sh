@@ -119,6 +119,8 @@ run_agent() {
         local total_tool_calls=0
         local all_tool_names=""
         local loop_completed=false
+        local total_input_tokens=0
+        local total_output_tokens=0
         while [ "$turn" -lt "$MAX_TURNS" ]; do
             turn=$((turn + 1))
             [[ "$turn" -gt 1 ]] && tg_send_action "$chat_id" "typing" "$thread_id"
@@ -141,6 +143,31 @@ run_agent() {
             [[ -n "$usage" ]] && log_usage "$session_id" "$usage" "$MODEL"
             local _ctx_warn=""
             [[ -n "$usage" ]] && _ctx_warn=$(context_warning "$usage" "$MODEL")
+
+            # Accumulate token counts across all turns for footer display
+            if [[ -n "$usage" ]]; then
+                local _it _ot
+                _it=$(printf '%s' "$usage" | python3 -c "import json,sys; u=json.load(sys.stdin); print(u.get('prompt_tokens',u.get('input_tokens',0)))" 2>/dev/null || echo 0)
+                _ot=$(printf '%s' "$usage" | python3 -c "import json,sys; u=json.load(sys.stdin); print(u.get('completion_tokens',u.get('output_tokens',0)))" 2>/dev/null || echo 0)
+                total_input_tokens=$((total_input_tokens + ${_it:-0}))
+                total_output_tokens=$((total_output_tokens + ${_ot:-0}))
+            fi
+
+            # Extract thinking snippet for between-tool display (Gemini thinking models)
+            # Thoughts arrive as <think>...</think> in text — show a brief excerpt to the user
+            local _thought_snippet=""
+            if [[ "$text" == *"<think>"* ]]; then
+                _thought_snippet=$(printf '%s' "$text" | python3 -c "
+import sys, re
+t = sys.stdin.read()
+m = re.search(r'<think[^>]*>(.*?)</think>', t, re.DOTALL | re.IGNORECASE)
+if m:
+    s = ' '.join(m.group(1).split())
+    s = s[:160] + ('…' if len(s) > 160 else '')
+    print(s.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;'))
+" 2>/dev/null || true)
+            fi
+
             [[ -n "$text" && "$text" != "null" ]] && append_text "assistant" "$text"
 
             if [[ -n "$tool_calls" && "$tool_calls" != "[]" && "$tool_calls" != "null" ]]; then
@@ -198,6 +225,8 @@ print(json.dumps(h, separators=(',',':')))
                 local _between_msg
                 _between_msg=$(TOOL_NAMES="$batch_names" \
                                STATUS_WORD="$_status_pick" \
+                               REASONING_SNIPPET="$_thought_snippet" \
+                               TOOL_COUNT="$total_tool_calls" \
                                python3 -c "
 import os
 EMOJI = {'bash':'🛠️','web_search':'🔍','fetch_url':'🌐','read_file':'📖','write_file':'✍️',
@@ -210,7 +239,10 @@ EMOJI = {'bash':'🛠️','web_search':'🔍','fetch_url':'🌐','read_file':'�
 names = [n.strip() for n in os.environ.get('TOOL_NAMES','').split(',') if n.strip()]
 lines = ['<code>' + EMOJI.get(n,'🧩') + ' ' + n.replace('_',' ') + '</code>' for n in names[:4]]
 word  = os.environ.get('STATUS_WORD','Thinking')
+snippet = os.environ.get('REASONING_SNIPPET','').strip()
 header = f'<i>{word}…</i>'
+if snippet:
+    header += f'\n<i>💭 {snippet}</i>'
 print(header + '\n' + '\n'.join(lines) if lines else f'⏳ {header}')
 " 2>/dev/null || echo "⏳ <i>Thinking…</i>")
                 tg_edit "$chat_id" "$msg_id" "$_between_msg" "HTML" > /dev/null 2>&1
@@ -237,9 +269,15 @@ print(header + '\n' + '\n'.join(lines) if lines else f'⏳ {header}')
             local _elapsed_total=$(( $(date +%s) - _turn_start ))
             local _elapsed_str=""
             [[ $_elapsed_total -ge 10 ]] && _elapsed_str=" ⏱ ${_elapsed_total}s"
+            # Token count across all turns (input + output)
+            local _tok_str=""
+            local _ttok=$((total_input_tokens + total_output_tokens))
+            if [[ $_ttok -gt 0 ]]; then
+                _tok_str=$(python3 -c "t=$_ttok; print(f' | {t/1000:.1f}k tok' if t>=1000 else f' | {t} tok')" 2>/dev/null || echo "")
+            fi
             if [[ $total_tool_calls -gt 0 && -n "$text" ]]; then
                 local footer_parts=$(echo "$all_tool_names" | tr ',' '\n' | sed 's/^ *//' | grep -v '^$' | sort | uniq -c | sort -rn | awk '{cnt=$1; name=$2; for(i=3;i<=NF;i++) name=name" "$i; if(cnt>1) print name" ×"cnt; else print name}' | paste -sd ', ')
-                local full_md="${text}"$'\n\n'"_🔧 ${total_tool_calls} tool call$([[ $total_tool_calls -ne 1 ]] && echo 's'): ${footer_parts}${_elapsed_str}_"
+                local full_md="${text}"$'\n\n'"_🔧 ${total_tool_calls} tool call$([[ $total_tool_calls -ne 1 ]] && echo 's'): ${footer_parts}${_tok_str}${_elapsed_str}_"
                 [[ -n "$_ctx_warn" ]] && full_md+=$'\n'"${_ctx_warn}"
                 tg_edit "$chat_id" "$msg_id" "$(md_to_tg_html "$full_md")" "HTML" > /dev/null
             elif [[ -n "$text" && "$text" != "null" && $total_tool_calls -eq 0 ]]; then
