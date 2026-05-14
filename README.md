@@ -97,11 +97,41 @@ pm2 logs ama-bot
 ```
 
 ### Docker
+
+**Quick start (recommended — docker-compose handles volumes automatically):**
+```bash
+# 1. Copy and fill in your secrets
+cp .env.example .env && nano .env
+
+# 2. Copy config files
+cp brain/config.example.json brain/config.json && nano brain/config.json
+cp brain/provider_pool.json.example brain/provider_pool.json && nano brain/provider_pool.json  # optional
+
+# 3. Build and run
+docker compose up -d --build
+
+# Follow logs
+docker compose logs -f
+```
+
+**Manual `docker run` (with all required volume mounts):**
 ```bash
 docker build -t ama-bot .
-docker run -d --env-file .env --name ama ama-bot
+
+docker run -d \
+  --name ama \
+  --restart unless-stopped \
+  --env-file .env \
+  -v "$(pwd)/brain:/opt/ama/brain" \
+  -v "$(pwd)/logs:/opt/ama/logs" \
+  -v "$(pwd)/skills:/opt/ama/skills" \
+  -v ama_memory:/root/ama_memory \
+  ama-bot
+
 docker logs -f ama
 ```
+
+> **Important:** The `-v` mounts are required for persistence. Without them, all conversation history, session state, and vector memories are lost when the container restarts.
 
 ---
 
