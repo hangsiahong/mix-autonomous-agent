@@ -31,13 +31,17 @@ except:
 }
 
 mark_rate_limited() {
+    # _AMA_NO_RATE_MARK=1: background tasks (reflection, recap) set this so their
+    # 429s don't poison the rate limit state for the main agent turn.
+    [[ "${_AMA_NO_RATE_MARK:-0}" == "1" ]] && return 0
+
     local provider="$1"
     local model="$2"
     local delay="${3:-60}"
-    
+
     mkdir -p "brain/state"
     [ ! -f "$RL_STATE_FILE" ] && echo "{}" > "$RL_STATE_FILE"
-    
+
     local key="${provider}_${model}"
     local backoff_until=$(( $(date +%s) + delay ))
     

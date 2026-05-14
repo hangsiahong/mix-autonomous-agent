@@ -504,7 +504,7 @@ call_api() {
   local sys_prompt_override="$1"
 
   local attempt=1
-  local max_attempts=3
+  local max_attempts=5
   while [ "$attempt" -le "$max_attempts" ]; do
       # Pool: pick best available provider/key for this attempt
       pool_apply "$attempt"
@@ -524,7 +524,23 @@ call_api() {
       fi
 
       if ! check_rate_limit "$PROVIDER" "$MODEL"; then
-          sleep 5
+          if [[ "$(pool_is_enabled)" == "true" ]]; then
+              sleep 3  # pool will rotate to next entry
+          else
+              # No pool — wait the actual remaining backoff time instead of making a
+              # doomed API call that just re-extends the 60s rate limit timer.
+              local _rl_remaining
+              _rl_remaining=$(python3 -c "
+import json, time
+try:
+    d = json.load(open('brain/state/rate_limits.json'))
+    until = float(d.get('${PROVIDER}_${MODEL}', 0))
+    print(max(5, int(until - time.time()) + 3))
+except: print(10)
+" 2>/dev/null || echo 10)
+              echo "AMA: Rate-limited, waiting ${_rl_remaining}s for quota reset..." >&2
+              sleep "$_rl_remaining"
+          fi
       fi
 
       # Build payload and request args fresh for this attempt (provider/model may differ)
@@ -610,7 +626,20 @@ print(json.dumps({'ts': ts, 'provider': prov, 'model': mod, 'code': code, 'reaso
       echo "$err_entry" >> "brain/state/error_log.jsonl"
 
       if [[ "$retryable" == "true" && "$attempt" -lt "$max_attempts" ]]; then
-          local delay=$((2 ** attempt + RANDOM % 5))
+          local delay
+          if [[ "$reason" == "rate_limit" ]]; then
+              # Wait until the actual rate limit expires — short waits just re-extend it.
+              delay=$(python3 -c "
+import json, time
+try:
+    d = json.load(open('brain/state/rate_limits.json'))
+    until = float(d.get('${PROVIDER}_${MODEL}', 0))
+    print(max(15, int(until - time.time()) + 5))
+except: print(60)
+" 2>/dev/null || echo 60)
+          else
+              delay=$(python3 -c "import random; a=$attempt; d=min(5.0*(2**(a-1)),60.0); print(int(d+random.uniform(0,0.5*d)))" 2>/dev/null || echo $((5 * attempt)))
+          fi
           echo "AMA: API Error $code ($reason), retrying in ${delay}s ($attempt/$max_attempts)" >&2
 
           # Pool handles rotation; static FALLBACK_PROVIDER only applies when pool is off

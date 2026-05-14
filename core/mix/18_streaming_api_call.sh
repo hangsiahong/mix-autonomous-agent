@@ -6,7 +6,7 @@ call_api_stream() {
     local sys_prompt_override="$4"
 
     local attempt=1
-    local max_attempts=3
+    local max_attempts=5
 
     while [ "$attempt" -le "$max_attempts" ]; do
         # Pool: pick best available provider/key for this attempt
@@ -317,16 +317,32 @@ EOF
              echo "AMA: Stream Error (Status $status). Err: $err_out" >&2
 
              if [[ "$attempt" -lt "$max_attempts" ]]; then
-                 # Mark pool entry limited if it was a 429/503
-                 if [[ "$err_out" == *"API HTTP 429"* || "$err_out" == *"API HTTP 503"* ]]; then
+                 local _is_rate_limit=false
+                 if [[ "$err_out" == *"API HTTP 429"* || "$err_out" == *"API HTTP 503"* || "$err_out" == *"RESOURCE_EXHAUSTED"* ]]; then
+                     _is_rate_limit=true
                      pool_mark_limited "${_POOL_IDX:-}" 60
+                     [[ "${_AMA_NO_RATE_MARK:-0}" != "1" ]] && mark_rate_limited "$PROVIDER" "$MODEL" 60
                  fi
                  if [[ "$(pool_is_enabled)" != "true" && -n "$FALLBACK_MODEL" && "$MODEL" != "$FALLBACK_MODEL" ]]; then
                      echo "AMA: Switching to fallback model $FALLBACK_MODEL" >&2
                      MODEL="$FALLBACK_MODEL"
                  fi
                  local delay
-                 delay=$(python3 -c "import random; a=$attempt; d=min(5.0*(2**(a-1)),60.0); print(f'{d+random.uniform(0,0.5*d):.1f}')" 2>/dev/null || echo $((5 * attempt)))
+                 if [[ "$_is_rate_limit" == "true" && "$(pool_is_enabled)" != "true" ]]; then
+                     # Wait until actual rate limit expires — rapid retries just re-extend it
+                     delay=$(python3 -c "
+import json, time
+try:
+    d = json.load(open('brain/state/rate_limits.json'))
+    until = float(d.get('${PROVIDER}_${MODEL}', 0))
+    print(max(15, int(until - time.time()) + 5))
+except: print(60)
+" 2>/dev/null || echo 60)
+                     echo "AMA: Rate-limited, waiting ${delay}s for quota reset (attempt $attempt/$max_attempts)..." >&2
+                 else
+                     delay=$(python3 -c "import random; a=$attempt; d=min(5.0*(2**(a-1)),60.0); print(f'{d+random.uniform(0,0.5*d):.1f}')" 2>/dev/null || echo $((5 * attempt)))
+                     echo "AMA: Stream error, retrying in ${delay}s (attempt $attempt/$max_attempts)..." >&2
+                 fi
                  sleep "$delay"
                  attempt=$((attempt + 1))
                  continue

@@ -38,7 +38,11 @@ Rules: Be concise. Total under 200 words. No preamble. Respond ONLY with the str
     # Avoids the race condition where concurrent reflect_turn reads [] as its backup.
     local _saved_override="${AMA_TOOLS_OVERRIDE:-}"
     export AMA_TOOLS_OVERRIDE="[]"
-    trap 'export AMA_TOOLS_OVERRIDE="$_saved_override"; HISTORY="$saved_history"' EXIT INT TERM
+    # Prevent recap's 429s from poisoning the main agent's rate limit state.
+    # Recap runs in background — it should fail silently, not block next user turn.
+    local _saved_no_rate_mark="${_AMA_NO_RATE_MARK:-0}"
+    export _AMA_NO_RATE_MARK=1
+    trap 'export AMA_TOOLS_OVERRIDE="$_saved_override"; export _AMA_NO_RATE_MARK="$_saved_no_rate_mark"; HISTORY="$saved_history"' EXIT INT TERM
 
     local _sp_tmp; _sp_tmp=$(mktemp)
     printf '%s' "$recap_prompt" > "$_sp_tmp"
@@ -193,7 +197,10 @@ except:
     # eliminates the race condition with concurrent save_session_recap
     local _saved_override="${AMA_TOOLS_OVERRIDE:-}"
     export AMA_TOOLS_OVERRIDE="$_safe_tools"
-    trap 'export AMA_TOOLS_OVERRIDE="$_saved_override"; HISTORY="$temp_history"' EXIT INT TERM
+    # Prevent reflection's 429s from poisoning the main agent's rate limit state
+    local _saved_no_rate="${_AMA_NO_RATE_MARK:-0}"
+    export _AMA_NO_RATE_MARK=1
+    trap 'export AMA_TOOLS_OVERRIDE="$_saved_override"; export _AMA_NO_RATE_MARK="$_saved_no_rate"; HISTORY="$temp_history"' EXIT INT TERM
 
     local turn=0
     while [ "$turn" -lt 5 ]; do
