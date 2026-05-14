@@ -45,14 +45,25 @@ def compression_threshold(model: str) -> int:
     return int(context_window(model) * _COMPRESSION_RATIO)
 
 
+_TIKTOKEN_AVAILABLE: bool | None = None
+
 def count_tokens(text: str) -> int:
-    try:
+    global _TIKTOKEN_AVAILABLE
+    if _TIKTOKEN_AVAILABLE is None:
+        try:
+            import tiktoken as _t; _t.get_encoding("cl100k_base")
+            _TIKTOKEN_AVAILABLE = True
+        except ImportError:
+            _TIKTOKEN_AVAILABLE = False
+            import sys
+            print("[token_counter] tiktoken not installed — using char-based estimate (~10% less accurate). Install: pip install tiktoken", file=sys.stderr)
+
+    if _TIKTOKEN_AVAILABLE:
         import tiktoken
         enc = tiktoken.get_encoding("cl100k_base")
         return len(enc.encode(text))
-    except ImportError:
-        pass
-    # Improved estimate: CJK chars tokenize at ~1.5 chars/token; ASCII at ~3.5
+
+    # Improved char-based estimate: CJK ~1.5 chars/token; ASCII ~3.5
     cjk = sum(
         1 for c in text
         if '一' <= c <= '鿿'

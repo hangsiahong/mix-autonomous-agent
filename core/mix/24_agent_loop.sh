@@ -263,12 +263,13 @@ print(header + '\n' + '\n'.join(lines) if lines else f'⏳ {header}')
 
         save_history "$session_id"
         log_trajectory "$session_id" "completed"
-        ( reflect_turn "$chat_id" "$thread_id" "$session_id" & )
+        # Reflect only when tools were used — no-tool Q&A turns have nothing to analyze
+        [[ $total_tool_calls -gt 0 ]] && ( reflect_turn "$chat_id" "$thread_id" "$session_id" & )
         [[ "$loop_completed" == true && $total_tool_calls -gt 0 ]] && \
             ( save_session_recap "$session_id" "$chat_id" "$thread_id" & )
-        # Pre-warm memory for next turn in background (hermes queue_prefetch_all pattern)
-        # Result stored in prefetch cache so next _api_build_payload finds it instantly
-        if [[ "${MEMORY_PREFETCH:-1}" != "0" && -n "$text" ]]; then
+        # Pre-warm memory for next turn — only when tools were used (meaningful content).
+        # Skipping on no-tool turns avoids wasting an embedding API call for simple Q&A.
+        if [[ "${MEMORY_PREFETCH:-1}" != "0" && -n "$text" && $total_tool_calls -gt 0 ]]; then
             local _prefetch_cache="${DIR}/brain/state/prefetch_${session_id}"
             local _next_query
             _next_query=$(printf '%s' "$text" | head -c 300)

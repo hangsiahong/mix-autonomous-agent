@@ -7,10 +7,10 @@ save_session_recap() {
     local chat_id="$2"
     local thread_id="$3"
 
-    # Skip for short sessions (< 4 messages) — nothing worth recapping
+    # Skip for short sessions (< 8 messages) — not enough substance to recap
     local count
     count=$(python3 -c "import json,sys; print(len(json.loads(open(sys.argv[1]).read())))" <(printf '%s' "$HISTORY") 2>/dev/null); count=${count:-0}
-    [[ "$count" -lt 4 ]] && return
+    [[ "$count" -lt 8 ]] && return
 
     # Skip for offline models — too slow for background recap
     [[ "$PROVIDER" == "ollama" ]] && return
