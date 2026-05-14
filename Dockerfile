@@ -5,17 +5,18 @@ ENV PYTHONUNBUFFERED=1
 # Store Playwright browsers outside any volume mounts
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ama/.playwright
 
-# System deps: bash, python3, curl, jq, nodejs (for pm2), git, ripgrep
+# System deps: bash, python3, curl, jq, nodejs (for pm2), git, ripgrep, fd
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         bash curl jq git procps \
         python3 python3-pip python3-venv \
         nodejs npm \
-        ripgrep ca-certificates \
+        ripgrep fd-find ca-certificates \
         # Playwright Chromium system deps
         libnss3 libnspr4 libdbus-1-3 libatk1.0-0 libatk-bridge2.0-0 \
         libcups2 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 \
         libxfixes3 libxrandr2 libgbm1 libasound2 && \
+    ln -sf /usr/bin/fdfind /usr/local/bin/fd && \
     rm -rf /var/lib/apt/lists/*
 
 # Install pm2 globally
@@ -42,6 +43,12 @@ COPY . .
 #   OPENAI_API_KEY        For OpenAI provider
 #   PROVIDER              google | anthropic | openai (default: google)
 #   MODEL                 Model name override
+#
+# Recommended volumes for persistence (use docker-compose.yml for convenience):
+#   -v ./brain:/opt/ama/brain        (config, tools, session history)
+#   -v ./logs:/opt/ama/logs          (bot logs)
+#   -v ./skills:/opt/ama/skills      (agent-installed skills)
+#   -v ama_memory:/root/ama_memory   (LanceDB vector memory — survives rebuilds)
 
 # Bot logs
 RUN mkdir -p logs brain/state

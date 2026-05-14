@@ -86,11 +86,37 @@ if len(lines) > 120:
     open('$recaps_file', 'w').writelines(lines[-100:])
 " <(printf '%s' "$recap_text") "$session_id" 2>/dev/null
 
-    # 2. Save to vector memory for future recall across sessions
+    # 2. Save full recap narrative to vector memory for broad semantic recall
     if [[ -f "tools/memory_helper.py" ]]; then
         python3 tools/memory_helper.py save \
             "[Session Recap $session_id] $recap_text" \
             "{\"session_id\": \"$session_id\", \"type\": \"session_recap\"}" 2>/dev/null || true
+    fi
+
+    # 3. Extract individual "Key Facts Learned" bullets → discrete LanceDB entries
+    #    Each fact gets its own embedding so "does user prefer X?" finds it precisely
+    if [[ -f "tools/memory_helper.py" ]]; then
+        local _recap_tmp; _recap_tmp=$(mktemp)
+        printf '%s' "$recap_text" > "$_recap_tmp"
+        python3 - "$_recap_tmp" "$session_id" <<'PYEOF' 2>/dev/null || true
+import re, json, subprocess, sys
+
+recap = open(sys.argv[1]).read()
+session_id = sys.argv[2]
+
+m = re.search(r'##\s+Key Facts Learned\s*\n(.*?)(?=\n##|\Z)', recap, re.DOTALL | re.IGNORECASE)
+if m:
+    for line in m.group(1).splitlines():
+        fact = re.sub(r'^[\s\-\*•]+', '', line).strip()
+        if len(fact) < 15:
+            continue
+        meta = json.dumps({"session_id": session_id, "type": "fact", "source": "auto_extract"})
+        subprocess.run(
+            ["python3", "tools/memory_helper.py", "save", fact, meta],
+            capture_output=True
+        )
+PYEOF
+        rm -f "$_recap_tmp"
     fi
 
     echo "AMA: Session recap saved for $session_id."

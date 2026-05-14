@@ -13,3 +13,8 @@ services:
       - ./logs:/opt/ama/logs
       # Skill repos cloned by the agent (cache — can be deleted freely)
       - ./skills:/opt/ama/skills
+      # LanceDB vector memory — persists across rebuilds (stored at ~/ama_memory in container)
+      - ama_memory:/root/ama_memory
+
+volumes:
+  ama_memory:

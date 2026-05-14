@@ -19,6 +19,8 @@ build/
 # ── Instance config (gitignore so git pull never conflicts) ───────────────────
 # Provide brain/config.example.json as the template; users copy → config.json
 brain/config.json
+# Provider pool — contains API keys; copy from brain/provider_pool.json.example
+brain/provider_pool.json
 
 # ── Persona (user-editable, should not be overwritten by upstream updates) ────
 SOUL.md
