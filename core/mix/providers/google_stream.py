@@ -50,6 +50,8 @@ def update_tg(tg_url, chat_id, message_id, text):
         sys.stderr.write(f"TG edit error: {e}\n")
 
 def main():
+    try: open("/tmp/ama_think_debug.log","a").write("STREAM_PY_CALLED\n")
+    except: pass
     tg_token = os.environ.get("TG_TOKEN")
     chat_id = os.environ.get("CHAT_ID")
     message_id = os.environ.get("MESSAGE_ID")
@@ -68,7 +70,10 @@ def main():
         payload_data = sys.stdin.read()
         payload = json.loads(payload_data)
     except Exception as e:
-        sys.stderr.write(f"Payload error: {e}\n")
+        msg = f"Payload error: {e} (stdin len={len(payload_data) if 'payload_data' in dir() else '?'})"
+        sys.stderr.write(msg + "\n")
+        try: open("/tmp/ama_think_debug.log","a").write(msg + "\n")
+        except: pass
         sys.exit(1)
 
     # Debug: log what thinking config we're actually sending
