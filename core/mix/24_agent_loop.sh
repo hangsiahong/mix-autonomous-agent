@@ -297,6 +297,11 @@ print(header + '\n' + '\n'.join(lines) if lines else f'⏳ {header}')
             break
         done
 
+        # Delete Stop button message now that the agent is done
+        local _sbid; _sbid=$(cat "$stop_btn_file" 2>/dev/null)
+        [[ -n "$_sbid" ]] && tg_delete "$chat_id" "$_sbid" > /dev/null 2>&1 || true
+        rm -f "$stop_btn_file"
+
         if [[ "$loop_completed" == true ]]; then
             local _elapsed_total=$(( $(date +%s) - _turn_start ))
             local _elapsed_str=""
