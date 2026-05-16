@@ -91,6 +91,7 @@ def main():
     tool_calls = []
     usage = None
     last_update = time.time()
+    _think_shown = False  # whether we've displayed thinking snippet at least once
 
     # ── Tool progress (openclaw-style) ──
     _TOOL_EMOJI = {
@@ -157,6 +158,13 @@ def main():
                     for p in parts:
                         if "text" in p and p.get("thought"):
                             thought_text += p["text"]
+                            # Show immediately on first thought — don't wait for 2s debounce
+                            if not _think_shown and not full_text and not tool_calls:
+                                snippet = " ".join(thought_text.split())[-120:]
+                                escaped = snippet.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+                                update_tg(tg_url, chat_id, message_id, f"💭 <i>{escaped}…</i>")
+                                _think_shown = True
+                                last_update = time.time()
                         elif "text" in p:
                             full_text += p["text"]
                         if "functionCall" in p:
@@ -204,16 +212,21 @@ def main():
 
     _typing_stop.set()
 
-    # Final Telegram update
-    sys.stderr.write(f"DBG: full_text_len={len(full_text)} msg_id={message_id} chat_id={chat_id}\n")
+    # Final Telegram update — include reasoning snippet directly so it's visible immediately
+    _think_snippet_html = ""
+    if thought_text.strip():
+        _ts = " ".join(thought_text.split())[:300]
+        _ts_esc = _ts.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+        _think_snippet_html = f"\n💭 <i>{_ts_esc}</i>"
+
+    sys.stderr.write(f"DBG: full_text={len(full_text)} thought={len(thought_text)} msg={message_id}\n")
     if tool_calls:
         update_tg(tg_url, chat_id, message_id, _build_display(full_text, tool_calls))
     elif full_text:
-        update_tg(tg_url, chat_id, message_id, full_text)
+        update_tg(tg_url, chat_id, message_id, full_text + _think_snippet_html)
 
-    # Final logic
+    # Emit THINK: line so agent loop can use snippet in between-tool messages
     if thought_text.strip():
-        # Emit first 300 chars of reasoning — agent loop shows as 💭 snippet
         snippet = " ".join(thought_text.split())[:300]
         print(f"THINK:{snippet}")
     print(f"TC:{json.dumps(tool_calls)}")
