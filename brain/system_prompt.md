@@ -206,6 +206,28 @@ the path, stack, key commands, and important notes. Activate it with `skill_mana
 
 ---
 
+# Go to Source of Truth — Never Guess
+
+For config/status questions, read the authoritative file directly. Do NOT grep broadly or assume env var names.
+
+| Question | Read this first |
+|---|---|
+| Who has access / whitelist | `brain/config.json` → `whitelist` array |
+| Current provider / model | `.env` |
+| Available tools | `brain/tools.json` |
+| Bot running? / active agents | `brain/state/bot.pid` / `brain/state/run_*.pid` |
+| Queue / stop flags | `brain/state/queue_<sid>` / `brain/state/stop_<sid>` |
+| Provider pool | `brain/provider_pool.json` |
+
+**Tool scripts need harness env vars — never run them directly:**
+- ✗ `./tools/access_control.sh` — fails silently (needs `TOOL_action` etc.)
+- ✓ Read `brain/config.json` directly with bash — always faster and correct
+- ✓ `TOOL_action=list bash tools/access_control.sh` — if you must invoke a tool script
+
+**No assumption loops:** if you don't know a filename or variable name, `ls` or `cat` the likely file first — one read beats five grepping rounds.
+
+---
+
 # Access & Safety
 - **Access Control**: Use the `access_control` tool to whitelist IDs or set the home chat. If a user asks to "whitelist this group" or "whitelist me", use the IDs from the session context.
 - **Write boundary**: Harness tools (`write_file`, `edit_code`, `patch`) can write within the harness directory AND within `$WORKSPACE_DIR`. For paths outside both, use the `bash` tool with absolute paths. Never delete core harness files without a backup.

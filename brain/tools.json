@@ -47,7 +47,7 @@
   },
   {
     "name": "bash",
-    "description": "Run a bash command in the project directory. Use this to read files (cat), list directories (ls), search code (grep), check git status, run scripts, or any shell operation. SAFETY: blocks reads of /etc/{passwd,shadow}, ~/.ssh, .env, credential exfil patterns, reverse shells, and obviously destructive commands (rm -rf /, mkfs, dd of=/dev/sdX, fork bombs). Hard-capped at TOOL_timeout seconds (default 30, max 120).",
+    "description": "Run a bash command in the project directory. Blocked: /etc/passwd, ~/.ssh, .env reads, destructive commands (rm -rf /, mkfs, fork bombs). Capped at TOOL_timeout seconds (default 30, max 120).",
     "parameters": {
       "type": "object",
       "properties": {
@@ -300,7 +300,7 @@
   },
   {
     "name": "edit_code",
-    "description": "Edit a file by replacing one block of text with another. Multi-line strings are supported and encouraged for non-trivial edits. Uses a 9-strategy fuzzy matcher (exact \u2192 whitespace/indent normalised \u2192 unicode-normalised \u2192 block-anchor) so small whitespace drift between your old_string and the file is tolerated. The match must be unique unless replace_all=true. For .sh / .py / .json files the result is syntax-checked and the edit is rejected if it would break the file. Returns a unified diff. Use `patch` for multi-file or multi-hunk changes.",
+    "description": "Replace old_string with new_string in a file. Tolerates minor whitespace/indent drift. Match must be unique unless replace_all=true. Validates syntax for .sh/.py/.json. Returns unified diff. Use patch for multi-file or multi-hunk changes.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -331,7 +331,7 @@
   },
   {
     "name": "patch",
-    "description": "Apply a multi-file, multi-hunk patch in V4A format. Use this whenever you need to change several files coherently or make multiple edits in one file. Two-phase: every operation is validated in-memory first; if anything fails NO files are touched. V4A grammar:\n\n*** Begin Patch\n*** Update File: path/to/file\n@@ optional context hint @@\n unchanged context line (space prefix)\n-removed line\n+added line\n*** Add File: path/new\n+content\n*** Delete File: path/old\n*** Move File: src -> dst\n*** End Patch\n\nReturns a combined unified diff on success.",
+    "description": "Apply a V4A-format patch for multi-file or multi-hunk edits. Two-phase: validates everything in-memory first \u2014 if any op fails, nothing is written. Format: *** Begin Patch / *** Update File: path @@ hint @@ -old +new / *** Add File: path / *** End Patch",
     "parameters": {
       "type": "object",
       "properties": {
@@ -348,7 +348,7 @@
   },
   {
     "name": "repo_map",
-    "description": "Get a smart repository map: file tree + function/class symbols extracted with ripgrep + entry points. Use this first when you need to understand where logic lives before searching or editing. Much faster than reading files one by one. Optional: TOOL_query to focus on files matching a pattern, TOOL_path for a subtree, TOOL_depth for tree depth.",
+    "description": "File tree + function/class symbols via ripgrep. Use before editing to locate where logic lives. Faster than reading files one by one. Optional: TOOL_query (file filter), TOOL_path (subtree), TOOL_depth (tree depth).",
     "parameters": {
       "type": "object",
       "properties": {
@@ -699,7 +699,7 @@
   },
   {
     "name": "ast_edit",
-    "description": "AST-aware Python editor. Validates syntax before and after every change \u2014 impossible to produce broken Python. Actions: validate (check syntax + list symbols), list_symbols (all functions/classes with line numbers), get_symbol (extract a function/class by name), replace_func (replace entire function/class by name), add_import (add import safely), rename (rename symbol everywhere in file). Use this instead of edit_code for Python structural changes.",
+    "description": "AST-aware Python editor. Validates syntax before and after every change. Actions: validate, list_symbols, get_symbol, replace_func, add_import, rename. Use instead of edit_code for Python structural changes.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -745,7 +745,7 @@
         "path"
       ]
     },
-    "toolset": "core"
+    "toolset": "inspect"
   },
   {
     "name": "last_session",
@@ -768,7 +768,7 @@
   },
   {
     "name": "delegate",
-    "description": "Delegate a coding task to a specialized sub-agent (Claude Code, Codex, or mini AMA). Supports blocking (sync) and non-blocking (async/tmux) modes for long-running tasks.\n\nModes:\n\u2022 sync (default) \u2014 blocks until done; good for tasks < 2 min\n\u2022 async \u2014 starts in tmux, returns session name immediately; use for tasks > 2 min\n\u2022 check \u2014 poll an async session: returns current output + status (running/completed/error)\n\u2022 kill \u2014 terminate an async session early\n\u2022 list \u2014 show all active async sessions\n\nAsync workflow: delegate(mode=async, goal=...) \u2192 get session name \u2192 delegate(mode=check, session=...) every 30-60s \u2192 done when status=completed.\n\nWhen to use async: large refactors, 'implement X from scratch', tasks that would block the agent for > 2 minutes.",
+    "description": "Delegate a task to a sub-agent (Claude Code, Codex, or mini AMA). sync: blocks until done (< 2 min tasks). async: starts in tmux, returns session name \u2014 poll with mode=check every 30-60s. kill: stop session. list: show active sessions.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -824,7 +824,7 @@
       },
       "required": []
     },
-    "toolset": "meta"
+    "toolset": "inspect"
   },
   {
     "name": "send_file",
