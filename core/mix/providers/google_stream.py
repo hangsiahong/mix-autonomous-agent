@@ -63,8 +63,8 @@ def main():
     if ":generateContent" in url:
         url = url.replace(":generateContent", ":streamGenerateContent")
     
-    if mode == "studio" and "alt=sse" not in url:
-        url += "&alt=sse"
+    if "alt=sse" not in url:
+        url += ("&" if "?" in url else "?") + "alt=sse"
 
     try:
         payload_data = sys.stdin.read()
