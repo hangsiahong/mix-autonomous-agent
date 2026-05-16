@@ -71,6 +71,10 @@ def main():
         sys.stderr.write(f"Payload error: {e}\n")
         sys.exit(1)
 
+    # Debug: log what thinking config we're actually sending
+    gc = payload.get("generationConfig", {})
+    sys.stderr.write(f"DBG thinkingConfig: {json.dumps(gc.get('thinkingConfig', 'NOT SET'))}\n")
+
     headers = {"Content-Type": "application/json"}
     if mode == "vertex":
         headers["Authorization"] = f"Bearer {api_key}"
@@ -157,6 +161,8 @@ def main():
                     parts = content.get("parts", [])
 
                     for p in parts:
+                        if p.get("thought") or "thoughtSignature" in p:
+                            sys.stderr.write(f"DBG thought part: keys={list(p.keys())} thought={p.get('thought')} textlen={len(p.get('text',''))}\n")
                         if "text" in p and p.get("thought"):
                             thought_text += p["text"]
                             now = time.time()
