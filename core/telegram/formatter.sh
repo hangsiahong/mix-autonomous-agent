@@ -37,7 +37,17 @@ def md_to_html(text):
             p = re.sub(r"~~(.+?)~~", r"<s>\1</s>", p)
             p = re.sub(r"\[([^\]]+)\]\((https?://[^)]+)\)", r"<a href=\"\2\">\1</a>", p)
             result.append(p)
-    return "".join(result)
+    
+    html = "".join(result)
+    
+    def format_think(match):
+        content = match.group(2)
+        if len(content) > 1000:
+            content = content[:500] + "\n\n<i>... [thinking truncated] ...</i>\n\n" + content[-500:]
+        return f"<blockquote><b>🧠 Thinking</b>\n<i>{content.strip()}</i></blockquote>\n"
+        
+    html = re.sub(r"&lt;(think|thinking|reasoning|thought)&gt;(.*?)(&lt;/\1&gt;|$)", format_think, html, flags=re.DOTALL|re.IGNORECASE)
+    return html
 
 print(md_to_html(sys.stdin.read()), end="")
 '

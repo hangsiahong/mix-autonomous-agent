@@ -170,7 +170,6 @@ def _scrub_think(text):
     return re.sub(r"<(think|thinking|thought)>.*?(</\1>|$)", "", text,
                   flags=re.DOTALL | re.IGNORECASE).strip()
 
-
 def _md_to_html(text):
     result = []
     for i, part in enumerate(re.split(r"(```[\w]*\n?[\s\S]*?```|`[^`\n]+`)", text)):
@@ -189,7 +188,17 @@ def _md_to_html(text):
             p = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", p, flags=re.DOTALL)
             p = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\s)\*(?!\*)", r"<i>\1</i>", p)
             result.append(p)
-    return "".join(result)
+            
+    html = "".join(result)
+    
+    def format_think(match):
+        content = match.group(2)
+        if len(content) > 1000:
+            content = content[:500] + "\n\n<i>... [thinking truncated] ...</i>\n\n" + content[-500:]
+        return f"<blockquote><b>🧠 Thinking</b>\n<i>{content.strip()}</i></blockquote>\n"
+        
+    html = re.sub(r"&lt;(think|thinking|reasoning|thought)&gt;(.*?)(&lt;/\1&gt;|$)", format_think, html, flags=re.DOTALL|re.IGNORECASE)
+    return html
 
 
 def update_tg(text: str, *, force: bool = False):
@@ -198,7 +207,8 @@ def update_tg(text: str, *, force: bool = False):
     now = time.time()
     if not force and now - _last_update[0] < 1.5:
         return
-    clean = _scrub_think(text)
+    
+    clean = text.strip()
     if not clean or clean == _last_sent[0]:
         return
     _last_update[0] = now

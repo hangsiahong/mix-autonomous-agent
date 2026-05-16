@@ -29,12 +29,22 @@ def md_to_html(text):
             href_repl = "<a href=\"" + "\\2" + "\">" + "\\1" + "</a>"
             p = re.sub(r"\[([^\]]+)\]\((https?://[^)]+)\)", href_repl, p)
             result.append(p)
-    return "".join(result)
+            
+    html = "".join(result)
+    
+    def format_think(match):
+        content = match.group(2)
+        if len(content) > 1000:
+            content = content[:500] + "\n\n<i>... [thinking truncated] ...</i>\n\n" + content[-500:]
+        return "<blockquote><b>🧠 Thinking</b>\n<i>" + content.strip() + "</i></blockquote>\n"
+        
+    html = re.sub(r"&lt;(think|thinking|reasoning|thought)&gt;(.*?)(&lt;/\1&gt;|$)", format_think, html, flags=re.DOTALL|re.IGNORECASE)
+    return html
 
 def update_tg(tg_url, chat_id, message_id, text):
     if not text: return
-    # Scrub thinking blocks from Telegram output
-    clean_text = re.sub(r"<(think|thinking|reasoning|thought|memory-context)>.*?(</\1>|$)", "", text, flags=re.DOTALL | re.IGNORECASE)
+    # Do not scrub thinking blocks anymore, they are formatted by md_to_html
+    clean_text = text
     if not clean_text.strip(): return
     html = md_to_html(clean_text.strip())
     try:
@@ -50,8 +60,6 @@ def update_tg(tg_url, chat_id, message_id, text):
         sys.stderr.write(f"TG edit error: {e}\n")
 
 def main():
-    try: open("/tmp/ama_think_debug.log","a").write("STREAM_PY_CALLED\n")
-    except: pass
     tg_token = os.environ.get("TG_TOKEN")
     chat_id = os.environ.get("CHAT_ID")
     message_id = os.environ.get("MESSAGE_ID")
@@ -70,28 +78,8 @@ def main():
         payload_data = sys.stdin.read()
         payload = json.loads(payload_data)
     except Exception as e:
-        msg = f"Payload error: {e} (stdin len={len(payload_data) if 'payload_data' in dir() else '?'})"
-        sys.stderr.write(msg + "\n")
-        try: open("/tmp/ama_think_debug.log","a").write(msg + "\n")
-        except: pass
+        sys.stderr.write(f"Payload error: {e}\n")
         sys.exit(1)
-
-    # Apply thinkingConfig directly from THINKING_BUDGET env var — reliable, no shell builder needed
-    _budgets = {"none": 0, "low": 1024, "medium": 8192, "high": 24576, "max": -1}
-    _tb = os.environ.get("THINKING_BUDGET", "low")
-    if _tb != "none":
-        payload.setdefault("generationConfig", {})["thinkingConfig"] = {
-            "includeThoughts": True,
-            "thinkingBudget": _budgets.get(_tb, 1024)
-        }
-
-    # Debug: confirm thinkingConfig is now in payload
-    gc = payload.get("generationConfig", {})
-    _dbg = f"thinkingConfig={json.dumps(gc.get('thinkingConfig', 'NOT_SET'))}"
-    sys.stderr.write(f"DBG {_dbg}\n")
-    try:
-        open("/tmp/ama_think_debug.log", "a").write(f"{_dbg}\n")
-    except: pass
 
     # Determine auth: try gcloud OAuth2 first; fall back to API key header
     import subprocess as _sp
@@ -179,15 +167,9 @@ def main():
                         continue
                     sys.exit(1)
 
-                _sse_count = 0
                 for line in r.iter_lines():
                     if not line: continue
                     line = line.decode("utf-8")
-                    # Log first 3 raw SSE lines to debug
-                    if _sse_count < 3:
-                        _sse_count += 1
-                        try: open("/tmp/ama_think_debug.log","a").write(f"SSE[{_sse_count}]: {line[:300]}\n")
-                        except: pass
                     if not line.startswith("data: "): continue
 
                     try:
@@ -199,12 +181,6 @@ def main():
                     parts = content.get("parts", [])
 
                     for p in parts:
-                        _pkeys = [k for k in p.keys() if k != "text"]
-                        if _pkeys or p.get("thought"):
-                            _pmsg = f"part keys={_pkeys} thought={p.get('thought')} textlen={len(p.get('text',''))}"
-                            sys.stderr.write(f"DBG {_pmsg}\n")
-                            try: open("/tmp/ama_think_debug.log","a").write(f"{_pmsg}\n")
-                            except: pass
                         if "text" in p and p.get("thought"):
                             thought_text += p["text"]
                             now = time.time()
@@ -287,7 +263,6 @@ def main():
         _ts_esc = _ts.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
         _think_snippet_html = f"\n💭 <i>{_ts_esc}</i>"
 
-    sys.stderr.write(f"DBG: full_text={len(full_text)} thought={len(thought_text)} msg={message_id}\n")
     if tool_calls:
         update_tg(tg_url, chat_id, message_id, _build_display(full_text, tool_calls))
     elif full_text:

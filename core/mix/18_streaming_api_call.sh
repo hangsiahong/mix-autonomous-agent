@@ -143,12 +143,22 @@ def md_to_html(text):
             href_repl = "<a href=\"" + "\\2" + "\">" + "\\1" + "</a>"
             p = re.sub(r"\[([^\]]+)\]\((https?://[^)]+)\)", href_repl, p)
             result.append(p)
-    return "".join(result)
+            
+    html = "".join(result)
+    
+    def format_think(match):
+        content = match.group(2)
+        if len(content) > 1000:
+            content = content[:500] + "\n\n<i>... [thinking truncated] ...</i>\n\n" + content[-500:]
+        return "<blockquote><b>🧠 Thinking</b>\n<i>" + content.strip() + "</i></blockquote>\n"
+        
+    html = re.sub(r"&lt;(think|thinking|reasoning|thought)&gt;(.*?)(&lt;/\1&gt;|$)", format_think, html, flags=re.DOTALL|re.IGNORECASE)
+    return html
 
 def update_tg(text):
     if not text: return
-    # Scrub thinking blocks from Telegram output
-    clean_text = re.sub(r"<(think|thinking|reasoning|thought|memory-context)>.*?(</\1>|$)", "", text, flags=re.DOTALL | re.IGNORECASE)
+    # Do not scrub thinking blocks anymore, they are formatted by md_to_html
+    clean_text = text
     if not clean_text.strip(): return
     html = md_to_html(clean_text.strip())
     try:
@@ -245,8 +255,6 @@ while _stream_attempt < MAX_STREAM_ATTEMPTS:
                 usage = data["usage"]
 
             delta = data.get("choices", [{}])[0].get("delta", {})
-            if delta and set(delta.keys()) - {"content", "role"}:
-                import sys as _s; _s.stderr.write(f"DELTA_KEYS:{list(delta.keys())}\n")
 
             if "thought" in delta and delta["thought"]:
                 if not thought_active:
