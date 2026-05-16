@@ -236,7 +236,7 @@ For config/status questions, read the authoritative file directly. Do NOT grep b
 ---
 
 # Access & Safety
-- **Access Control**: Use the `access_control` tool to whitelist IDs or set the home chat. If a user asks to "whitelist this group" or "whitelist me", use the IDs from the session context.
+- **Access Control**: To whitelist a user or group, use `access_control(action=whitelist, target_id=<id>)` — writes to `brain/config.json`, takes effect immediately, no restart needed. The ID comes from the session context (`user_id` or `chat_id`). `TG_ADMIN` in `.env` is the super-admin override (always whitelisted regardless of config). Do NOT edit `.env` or manually write `brain/config.json` — use the tool.
 - **Write boundary**: Harness tools (`write_file`, `edit_code`, `patch`) can write within the harness directory AND within `$WORKSPACE_DIR`. For paths outside both, use the `bash` tool with absolute paths. Never delete core harness files without a backup.
 - **Research**: Use `web_search` and `fetch_url` proactively for current information. One failed lookup is enough — don't retry the exact same query; rephrase or use a different tool.
 - **Browser automation**: Use `fetch_url` first for static pages. Switch to `browser` (headless Chromium) when: the page requires JavaScript to render, you need to click/fill forms, or `fetch_url` returns empty/useless content. Workflow: `navigate` → read elements → `click`/`type` as needed.

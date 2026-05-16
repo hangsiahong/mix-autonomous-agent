@@ -56,17 +56,8 @@ run_agent() {
         # to the RUNNING process, never a queued one that hasn't started yet
         flock -x 200
         echo "$_agent_pid|${msg_id}|${chat_id}|${thread_id}|${user_id}" > "$pid_file"
-        trap '
-            _sbid=$(cat "$stop_btn_file" 2>/dev/null)
-            [[ -n "$_sbid" ]] && tg_delete "$chat_id" "$_sbid" > /dev/null 2>&1
-            rm -f "$stop_btn_file" "$interrupt_input_file" "$pid_file"
-            exit 0
-        ' INT TERM
-        trap '
-            _sbid=$(cat "$stop_btn_file" 2>/dev/null)
-            [[ -n "$_sbid" ]] && tg_delete "$chat_id" "$_sbid" > /dev/null 2>&1
-            rm -f "$stop_btn_file" "$interrupt_input_file" "$pid_file"
-        ' EXIT
+        trap 'rm -f "$stop_btn_file" "$interrupt_input_file" "$pid_file"; exit 0' INT TERM
+        trap 'rm -f "$stop_btn_file" "$interrupt_input_file" "$pid_file"' EXIT
 
         # Stop flag handling (before sending Stop button — avoids flash on immediate exit):
         # - Queued + stop_flag + interrupt_input: Interrupt clicked — B takes over directly
@@ -169,6 +160,7 @@ run_agent() {
 
             local tool_calls=$(echo "$result" | grep "^TC:" | cut -c4-)
             local usage=$(echo "$result" | grep "^USAGE:" | cut -c7-)
+            local _think_line=$(echo "$result" | grep "^THINK:" | head -1 | cut -c7-)
             local text
             text=$(printf '%s' "$result" | python3 -c "import sys, re; c = sys.stdin.read(); m = re.search(r'(?m)^TEXT:(.*?)(?=\nUSAGE:|\Z)', c, re.DOTALL); print(m.group(1) if m else '', end='')" 2>/dev/null)
             
@@ -185,17 +177,25 @@ run_agent() {
                 total_output_tokens=$((total_output_tokens + ${_ot:-0}))
             fi
 
-            # Extract thinking snippet for between-tool display (Gemini thinking models)
-            # Thoughts arrive as <think>...</think> in text — show a brief excerpt to the user
+            # Thinking snippet for between-tool display.
+            # Gemini: captured from thought:true parts, emitted as THINK: line.
+            # Other models (DeepSeek etc): falls back to <think> tag extraction.
             local _thought_snippet=""
-            if [[ "$text" == *"<think>"* ]]; then
+            if [[ -n "$_think_line" ]]; then
+                _thought_snippet=$(printf '%s' "$_think_line" | python3 -c "
+import sys
+s = sys.stdin.read().strip()
+s = s[:200] + ('…' if len(s) > 200 else '')
+print(s.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;'))
+" 2>/dev/null || true)
+            elif [[ "$text" == *"<think>"* ]]; then
                 _thought_snippet=$(printf '%s' "$text" | python3 -c "
 import sys, re
 t = sys.stdin.read()
 m = re.search(r'<think[^>]*>(.*?)</think>', t, re.DOTALL | re.IGNORECASE)
 if m:
     s = ' '.join(m.group(1).split())
-    s = s[:160] + ('…' if len(s) > 160 else '')
+    s = s[:200] + ('…' if len(s) > 200 else '')
     print(s.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;'))
 " 2>/dev/null || true)
             fi

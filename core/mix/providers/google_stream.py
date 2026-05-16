@@ -87,6 +87,7 @@ def main():
     threading.Thread(target=_typing_loop, daemon=True).start()
 
     full_text = ""
+    thought_text = ""
     tool_calls = []
     usage = None
     last_update = time.time()
@@ -154,7 +155,9 @@ def main():
                     parts = content.get("parts", [])
 
                     for p in parts:
-                        if "text" in p and not p.get("thought"):
+                        if "text" in p and p.get("thought"):
+                            thought_text += p["text"]
+                        elif "text" in p:
                             full_text += p["text"]
                         if "functionCall" in p:
                             fc = p["functionCall"]
@@ -202,6 +205,10 @@ def main():
         update_tg(tg_url, chat_id, message_id, full_text)
 
     # Final logic
+    if thought_text.strip():
+        # Emit first 300 chars of reasoning — agent loop shows as 💭 snippet
+        snippet = " ".join(thought_text.split())[:300]
+        print(f"THINK:{snippet}")
     print(f"TC:{json.dumps(tool_calls)}")
     print(f"TEXT:{full_text}")
     if usage:
