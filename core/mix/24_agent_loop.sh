@@ -146,6 +146,7 @@ run_agent() {
         local total_input_tokens=0
         local total_output_tokens=0
         local _thought_snippet=""  # persists across turns — shows last known reasoning
+        local _think_msg_id=""     # separate Telegram message for reasoning (OpenClaw pattern)
         while [ "$turn" -lt "$MAX_TURNS" ]; do
             turn=$((turn + 1))
             [[ "$turn" -gt 1 ]] && tg_send_action "$chat_id" "typing" "$thread_id"
@@ -163,6 +164,8 @@ run_agent() {
             local tool_calls=$(echo "$result" | grep "^TC:" | cut -c4-)
             local usage=$(echo "$result" | grep "^USAGE:" | cut -c7-)
             local _think_line=$(echo "$result" | grep "^THINK:" | head -1 | cut -c7-)
+            local _new_think_msg=$(echo "$result" | grep "^THINKMSG:" | head -1 | cut -c10-)
+            [[ -n "$_new_think_msg" ]] && _think_msg_id="$_new_think_msg"
             local text
             text=$(printf '%s' "$result" | python3 -c "import sys, re; c = sys.stdin.read(); m = re.search(r'(?m)^TEXT:(.*?)(?=\nUSAGE:|\Z)', c, re.DOTALL); print(m.group(1) if m else '', end='')" 2>/dev/null)
             
@@ -299,10 +302,12 @@ print(header + '\n' + '\n'.join(lines) if lines else f'⏳ {header}')
             break
         done
 
-        # Delete Stop button message now that the agent is done
+        # Delete ephemeral messages (Stop button + reasoning lane) now that agent is done
         local _sbid; _sbid=$(cat "$stop_btn_file" 2>/dev/null)
         [[ -n "$_sbid" ]] && tg_delete "$chat_id" "$_sbid" > /dev/null 2>&1 || true
         rm -f "$stop_btn_file"
+        [[ -n "$_think_msg_id" ]] && tg_delete "$chat_id" "$_think_msg_id" > /dev/null 2>&1 || true
+        _think_msg_id=""
 
         if [[ "$loop_completed" == true ]]; then
             local _elapsed_total=$(( $(date +%s) - _turn_start ))
