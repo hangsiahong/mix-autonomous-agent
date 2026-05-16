@@ -328,7 +328,8 @@ for k, v in sorted(tool_calls.items()):
 if _think_msg_id:
     print(f"THINKMSG:{_think_msg_id}")
 if _think_text.strip():
-    print(f"THINK:{' '.join(_think_text.split())[:300]}")
+    _ts = " ".join(_think_text.split())[:300]
+    print("THINK:" + _ts)
 print(f"TC:{json.dumps(tc_list)}")
 print(f"TEXT:{content}")
 if usage:
