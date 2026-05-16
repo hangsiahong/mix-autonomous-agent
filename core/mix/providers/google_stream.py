@@ -41,12 +41,14 @@ def md_to_html(text):
     html = re.sub(r"&lt;(think|thinking|reasoning|thought)&gt;(.*?)(&lt;/\1&gt;|$)", format_think, html, flags=re.DOTALL|re.IGNORECASE)
     return html
 
-def update_tg(tg_url, chat_id, message_id, text):
+def update_tg(tg_url, chat_id, message_id, text, reasoning=""):
     if not text: return
-    # Do not scrub thinking blocks anymore, they are formatted by md_to_html
-    clean_text = text
-    if not clean_text.strip(): return
-    html = md_to_html(clean_text.strip())
+    combined = text
+    if reasoning:
+        esc = reasoning.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+        combined = f"<blockquote>💭 <i>{esc}</i></blockquote>\n\n{text}"
+    if not combined.strip(): return
+    html = md_to_html(combined.strip())
     try:
         resp = requests.post(tg_url, json={
             "chat_id": chat_id,
@@ -212,7 +214,8 @@ def main():
 
                     if time.time() - last_update > 2.0 and (full_text or tool_calls):
                         display = _build_display(full_text, tool_calls) if tool_calls else full_text
-                        update_tg(tg_url, chat_id, message_id, display)
+                        snippet = " ".join(thought_text.split())[:200] if thought_text.strip() else ""
+                        update_tg(tg_url, chat_id, message_id, display, reasoning=snippet)
                         last_update = time.time()
             break  # stream succeeded
         except Exception as e:
@@ -231,16 +234,12 @@ def main():
     _typing_stop.set()
 
     # Final Telegram update — include reasoning snippet directly so it's visible immediately
-    _think_snippet_html = ""
-    if thought_text.strip():
-        _ts = " ".join(thought_text.split())[:300]
-        _ts_esc = _ts.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
-        _think_snippet_html = f"\n💭 <i>{_ts_esc}</i>"
+    _reasoning = " ".join(thought_text.split())[:300] if thought_text.strip() else ""
 
     if tool_calls:
-        update_tg(tg_url, chat_id, message_id, _build_display(full_text, tool_calls))
+        update_tg(tg_url, chat_id, message_id, _build_display(full_text, tool_calls), reasoning=_reasoning)
     elif full_text:
-        update_tg(tg_url, chat_id, message_id, full_text + _think_snippet_html)
+        update_tg(tg_url, chat_id, message_id, full_text, reasoning=_reasoning)
 
     # Emit THINK: snippet so agent loop can use it in between-tool messages
     if thought_text.strip():

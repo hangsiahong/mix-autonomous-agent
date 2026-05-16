@@ -57,6 +57,7 @@ call_api_stream() {
         EXTRA_HEADERS="$_extra_headers" \
         CHAT_ID="$chat_id" \
         MESSAGE_ID="$message_id" \
+        PREV_REASONING="${_thought_snippet:-}" \
         python3 -u -c '
 import json, sys, time, os, requests, re
 
@@ -66,6 +67,7 @@ message_id = os.environ.get("MESSAGE_ID")
 base_url = os.environ.get("BASE_URL")
 api_key = os.environ.get("API_KEY")
 extra_headers = json.loads(os.environ.get("EXTRA_HEADERS", "{}"))
+prev_reasoning = os.environ.get("PREV_REASONING", "").strip()
 
 # Reasoning lane — separate Telegram message for thinking (OpenClaw pattern)
 _think_msg_id = None
@@ -157,10 +159,13 @@ def md_to_html(text):
 
 def update_tg(text):
     if not text: return
-    # Do not scrub thinking blocks anymore, they are formatted by md_to_html
-    clean_text = text
-    if not clean_text.strip(): return
-    html = md_to_html(clean_text.strip())
+    combined = text
+    # Always keep reasoning visible above streaming content
+    if prev_reasoning:
+        esc = prev_reasoning.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+        combined = f"<blockquote>💭 <i>{esc}</i></blockquote>\n\n{text}"
+    if not combined.strip(): return
+    html = md_to_html(combined.strip())
     try:
         resp = requests.post(tg_url, json={
             "chat_id": chat_id,

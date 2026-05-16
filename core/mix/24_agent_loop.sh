@@ -275,12 +275,14 @@ names = [n.strip() for n in os.environ.get('TOOL_NAMES','').split(',') if n.stri
 lines = ['<code>' + EMOJI.get(n,'🧩') + ' ' + n.replace('_',' ') + '</code>' for n in names[:4]]
 word  = os.environ.get('STATUS_WORD','Thinking')
 snippet = os.environ.get('REASONING_SNIPPET','').strip()
-# Prefer actual reasoning over generic status word
+# Reasoning in blockquote (matches streaming display), tools below
 if snippet:
-    header = f'<i>💭 {snippet}</i>'
+    esc = snippet.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+    think_block = f'<blockquote>💭 <i>{esc}</i></blockquote>'
+    print(think_block + '\n' + '\n'.join(lines) if lines else think_block)
 else:
     header = f'<i>{word}…</i>'
-print(header + '\n' + '\n'.join(lines) if lines else f'⏳ {header}')
+    print(header + '\n' + '\n'.join(lines) if lines else f'⏳ {header}')
 " 2>/dev/null || echo "⏳ <i>Thinking…</i>")
                 tg_edit "$chat_id" "$msg_id" "$_between_msg" "HTML" > /dev/null 2>&1
                 export _AMA_REASONING_HTML=""
