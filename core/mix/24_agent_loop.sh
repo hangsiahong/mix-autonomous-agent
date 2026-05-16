@@ -145,6 +145,7 @@ run_agent() {
         local loop_completed=false
         local total_input_tokens=0
         local total_output_tokens=0
+        local _thought_snippet=""  # persists across turns — shows last known reasoning
         while [ "$turn" -lt "$MAX_TURNS" ]; do
             turn=$((turn + 1))
             [[ "$turn" -gt 1 ]] && tg_send_action "$chat_id" "typing" "$thread_id"
@@ -178,10 +179,8 @@ run_agent() {
                 total_output_tokens=$((total_output_tokens + ${_ot:-0}))
             fi
 
-            # Thinking snippet for between-tool display.
-            # Gemini: captured from thought:true parts, emitted as THINK: line.
-            # Other models (DeepSeek etc): falls back to <think> tag extraction.
-            local _thought_snippet=""
+            # Update thinking snippet only when new reasoning arrives — persists across turns
+            # so between-tool messages always show the last known reasoning, not just status word.
             if [[ -n "$_think_line" ]]; then
                 _thought_snippet=$(printf '%s' "$_think_line" | python3 -c "
 import sys
@@ -273,9 +272,11 @@ names = [n.strip() for n in os.environ.get('TOOL_NAMES','').split(',') if n.stri
 lines = ['<code>' + EMOJI.get(n,'🧩') + ' ' + n.replace('_',' ') + '</code>' for n in names[:4]]
 word  = os.environ.get('STATUS_WORD','Thinking')
 snippet = os.environ.get('REASONING_SNIPPET','').strip()
-header = f'<i>{word}…</i>'
+# Prefer actual reasoning over generic status word
 if snippet:
-    header += f'\n<i>💭 {snippet}</i>'
+    header = f'<i>💭 {snippet}</i>'
+else:
+    header = f'<i>{word}…</i>'
 print(header + '\n' + '\n'.join(lines) if lines else f'⏳ {header}')
 " 2>/dev/null || echo "⏳ <i>Thinking…</i>")
                 tg_edit "$chat_id" "$msg_id" "$_between_msg" "HTML" > /dev/null 2>&1
