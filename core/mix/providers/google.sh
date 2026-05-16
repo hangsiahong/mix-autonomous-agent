@@ -515,7 +515,16 @@ if t:
 try:
     ex = json.loads(open(sys.argv[4]).read())
     if ex:
-        if "thinking_level" not in ex:
+        if "thinking_level" in ex:
+            # Map OpenAI-compat thinking fields to native Gemini generationConfig
+            _budgets = {"none": 0, "low": 1024, "medium": 8192, "high": 24576, "max": -1}
+            _level = ex.get("thinking_level", "low")
+            _include = ex.get("include_thoughts", True)
+            body.setdefault("generationConfig", {})["thinkingConfig"] = {
+                "includeThoughts": _include,
+                "thinkingBudget": _budgets.get(_level, 1024)
+            }
+        else:
             body.update(ex)
 except: pass
 
@@ -710,9 +719,15 @@ if t:
 try:
     ex = json.loads(open(sys.argv[4]).read())
     if ex:
-        if "generationConfig" not in body:
-            body["generationConfig"] = {}
-        if "thinking_level" not in ex:
+        if "thinking_level" in ex:
+            _budgets = {"none": 0, "low": 1024, "medium": 8192, "high": 24576, "max": -1}
+            _level = ex.get("thinking_level", "low")
+            _include = ex.get("include_thoughts", True)
+            body.setdefault("generationConfig", {})["thinkingConfig"] = {
+                "includeThoughts": _include,
+                "thinkingBudget": _budgets.get(_level, 1024)
+            }
+        else:
             body.update(ex)
 except: pass
 
