@@ -245,6 +245,8 @@ while _stream_attempt < MAX_STREAM_ATTEMPTS:
                 usage = data["usage"]
 
             delta = data.get("choices", [{}])[0].get("delta", {})
+            if delta and set(delta.keys()) - {"content", "role"}:
+                import sys as _s; _s.stderr.write(f"DELTA_KEYS:{list(delta.keys())}\n")
 
             if "thought" in delta and delta["thought"]:
                 if not thought_active:
