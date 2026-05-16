@@ -277,8 +277,13 @@ word  = os.environ.get('STATUS_WORD','Thinking')
 snippet = os.environ.get('REASONING_SNIPPET','').strip()
 # Reasoning in blockquote (matches streaming display), tools below
 if snippet:
-    esc = snippet.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
-    think_block = f'<blockquote>💭 <i>{esc}</i></blockquote>'
+    import re as _re
+    def _md(t):
+        t=t.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+        t=_re.sub(r'\*\*(.+?)\*\*',r'<b>\1</b>',t)
+        t=_re.sub(r'_([^_]+)_',r'<i>\1</i>',t)
+        return t
+    think_block = f'<blockquote>💭 {_md(snippet)}</blockquote>'
     print(think_block + '\n' + '\n'.join(lines) if lines else think_block)
 else:
     header = f'<i>{word}…</i>'

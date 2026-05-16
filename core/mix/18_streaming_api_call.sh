@@ -158,14 +158,13 @@ def md_to_html(text):
     return html
 
 def update_tg(text):
-    if not text: return
-    combined = text
-    # Always keep reasoning visible above streaming content
+    if not text and not prev_reasoning: return
+    # Convert markdown first, then combine — avoids double-escaping HTML tags
+    html = md_to_html(text.strip()) if text.strip() else ""
     if prev_reasoning:
-        esc = prev_reasoning.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
-        combined = f"<blockquote>💭 <i>{esc}</i></blockquote>\n\n{text}"
-    if not combined.strip(): return
-    html = md_to_html(combined.strip())
+        reason_html = md_to_html(prev_reasoning.strip())
+        html = f"<blockquote>💭 {reason_html}</blockquote>" + ("\n\n" + html if html else "")
+    if not html.strip(): return
     try:
         resp = requests.post(tg_url, json={
             "chat_id": chat_id,

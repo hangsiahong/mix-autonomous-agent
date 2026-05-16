@@ -42,13 +42,12 @@ def md_to_html(text):
     return html
 
 def update_tg(tg_url, chat_id, message_id, text, reasoning=""):
-    if not text: return
-    combined = text
+    if not text and not reasoning: return
+    html = md_to_html(text.strip()) if text.strip() else ""
     if reasoning:
-        esc = reasoning.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
-        combined = f"<blockquote>💭 <i>{esc}</i></blockquote>\n\n{text}"
-    if not combined.strip(): return
-    html = md_to_html(combined.strip())
+        reason_html = md_to_html(reasoning.strip())
+        html = f"<blockquote>💭 {reason_html}</blockquote>" + ("\n\n" + html if html else "")
+    if not html.strip(): return
     try:
         resp = requests.post(tg_url, json={
             "chat_id": chat_id,
