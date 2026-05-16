@@ -179,9 +179,15 @@ def main():
                         continue
                     sys.exit(1)
 
+                _sse_count = 0
                 for line in r.iter_lines():
                     if not line: continue
                     line = line.decode("utf-8")
+                    # Log first 3 raw SSE lines to debug
+                    if _sse_count < 3:
+                        _sse_count += 1
+                        try: open("/tmp/ama_think_debug.log","a").write(f"SSE[{_sse_count}]: {line[:300]}\n")
+                        except: pass
                     if not line.startswith("data: "): continue
 
                     try:
