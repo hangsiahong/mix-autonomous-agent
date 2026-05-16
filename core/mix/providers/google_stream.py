@@ -124,8 +124,6 @@ def main():
     tool_calls = []
     usage = None
     last_update = time.time()
-    _think_msg_id = None       # separate Telegram message for reasoning
-    _think_last_update = 0.0   # throttle for reasoning message edits
 
     # ── Tool progress (openclaw-style) ──
     _TOOL_EMOJI = {
@@ -192,39 +190,6 @@ def main():
                     for p in parts:
                         if "text" in p and p.get("thought"):
                             thought_text += p["text"]
-                            now = time.time()
-                            if not full_text and not tool_calls:
-                                snippet = " ".join(thought_text.split())[-200:]
-                                escaped = snippet.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
-                                if _think_msg_id is None:
-                                    # Send a brand-new separate message for reasoning
-                                    try:
-                                        resp = requests.post(
-                                            f"https://api.telegram.org/bot{tg_token}/sendMessage",
-                                            json={"chat_id": chat_id,
-                                                  "text": f"💭 <i>{escaped}…</i>",
-                                                  "parse_mode": "HTML"},
-                                            timeout=5
-                                        )
-                                        if resp.ok:
-                                            _think_msg_id = resp.json().get("result", {}).get("message_id")
-                                            _think_last_update = now
-                                    except Exception:
-                                        pass
-                                elif now - _think_last_update > 1.5:
-                                    # Update reasoning message as more thoughts arrive
-                                    try:
-                                        requests.post(
-                                            tg_url,
-                                            json={"chat_id": chat_id,
-                                                  "message_id": _think_msg_id,
-                                                  "text": f"💭 <i>{escaped}…</i>",
-                                                  "parse_mode": "HTML"},
-                                            timeout=5
-                                        )
-                                        _think_last_update = now
-                                    except Exception:
-                                        pass
                         elif "text" in p:
                             full_text += p["text"]
                         if "functionCall" in p:
@@ -277,9 +242,6 @@ def main():
     elif full_text:
         update_tg(tg_url, chat_id, message_id, full_text + _think_snippet_html)
 
-    # Emit reasoning message ID so agent loop can delete it after final response
-    if _think_msg_id:
-        print(f"THINKMSG:{_think_msg_id}")
     # Emit THINK: snippet so agent loop can use it in between-tool messages
     if thought_text.strip():
         snippet = " ".join(thought_text.split())[:300]
