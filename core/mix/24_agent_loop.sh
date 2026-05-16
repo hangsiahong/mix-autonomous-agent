@@ -321,6 +321,7 @@ print(header + '\n' + '\n'.join(lines) if lines else f'⏳ {header}')
                 local _final_html; _final_html="$(md_to_tg_html "$text")"
                 [[ -n "$_ctx_warn" ]] && _final_html+=$'\n'"${_ctx_warn}"
                 [[ -n "$_elapsed_str" ]] && _final_html+=$'\n'"<i>${_elapsed_str:1}</i>"
+                [[ -n "$_thought_snippet" ]] && _final_html+=$'\n'"<i>💭 ${_thought_snippet}</i>"
                 tg_edit "$chat_id" "$msg_id" "$_final_html" "HTML" > /dev/null
             else
                 # Empty response — Gemini thinking-only output or scrubbed content.

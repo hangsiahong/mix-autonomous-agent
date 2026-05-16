@@ -178,7 +178,14 @@ def main():
                         usage = chunk["usageMetadata"]
 
                     if time.time() - last_update > 2.0:
-                        display = _build_display(full_text, tool_calls) if tool_calls else (full_text or "⏳")
+                        if full_text or tool_calls:
+                            display = _build_display(full_text, tool_calls) if tool_calls else full_text
+                        elif thought_text:
+                            # Still in thinking phase — show live reasoning snippet
+                            snippet = " ".join(thought_text.split())[-120:]
+                            display = f"💭 <i>{snippet.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')}…</i>"
+                        else:
+                            display = "⏳"
                         update_tg(tg_url, chat_id, message_id, display)
                         last_update = time.time()
             break  # stream succeeded
