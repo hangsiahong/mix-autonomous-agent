@@ -73,7 +73,11 @@ def main():
 
     # Debug: log what thinking config we're actually sending
     gc = payload.get("generationConfig", {})
-    sys.stderr.write(f"DBG thinkingConfig: {json.dumps(gc.get('thinkingConfig', 'NOT SET'))}\n")
+    _dbg = f"thinkingConfig={json.dumps(gc.get('thinkingConfig', 'NOT_SET'))}"
+    sys.stderr.write(f"DBG {_dbg}\n")
+    try:
+        open("/tmp/ama_think_debug.log", "a").write(f"{_dbg}\n")
+    except: pass
 
     headers = {"Content-Type": "application/json"}
     if mode == "vertex":
@@ -161,8 +165,12 @@ def main():
                     parts = content.get("parts", [])
 
                     for p in parts:
-                        if p.get("thought") or "thoughtSignature" in p:
-                            sys.stderr.write(f"DBG thought part: keys={list(p.keys())} thought={p.get('thought')} textlen={len(p.get('text',''))}\n")
+                        _pkeys = [k for k in p.keys() if k != "text"]
+                        if _pkeys or p.get("thought"):
+                            _pmsg = f"part keys={_pkeys} thought={p.get('thought')} textlen={len(p.get('text',''))}"
+                            sys.stderr.write(f"DBG {_pmsg}\n")
+                            try: open("/tmp/ama_think_debug.log","a").write(f"{_pmsg}\n")
+                            except: pass
                         if "text" in p and p.get("thought"):
                             thought_text += p["text"]
                             now = time.time()
