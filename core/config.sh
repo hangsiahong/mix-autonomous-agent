@@ -37,12 +37,13 @@ is_whitelisted() {
     fi
 
     ID="$id" CF="$CONFIG_FILE" python3 -c "
-import json, os
+import json, os, sys
 try:
     d = json.load(open(os.environ['CF']))
-    exit(0 if os.environ['ID'] in d.get('whitelist', []) else 1)
-except:
-    exit(1)
+    matched = os.environ['ID'] in d.get('whitelist', [])
+except Exception:
+    matched = False
+sys.exit(0 if matched else 1)
 "
 }
 
