@@ -55,9 +55,10 @@ run_agent() {
         # Wait for the lock — write PID file INSIDE lock so it always points
         # to the RUNNING process, never a queued one that hasn't started yet
         flock -x 200
-        echo "$_agent_pid|${msg_id}|${chat_id}|${thread_id}|${user_id}" > "$pid_file"
-        trap 'rm -f "$stop_btn_file" "$interrupt_input_file" "$pid_file"; exit 0' INT TERM
-        trap 'rm -f "$stop_btn_file" "$interrupt_input_file" "$pid_file"' EXIT
+        # Store worker PID (this subshell) alongside agent PID so /stop can target it directly
+        echo "$_agent_pid|${msg_id}|${chat_id}|${thread_id}|${user_id}|${BASHPID}" > "$pid_file"
+        trap 'pkill -TERM -P $BASHPID 2>/dev/null; rm -f "$stop_btn_file" "$interrupt_input_file" "$pid_file"; exit 0' INT TERM
+        trap 'pkill -TERM -P $BASHPID 2>/dev/null; rm -f "$stop_btn_file" "$interrupt_input_file" "$pid_file"' EXIT
 
         # Stop flag handling (before sending Stop button — avoids flash on immediate exit):
         # - Queued + stop_flag + interrupt_input: Interrupt clicked — B takes over directly

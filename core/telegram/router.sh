@@ -26,16 +26,17 @@ _ama_handle_callback() {
 
             if [[ -f "$_pid_file" ]]; then
                 local _pid_data; _pid_data=$(cat "$_pid_file" 2>/dev/null)
-                local _run_pid _agent_msg_id _orig_chat _orig_thread
-                IFS='|' read -r _run_pid _agent_msg_id _orig_chat _orig_thread <<< "$_pid_data"
+                local _run_pid _agent_msg_id _orig_chat _orig_thread _uid _worker_pid
+                IFS='|' read -r _run_pid _agent_msg_id _orig_chat _orig_thread _uid _worker_pid <<< "$_pid_data"
                 kill -TERM "$_run_pid" 2>/dev/null || true
+                [[ -n "$_worker_pid" ]] && kill -TERM "$_worker_pid" 2>/dev/null || true
                 sleep 0.3
                 pkill -TERM -P "$_run_pid" 2>/dev/null || true
+                [[ -n "$_worker_pid" ]] && pkill -TERM -P "$_worker_pid" 2>/dev/null || true
                 rm -f "$_pid_file"
                 [[ -n "$_agent_msg_id" && -n "$_orig_chat" ]] && \
                     tg_edit "$_orig_chat" "$_agent_msg_id" "🛑 <i>Stopped.</i>" "HTML" > /dev/null 2>&1 || true
             fi
-            # Delete the Stop button message (it was the button the user just clicked)
             [[ -n "$btn_msg_id" ]] && tg_delete "$chat_id" "$btn_msg_id" > /dev/null 2>&1 || true
             rm -f "$_stop_btn_file"
             ;;
@@ -880,10 +881,12 @@ Use <code>/skill &lt;name&gt;</code> to bind a skill." "$thread_id" "HTML"
                     rm -f "${DIR}/brain/state/queue_${session_id}" 2>/dev/null || true
                     if [[ -f "$pid_file" ]]; then
                         local _pid_data; _pid_data=$(cat "$pid_file" 2>/dev/null)
-                        local run_pid _msg_id _orig_chat _orig_thread
-                        IFS='|' read -r run_pid _msg_id _orig_chat _orig_thread <<< "$_pid_data"
-                        echo "AMA: Stopping session $session_id (PID $run_pid)"
-                        # Kill the agent process tree (NOT its process group, which would kill bot.sh)
+                        local run_pid _msg_id _orig_chat _orig_thread _uid2 _worker_pid2
+                        IFS='|' read -r run_pid _msg_id _orig_chat _orig_thread _uid2 _worker_pid2 <<< "$_pid_data"
+                        echo "AMA: Stopping session $session_id (PID $run_pid worker ${_worker_pid2:-?})"
+                        # Kill worker subshell directly (holds streaming child), then full tree
+                        [[ -n "$_worker_pid2" ]] && kill -TERM "$_worker_pid2" 2>/dev/null || true
+                        [[ -n "$_worker_pid2" ]] && pkill -TERM -P "$_worker_pid2" 2>/dev/null || true
                         kill_tree "$run_pid"
                         rm -f "$pid_file"
                         # Edit the dangling "Thinking…" or "Working…" bot message
