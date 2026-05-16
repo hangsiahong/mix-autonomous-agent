@@ -67,6 +67,30 @@ base_url = os.environ.get("BASE_URL")
 api_key = os.environ.get("API_KEY")
 extra_headers = json.loads(os.environ.get("EXTRA_HEADERS", "{}"))
 
+# Reasoning lane — separate Telegram message for thinking (OpenClaw pattern)
+_think_msg_id = None
+_think_text = ""
+_think_last_update = 0.0
+def _send_or_update_think(text):
+    global _think_msg_id, _think_last_update
+    snippet = " ".join(text.split())[-200:]
+    escaped = snippet.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+    now = time.time()
+    if _think_msg_id is None:
+        try:
+            r = requests.post(f"https://api.telegram.org/bot{tg_token}/sendMessage",
+                json={"chat_id": chat_id, "text": f"💭 <i>{escaped}…</i>", "parse_mode": "HTML"}, timeout=5)
+            if r.ok: _think_msg_id = r.json().get("result", {}).get("message_id")
+            _think_last_update = now
+        except Exception: pass
+    elif now - _think_last_update > 1.5:
+        try:
+            requests.post(f"https://api.telegram.org/bot{tg_token}/editMessageText",
+                json={"chat_id": chat_id, "message_id": _think_msg_id,
+                      "text": f"💭 <i>{escaped}…</i>", "parse_mode": "HTML"}, timeout=5)
+            _think_last_update = now
+        except Exception: pass
+
 url = f"{base_url}/chat/completions"
 payload = json.loads(sys.stdin.read())
 
@@ -227,6 +251,8 @@ while _stream_attempt < MAX_STREAM_ATTEMPTS:
                     content += "<think>"
                     thought_active = True
                 content += delta["thought"]
+                _think_text += delta["thought"]
+                _send_or_update_think(_think_text)
 
             if "content" in delta and delta["content"]:
                 if thought_active:
@@ -299,6 +325,10 @@ for k, v in sorted(tool_calls.items()):
         tc["thought_signature"] = v["thought_signature"]
     tc_list.append(tc)
 
+if _think_msg_id:
+    print(f"THINKMSG:{_think_msg_id}")
+if _think_text.strip():
+    print(f"THINK:{' '.join(_think_text.split())[:300]}")
 print(f"TC:{json.dumps(tc_list)}")
 print(f"TEXT:{content}")
 if usage:
