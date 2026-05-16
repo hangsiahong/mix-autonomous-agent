@@ -76,7 +76,16 @@ def main():
         except: pass
         sys.exit(1)
 
-    # Debug: log what thinking config we're actually sending
+    # Apply thinkingConfig directly from THINKING_BUDGET env var — reliable, no shell builder needed
+    _budgets = {"none": 0, "low": 1024, "medium": 8192, "high": 24576, "max": -1}
+    _tb = os.environ.get("THINKING_BUDGET", "low")
+    if _tb != "none":
+        payload.setdefault("generationConfig", {})["thinkingConfig"] = {
+            "includeThoughts": True,
+            "thinkingBudget": _budgets.get(_tb, 1024)
+        }
+
+    # Debug: confirm thinkingConfig is now in payload
     gc = payload.get("generationConfig", {})
     _dbg = f"thinkingConfig={json.dumps(gc.get('thinkingConfig', 'NOT_SET'))}"
     sys.stderr.write(f"DBG {_dbg}\n")
