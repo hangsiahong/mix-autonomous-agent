@@ -16,6 +16,8 @@ run_agent() {
     local steer_file="${DIR}/brain/state/steer_${session_id}"
     local queue_file="${DIR}/brain/state/queue_${session_id}"
     local model_file="${DIR}/brain/state/model_${session_id}"
+    local stop_btn_file="${DIR}/brain/state/stopbtn_${session_id}"
+    local interrupt_input_file="${DIR}/brain/state/interrupt_input_${session_id}"
 
     # 1. Immediate Feedback: Decide status based on lock availability
     mkdir -p "${DIR}/brain/state/locks"
@@ -34,7 +36,12 @@ run_agent() {
     # Try non-blocking lock to check if busy
     if ! flock -n "${lock_file}" true 2>/dev/null; then
         initial_status="Queued"
-        msg_id=$(tg_send_r "$chat_id" "🕒 <i>Queued</i>" "$thread_id" "HTML" "$user_msg_id")
+        # Store input for potential Interrupt button use
+        printf '%s' "$input" > "$interrupt_input_file"
+        msg_id=$(tg_send_buttons "$chat_id" \
+            "🕒 <i>Queued</i>" \
+            "[[{\"text\":\"⚡ Interrupt\",\"callback_data\":\"interrupt:${session_id}\"}]]" \
+            "$thread_id" "HTML" "$user_msg_id")
     else
         msg_id=$(tg_send_r "$chat_id" "⏳ <i>${_status_pick}…</i>" "$thread_id" "HTML" "$user_msg_id")
     fi
@@ -49,18 +56,43 @@ run_agent() {
         # to the RUNNING process, never a queued one that hasn't started yet
         flock -x 200
         echo "$_agent_pid|${msg_id}|${chat_id}|${thread_id}|${user_id}" > "$pid_file"
-        trap 'rm -f "$pid_file"; exit 0' INT TERM
-        trap 'rm -f "$pid_file"' EXIT
-
-        # Stop flag handling:
-        # - Queued processes: /stop was issued while waiting → exit immediately
-        # - Non-queued (fresh start): clean up any stale flag and continue normally
-        if [[ "$initial_status" == "Queued" && -f "$stop_flag" ]]; then
-            ( tg_edit "$chat_id" "$msg_id" "🛑 <i>Stopped.</i>" "HTML" > /dev/null 2>&1 & )
+        trap '
+            _sbid=$(cat "$stop_btn_file" 2>/dev/null)
+            [[ -n "$_sbid" ]] && tg_delete "$chat_id" "$_sbid" > /dev/null 2>&1
+            rm -f "$stop_btn_file" "$interrupt_input_file" "$pid_file"
             exit 0
+        ' INT TERM
+        trap '
+            _sbid=$(cat "$stop_btn_file" 2>/dev/null)
+            [[ -n "$_sbid" ]] && tg_delete "$chat_id" "$_sbid" > /dev/null 2>&1
+            rm -f "$stop_btn_file" "$interrupt_input_file" "$pid_file"
+        ' EXIT
+
+        # Stop flag handling (before sending Stop button — avoids flash on immediate exit):
+        # - Queued + stop_flag + interrupt_input: Interrupt clicked — B takes over directly
+        # - Queued + stop_flag only: genuine /stop — exit
+        # - Otherwise: clear any stale stop_flag and continue
+        if [[ "$initial_status" == "Queued" && -f "$stop_flag" ]]; then
+            if [[ -f "$interrupt_input_file" ]]; then
+                # Interrupt: B becomes the runner — cancel the C fallback marker
+                rm -f "$stop_flag" "$interrupt_input_file" \
+                    "${DIR}/brain/state/interrupt_run_${session_id}" 2>/dev/null || true
+                initial_status="Interrupt"
+                tg_edit "$chat_id" "$msg_id" "⏳ <i>${_status_pick}…</i>" "HTML" > /dev/null 2>&1
+            else
+                ( tg_edit "$chat_id" "$msg_id" "🛑 <i>Stopped.</i>" "HTML" > /dev/null 2>&1 & )
+                exit 0
+            fi
         else
-            rm -f "$stop_flag" 2>/dev/null || true  # clean up stale flag from prior /stop
+            rm -f "$stop_flag" 2>/dev/null || true
         fi
+
+        # Send Stop button after stop/interrupt check (skip if we already exited)
+        local _stop_btn_id
+        _stop_btn_id=$(tg_send_buttons "$chat_id" "<i>Press the button to cancel</i>" \
+            "[[{\"text\":\"⏹ Stop\",\"callback_data\":\"stop:${session_id}\"}]]" \
+            "$thread_id" "HTML")
+        [[ -n "$_stop_btn_id" ]] && printf '%s' "$_stop_btn_id" > "$stop_btn_file"
 
         # Optimization: Only edit if we were actually queued
         if [[ "$initial_status" == "Queued" ]]; then

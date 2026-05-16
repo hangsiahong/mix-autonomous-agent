@@ -97,8 +97,12 @@ def _google_embed(text):
 
 
 def get_embedding(text):
-    """Route to Ollama or Google based on PROVIDER env var."""
-    provider = os.environ.get("PROVIDER", "google")
+    """Route to Ollama or Google based on EMBEDDING_PROVIDER env var.
+
+    Falls back to PROVIDER for backward compat, but EMBEDDING_PROVIDER lets
+    you use kconsole/openrouter/etc for LLM while keeping a separate embedding backend.
+    """
+    provider = os.environ.get("EMBEDDING_PROVIDER") or os.environ.get("PROVIDER", "google")
     if provider == "ollama":
         return _ollama_embed(text)
     return _google_embed(text)
@@ -142,7 +146,7 @@ def _chunk_text(text: str) -> list[str]:
 
 def _ensure_table(db, first_row):
     """Get or create the memory table, handling model changes."""
-    provider = os.environ.get("PROVIDER", "google")
+    provider = os.environ.get("EMBEDDING_PROVIDER") or os.environ.get("PROVIDER", "google")
     cur_model = (
         os.environ.get("EMBEDDING_MODEL", "embeddinggemma")
         if provider == "ollama"

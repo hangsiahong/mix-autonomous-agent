@@ -1,6 +1,97 @@
 #!/bin/bash
 # core/telegram/router.sh - Command routing
 
+_ama_handle_callback() {
+    local cbq_id="$1"
+    local data="$2"
+    local chat_id="$3"
+    local session_id="$4"
+    local thread_id="$5"
+    local user_id="$6"
+    local username="$7"
+    local btn_msg_id="$8"   # message_id of the message that had the button
+
+    tg_answer_callback "$cbq_id"
+
+    case "$data" in
+        stop:*)
+            local _sid="${data#stop:}"
+            local _pid_file="${DIR}/brain/state/run_${_sid}.pid"
+            local _stop_flag="${DIR}/brain/state/stop_${_sid}"
+            local _stop_btn_file="${DIR}/brain/state/stopbtn_${_sid}"
+
+            touch "$_stop_flag"
+            rm -f "${DIR}/brain/state/queue_${_sid}" \
+                  "${DIR}/brain/state/interrupt_input_${_sid}" 2>/dev/null || true
+
+            if [[ -f "$_pid_file" ]]; then
+                local _pid_data; _pid_data=$(cat "$_pid_file" 2>/dev/null)
+                local _run_pid _agent_msg_id _orig_chat _orig_thread
+                IFS='|' read -r _run_pid _agent_msg_id _orig_chat _orig_thread <<< "$_pid_data"
+                kill -TERM "$_run_pid" 2>/dev/null || true
+                sleep 0.3
+                pkill -TERM -P "$_run_pid" 2>/dev/null || true
+                rm -f "$_pid_file"
+                [[ -n "$_agent_msg_id" && -n "$_orig_chat" ]] && \
+                    tg_edit "$_orig_chat" "$_agent_msg_id" "🛑 <i>Stopped.</i>" "HTML" > /dev/null 2>&1 || true
+            fi
+            # Delete the Stop button message (it was the button the user just clicked)
+            [[ -n "$btn_msg_id" ]] && tg_delete "$chat_id" "$btn_msg_id" > /dev/null 2>&1 || true
+            rm -f "$_stop_btn_file"
+            ;;
+
+        interrupt:*)
+            local _sid="${data#interrupt:}"
+            local _pending_file="${DIR}/brain/state/interrupt_input_${_sid}"
+            local _run_marker="${DIR}/brain/state/interrupt_run_${_sid}"
+
+            # Read but do NOT delete pending file yet — the queued agent (B) needs it
+            # to detect this is an interrupt (not a genuine /stop) and take over directly.
+            local _pending_text; _pending_text=$(cat "$_pending_file" 2>/dev/null)
+            [[ -z "$_pending_text" ]] && return  # stale button, already answered
+
+            # Remove Interrupt button from the queued message
+            [[ -n "$btn_msg_id" ]] && tg_remove_buttons "$chat_id" "$btn_msg_id" 2>/dev/null || true
+
+            # Stop the running agent A
+            local _pid_file="${DIR}/brain/state/run_${_sid}.pid"
+            local _stop_flag="${DIR}/brain/state/stop_${_sid}"
+            local _stop_btn_file="${DIR}/brain/state/stopbtn_${_sid}"
+
+            touch "$_stop_flag"
+            if [[ -f "$_pid_file" ]]; then
+                local _pid_data; _pid_data=$(cat "$_pid_file" 2>/dev/null)
+                local _run_pid _agent_msg_id _orig_chat _orig_thread
+                IFS='|' read -r _run_pid _agent_msg_id _orig_chat _orig_thread <<< "$_pid_data"
+                kill -TERM "$_run_pid" 2>/dev/null || true
+                sleep 0.3
+                pkill -TERM -P "$_run_pid" 2>/dev/null || true
+                rm -f "$_pid_file"
+                [[ -n "$_agent_msg_id" && -n "$_orig_chat" ]] && \
+                    tg_edit "$_orig_chat" "$_agent_msg_id" "🛑 <i>Stopped.</i>" "HTML" > /dev/null 2>&1 || true
+            fi
+            _sbid=$(cat "$_stop_btn_file" 2>/dev/null)
+            [[ -n "$_sbid" ]] && tg_delete "$chat_id" "$_sbid" > /dev/null 2>&1 || true
+            rm -f "$_stop_btn_file"
+
+            # Mark that a C fallback is planned.
+            # If queued agent B exists: B detects interrupt_input_file, deletes this marker,
+            # and runs the message directly without needing C.
+            # If no B exists: C starts after lock clears as the sole runner.
+            touch "$_run_marker"
+            (
+                sleep 2
+                rm -f "$_stop_flag"
+                if [[ -f "$_run_marker" ]]; then
+                    rm -f "$_run_marker" "$_pending_file"
+                    ( set -m; run_agent "$chat_id" "$_pending_text" "$user_id" "[]" \
+                        "$thread_id" "$_sid" "" "${username:-}" "" "$btn_msg_id" ) &
+                fi
+            ) &
+            ;;
+    esac
+}
+
 tg_handle_update() {
     local update="$1"
 
@@ -48,6 +139,7 @@ vals = {
     'is_mention':    '1' if is_mention else '0',
     'is_reply_to_bot': '1' if is_reply_to_bot else '0',
     'media_group_id': media_group_id,
+    'callback_query_id': str(cbq.get('id', '') or ''),
 }
 for k, v in vals.items():
     print(f'{k}={shlex.quote(v)}')
@@ -88,6 +180,13 @@ For code/text: cat \"${_mf_path}\""
             echo "Access denied for chat_id $chat_id / user_id $user_id."
             return
         fi
+    fi
+
+    # Callback query (inline button click) — route before group-mode gate
+    if [[ -n "$callback_query_id" ]]; then
+        _ama_handle_callback "$callback_query_id" "$text" "$chat_id" "$session_id" \
+            "$thread_id" "$user_id" "$username" "$message_id"
+        return
     fi
 
     # Per-group mode gate
@@ -792,10 +891,15 @@ Use <code>/skill &lt;name&gt;</code> to bind a skill." "$thread_id" "HTML"
                             tg_edit "${_orig_chat:-$chat_id}" "$_msg_id" "🛑 <i>Stopped.</i>" "HTML" > /dev/null 2>&1 || true
                         fi
                         tg_send "$chat_id" "🛑 Task stopped." "$thread_id"
+                        # Remove Stop button if still visible
+                        local _stopbtn_id; _stopbtn_id=$(cat "${DIR}/brain/state/stopbtn_${session_id}" 2>/dev/null)
+                        [[ -n "$_stopbtn_id" ]] && tg_delete "$chat_id" "$_stopbtn_id" > /dev/null 2>&1 || true
+                        rm -f "${DIR}/brain/state/stopbtn_${session_id}"
                     else
                         # No running process — but we set the stop flag above, which will
                         # catch any queued process when it tries to acquire the lock
                         tg_send "$chat_id" "🛑 Stopped (was queued)." "$thread_id"
+                        rm -f "${DIR}/brain/state/interrupt_input_${session_id}"
                     fi
                 fi
                 ;;

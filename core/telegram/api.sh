@@ -108,6 +108,69 @@ print(json.dumps({'chat_id': os.environ['TG_CID'], 'message_id': os.environ['TG_
     tg_api "editMessageText" "$_payload"
 }
 
+tg_send_buttons() {
+    local chat_id="$1"
+    local text="$2"
+    local buttons_json="$3"   # JSON: [[{"text":"...","callback_data":"..."}]]
+    local thread_id="$4"
+    local parse_mode="${5:-HTML}"
+    local reply_to_id="${6:-}"
+    local payload
+    payload=$(TG_CID="$chat_id" TG_TXT="$text" TG_PM="$parse_mode" TG_BTN="$buttons_json" python3 -c "
+import json, os
+d = {
+    'chat_id': os.environ['TG_CID'],
+    'text': os.environ['TG_TXT'],
+    'parse_mode': os.environ['TG_PM'],
+    'reply_markup': {'inline_keyboard': json.loads(os.environ['TG_BTN'])}
+}
+print(json.dumps(d))")
+    if [[ -n "$thread_id" && "$thread_id" != "null" ]]; then
+        payload=$(TID="$thread_id" python3 -c "
+import json, os, sys
+d = json.load(sys.stdin)
+try: d['message_thread_id'] = int(os.environ['TID'])
+except: d['message_thread_id'] = os.environ['TID']
+print(json.dumps(d))" <<< "$payload")
+    fi
+    if [[ -n "$reply_to_id" && "$reply_to_id" != "null" && "$reply_to_id" != "0" ]]; then
+        payload=$(RID="$reply_to_id" python3 -c "
+import json, os, sys
+d = json.load(sys.stdin)
+try: d['reply_to_message_id'] = int(os.environ['RID'])
+except: pass
+print(json.dumps(d))" <<< "$payload")
+    fi
+    _tg_send_payload "$payload"
+}
+
+tg_answer_callback() {
+    local callback_query_id="$1"
+    local text="${2:-}"
+    local payload
+    payload=$(CBQID="$callback_query_id" CBQTXT="$text" python3 -c "
+import json, os
+d = {'callback_query_id': os.environ['CBQID']}
+t = os.environ.get('CBQTXT', '')
+if t: d['text'] = t
+print(json.dumps(d))")
+    tg_api "answerCallbackQuery" "$payload" > /dev/null
+}
+
+tg_remove_buttons() {
+    local chat_id="$1"
+    local message_id="$2"
+    local payload
+    payload=$(TG_CID="$chat_id" TG_MID="$message_id" python3 -c "
+import json, os
+print(json.dumps({
+    'chat_id': os.environ['TG_CID'],
+    'message_id': int(os.environ['TG_MID']),
+    'reply_markup': {'inline_keyboard': []}
+}))")
+    tg_api "editMessageReplyMarkup" "$payload" > /dev/null 2>&1 || true
+}
+
 tg_delete() {
     local chat_id="$1"
     local message_id="$2"
