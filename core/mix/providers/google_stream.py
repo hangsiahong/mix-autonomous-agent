@@ -81,23 +81,32 @@ def main():
         sys.stderr.write(f"Payload error: {e}\n")
         sys.exit(1)
 
-    # Determine auth: try gcloud OAuth2 first; fall back to API key header
+    # Inject thinkingConfig so Vertex native endpoint returns thought:true text parts
+    _budgets = {"none": 0, "low": 1024, "medium": 8192, "high": 24576, "max": -1}
+    _tb = os.environ.get("THINKING_BUDGET", "medium")
+    if _tb != "none":
+        payload.setdefault("generationConfig", {})["thinkingConfig"] = {
+            "includeThoughts": True,
+            "thinkingBudget": _budgets.get(_tb, 8192)
+        }
+
+    # Auth for native Vertex GenerateContent endpoint:
+    # 1. Try gcloud OAuth2 Bearer token (works always if gcloud is configured)
+    # 2. Fall back: append ?key=API_KEY to URL (correct way for API keys with native endpoint)
     import subprocess as _sp
-    _is_api_key = False
+    headers = {"Content-Type": "application/json"}
     if mode == "vertex":
+        _used_oauth = False
         try:
             _oauth = _sp.check_output(["gcloud","auth","print-access-token"], timeout=5).decode().strip()
             if _oauth:
-                api_key = _oauth
+                headers["Authorization"] = f"Bearer {_oauth}"
+                _used_oauth = True
         except Exception:
-            _is_api_key = True  # GOOGLE_VERTEX_KEY is an API key, not OAuth2
-
-    headers = {"Content-Type": "application/json"}
-    if mode == "vertex":
-        if _is_api_key:
-            headers["x-goog-api-key"] = api_key
-        else:
-            headers["Authorization"] = f"Bearer {api_key}"
+            pass
+        if not _used_oauth and api_key:
+            # API key: append as ?key= query param (correct for native Vertex endpoint)
+            url += ("&" if "?" in url else "?") + f"key={api_key}"
 
     tg_url = f"https://api.telegram.org/bot{tg_token}/editMessageText"
     tg_action_url = f"https://api.telegram.org/bot{tg_token}/sendChatAction"

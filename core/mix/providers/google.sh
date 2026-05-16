@@ -615,9 +615,11 @@ google_call_api_stream() {
   local skill="$3"
   local sys_prompt_override="$4"
 
-  # OpenAI-compat endpoint (Vertex /openapi, any proxy) — use generic streaming.
-  # Vertex thinking text is returned as delta.thought in OpenAI-compat, not via native SSE.
-  if [[ "$BASE_URL" == */openapi ]]; then
+  # Non-Google proxies using OpenAI-compat — fall back to generic streaming.
+  # Vertex and Studio use native GenerateContent (google_stream.py) which exposes
+  # thought:true text parts. OpenAI-compat never exposes thinking text.
+  local _gmode="${GOOGLE_MODE:-$(grep '^mode=' "$_GOOGLE_CONFIG_FILE" 2>/dev/null | cut -d= -f2-)}"
+  if [[ "$BASE_URL" == */openapi && "$_gmode" != "vertex" && "$_gmode" != "studio" ]]; then
     (
       unset -f google_call_api_stream
       call_api_stream "$chat_id" "$message_id" "$skill" "$sys_prompt_override"
