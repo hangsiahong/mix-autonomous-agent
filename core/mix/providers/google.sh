@@ -662,9 +662,11 @@ google_call_api_stream() {
   # I will extract it to a shared function or just duplicate for now (caveman style).
 
   local payload
-  local _gs_hist_file _gs_sys_file
+  local _gs_hist_file _gs_sys_file _gs_extra_file
   _gs_hist_file=$(mktemp)
   _gs_sys_file=$(mktemp)
+  _gs_extra_file=$(mktemp)
+  printf '%s' "${_extra_payload:-{}}" > "$_gs_extra_file"
   printf '%s' "${HISTORY:-[]}" > "$_gs_hist_file"
   printf '%s' "$system_prompt" > "$_gs_sys_file"
   payload=$(python3 -c '
@@ -736,8 +738,8 @@ except: pass
 
 import sys
 print(json.dumps(body))
-' "$_gs_sys_file" "$_gs_hist_file" <(printf '%s' "${tools_json:-[]}") <(printf '%s' "${_extra_payload:-{}}"))
-  rm -f "$_gs_hist_file" "$_gs_sys_file"
+' "$_gs_sys_file" "$_gs_hist_file" <(printf '%s' "${tools_json:-[]}") "$_gs_extra_file")
+  rm -f "$_gs_hist_file" "$_gs_sys_file" "$_gs_extra_file"
 
   TG_TOKEN="$TG_TOKEN" \
   CHAT_ID="$chat_id" \

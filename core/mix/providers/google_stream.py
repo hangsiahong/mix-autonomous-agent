@@ -84,9 +84,23 @@ def main():
         open("/tmp/ama_think_debug.log", "a").write(f"{_dbg}\n")
     except: pass
 
+    # Determine auth: try gcloud OAuth2 first; fall back to API key header
+    import subprocess as _sp
+    _is_api_key = False
+    if mode == "vertex":
+        try:
+            _oauth = _sp.check_output(["gcloud","auth","print-access-token"], timeout=5).decode().strip()
+            if _oauth:
+                api_key = _oauth
+        except Exception:
+            _is_api_key = True  # GOOGLE_VERTEX_KEY is an API key, not OAuth2
+
     headers = {"Content-Type": "application/json"}
     if mode == "vertex":
-        headers["Authorization"] = f"Bearer {api_key}"
+        if _is_api_key:
+            headers["x-goog-api-key"] = api_key
+        else:
+            headers["Authorization"] = f"Bearer {api_key}"
 
     tg_url = f"https://api.telegram.org/bot{tg_token}/editMessageText"
     tg_action_url = f"https://api.telegram.org/bot{tg_token}/sendChatAction"
