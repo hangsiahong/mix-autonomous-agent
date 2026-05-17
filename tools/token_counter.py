@@ -99,3 +99,14 @@ if __name__ == '__main__':
     elif mode == 'threshold':
         model = sys.argv[2] if len(sys.argv) > 2 else os.environ.get('MODEL', '')
         print(compression_threshold(model))
+
+    elif mode == 'check':
+        # One-shot: count tokens + get threshold + message count — avoids 3 separate subprocess spawns.
+        # Outputs three lines: tokens, threshold, message_count
+        model = sys.argv[2] if len(sys.argv) > 2 else os.environ.get('MODEL', '')
+        history = json.loads(sys.stdin.read())
+        tokens = count_history(history)
+        threshold = compression_threshold(model)
+        print(tokens)
+        print(threshold)
+        print(len(history))

@@ -280,8 +280,9 @@ for tc in json.loads(open(sys.argv[1]).read()):
         break
     done
 
-    # Restore full tools.json and history (trap handles crash case too)
+    # Restore overrides and history (trap handles crash; we restore manually on clean exit)
     trap - EXIT INT TERM
-    mv "$_tools_bak" brain/tools.json 2>/dev/null || true
+    export AMA_TOOLS_OVERRIDE="$_saved_override"
+    export _AMA_NO_RATE_MARK="$_saved_no_rate"
     HISTORY="$temp_history"
 }

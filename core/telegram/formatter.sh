@@ -43,10 +43,15 @@ def md_to_html(text):
     def format_think(match):
         content = match.group(2)
         if len(content) > 1000:
-            content = content[:500] + "\n\n<i>... [thinking truncated] ...</i>\n\n" + content[-500:]
-        return f"<blockquote><b>🧠 Thinking</b>\n<i>{content.strip()}</i></blockquote>\n"
+            content = content[:500] + "\n\n[... thinking truncated ...]\n\n" + content[-500:]
+        # Do NOT wrap in <i> — content may contain <code>/<pre> elements from the
+        # code-block pass above, and Telegram rejects those nested inside <i>.
+        return f"<blockquote><b>🧠 Thinking</b>\n{content.strip()}</blockquote>\n"
         
     html = re.sub(r"&lt;(think|thinking|reasoning|thought)&gt;(.*?)(&lt;/\1&gt;|$)", format_think, html, flags=re.DOTALL|re.IGNORECASE)
+
+    if len(html) > 4000:
+        html = html[:3900] + "\n\n<i>... [message truncated due to Telegram 4096 limit]</i>"
     return html
 
 print(md_to_html(sys.stdin.read()), end="")

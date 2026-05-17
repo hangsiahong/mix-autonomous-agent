@@ -491,6 +491,22 @@ for msg in h:
     if parts:
         contents.append({"role": role, "parts": parts})
 
+# Gemini requires all functionResponse parts for a model turn to be in ONE user turn.
+# Our history stores each tool result as a separate "tool" role message, which the loop
+# above emits as separate user turns. Merge consecutive function_response user turns.
+_merged = []
+for _e in contents:
+    _is_fn_resp = (_e["role"] == "user" and _e["parts"] and
+                   all("function_response" in _p for _p in _e["parts"]))
+    _prev_is_fn_resp = (_merged and _merged[-1]["role"] == "user" and
+                        _merged[-1]["parts"] and
+                        all("function_response" in _p for _p in _merged[-1]["parts"]))
+    if _is_fn_resp and _prev_is_fn_resp:
+        _merged[-1]["parts"].extend(_e["parts"])
+    else:
+        _merged.append(_e)
+contents = _merged
+
 # Gemini native payload (built once, after the loop)
 body = {
     "contents": contents,
@@ -706,6 +722,19 @@ for msg in h:
         role = "user"
         parts = [{"function_response": {"name": msg["name"], "response": {"content": msg["content"]}}}]
     if parts: contents.append({"role": role, "parts": parts})
+# Merge consecutive function_response user turns into one (Gemini requirement)
+_merged = []
+for _e in contents:
+    _is_fn_resp = (_e["role"] == "user" and _e["parts"] and
+                   all("function_response" in _p for _p in _e["parts"]))
+    _prev_is_fn_resp = (_merged and _merged[-1]["role"] == "user" and
+                        _merged[-1]["parts"] and
+                        all("function_response" in _p for _p in _merged[-1]["parts"]))
+    if _is_fn_resp and _prev_is_fn_resp:
+        _merged[-1]["parts"].extend(_e["parts"])
+    else:
+        _merged.append(_e)
+contents = _merged
 body = {"contents": contents, "system_instruction": {"parts": [{"text": s}]}}
 if t:
     decls = []
@@ -818,6 +847,25 @@ for msg in history:
                     args_val = json.dumps(args_val)
                 tc["function"] = {"name": tc.pop("name"), "arguments": args_val}
                 tc.pop("args", None)
+
+# Last-line-of-defense: remove any incomplete tool-call exchange before sending
+# to Gemini. Gemini INVALID_ARGUMENT 400 if N functionCalls != N functionResponses.
+sanitized = []
+i = 0
+while i < len(history):
+    msg = history[i]
+    if msg.get("role") == "assistant" and msg.get("tool_calls"):
+        n_calls = len(msg["tool_calls"])
+        j = i + 1
+        while j < len(history) and history[j].get("role") == "tool":
+            j += 1
+        if (j - i - 1) < n_calls:
+            import sys
+            sys.stderr.write(f"google_filter_history: dropping incomplete tool exchange at index {i} ({j-i-1}/{n_calls} responses)\n")
+            break  # drop this exchange and everything after
+    sanitized.append(msg)
+    i += 1
+history = sanitized
 
 print(json.dumps(history))
 '

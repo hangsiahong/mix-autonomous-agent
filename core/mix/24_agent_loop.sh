@@ -147,6 +147,8 @@ run_agent() {
         local total_output_tokens=0
         local _thought_snippet=""  # persists across turns — shows last known reasoning
         local _think_msg_id=""     # separate Telegram message for reasoning (OpenClaw pattern)
+        local _last_tc_fingerprint=""
+        local _tc_repeat_count=0
         while [ "$turn" -lt "$MAX_TURNS" ]; do
             turn=$((turn + 1))
             [[ "$turn" -gt 1 ]] && tg_send_action "$chat_id" "typing" "$thread_id"
@@ -175,9 +177,11 @@ run_agent() {
 
             # Accumulate token counts across all turns for footer display
             if [[ -n "$usage" ]]; then
-                local _it _ot
-                _it=$(printf '%s' "$usage" | python3 -c "import json,sys; u=json.load(sys.stdin); print(u.get('prompt_tokens',u.get('input_tokens',0)))" 2>/dev/null || echo 0)
-                _ot=$(printf '%s' "$usage" | python3 -c "import json,sys; u=json.load(sys.stdin); print(u.get('completion_tokens',u.get('output_tokens',0)))" 2>/dev/null || echo 0)
+                local _it=0 _ot=0
+                { read _it; read _ot; } < <(printf '%s' "$usage" | python3 -c "
+import json,sys; u=json.load(sys.stdin)
+print(u.get('prompt_tokens',u.get('input_tokens',0)))
+print(u.get('completion_tokens',u.get('output_tokens',0)))" 2>/dev/null)
                 total_input_tokens=$((total_input_tokens + ${_it:-0}))
                 total_output_tokens=$((total_output_tokens + ${_ot:-0}))
             fi
@@ -214,8 +218,13 @@ if m:
                 fi
                 append_tool_call "$tool_calls"
 
-                local batch_names=$(python3 -c "import sys, json; calls = json.loads(open(sys.argv[1]).read()); print(', '.join(c.get('function', {}).get('name', '?') for c in calls))" <(printf '%s' "$tool_calls") 2>/dev/null || echo "")
-                local batch_count=$(python3 -c "import sys, json; print(len(json.loads(open(sys.argv[1]).read())))" <(printf '%s' "$tool_calls") 2>/dev/null || echo 0)
+                local batch_names="" batch_count=0
+                { read batch_count; read batch_names; } < <(python3 -c "
+import json,sys
+calls=json.loads(open(sys.argv[1]).read())
+print(len(calls))
+print(', '.join(c.get('function',{}).get('name','?') for c in calls))" \
+<(printf '%s' "$tool_calls") 2>/dev/null)
                 total_tool_calls=$((total_tool_calls + batch_count))
                 [[ -n "$batch_names" ]] && all_tool_names+="${all_tool_names:+, }$batch_names"
 
@@ -254,6 +263,23 @@ for i in range(len(h)-1, -1, -1):
 print(json.dumps(h, separators=(',',':')))
 " <(printf '%s' "$HISTORY") <(printf '%s' "$_steer_text") 2>/dev/null || printf '%s' "$HISTORY")
                     fi
+                fi
+
+                # Circuit breaker: if the exact same tool-call batch repeats 3× in a row,
+                # the LLM is stuck — stop early instead of burning the rest of MAX_TURNS.
+                local _tc_fp; _tc_fp=$(printf '%s' "$tool_calls" | md5sum 2>/dev/null | cut -c1-8)
+                if [[ "$_tc_fp" == "$_last_tc_fingerprint" && -n "$_tc_fp" ]]; then
+                    _tc_repeat_count=$((_tc_repeat_count + 1))
+                    if [[ $_tc_repeat_count -ge 2 ]]; then
+                        tg_edit "$chat_id" "$msg_id" \
+                            "⚠️ <i>Stuck loop detected — same tool call repeated 3× in a row. Stopping early to save tokens. Use /retry if needed.</i>" \
+                            "HTML" > /dev/null 2>&1 || true
+                        loop_completed=false
+                        break
+                    fi
+                else
+                    _tc_repeat_count=0
+                    _last_tc_fingerprint="$_tc_fp"
                 fi
 
                 # Show completed tool names + session prefix + elapsed timer
@@ -330,12 +356,12 @@ else:
                 local footer_parts=$(echo "$all_tool_names" | tr ',' '\n' | sed 's/^ *//' | grep -v '^$' | sort | uniq -c | sort -rn | awk '{cnt=$1; name=$2; for(i=3;i<=NF;i++) name=name" "$i; if(cnt>1) print name" ×"cnt; else print name}' | paste -sd ', ')
                 local full_md="${text}"$'\n\n'"_🔧 ${total_tool_calls} tool call$([[ $total_tool_calls -ne 1 ]] && echo 's'): ${footer_parts}${_tok_str}${_elapsed_str}_"
                 [[ -n "$_ctx_warn" ]] && full_md+=$'\n'"${_ctx_warn}"
-                tg_edit "$chat_id" "$msg_id" "$(md_to_tg_html "$full_md")" "HTML" > /dev/null
+                tg_edit_safe "$chat_id" "$msg_id" "$(md_to_tg_html "$full_md")" "HTML" "$thread_id"
             elif [[ -n "$text" && "$text" != "null" && $total_tool_calls -eq 0 ]]; then
                 local _final_html; _final_html="$(md_to_tg_html "$text")"
                 [[ -n "$_ctx_warn" ]] && _final_html+=$'\n'"${_ctx_warn}"
                 [[ -n "$_elapsed_str" ]] && _final_html+=$'\n'"<i>${_elapsed_str:1}</i>"
-                tg_edit "$chat_id" "$msg_id" "$_final_html" "HTML" > /dev/null
+                tg_edit_safe "$chat_id" "$msg_id" "$_final_html" "HTML" "$thread_id"
             else
                 # Empty response — Gemini thinking-only output or scrubbed content.
                 # The ⏳ placeholder is still showing. Replace it with a retry prompt.
@@ -346,9 +372,13 @@ else:
             [[ -z "$text" ]] || { [[ -n "$user_msg_id" && "$user_msg_id" != "0" ]] && tg_react "$chat_id" "$user_msg_id" "✅"; }
         else
             # Loop hit max turns without clean exit
-            tg_edit "$chat_id" "$msg_id" "$(md_to_tg_html "${text:-}")\n\n⚠️ _Max turns reached. Use /retry to continue or /new for fresh session._" "HTML" > /dev/null 2>&1 || true
+            tg_edit_safe "$chat_id" "$msg_id" "$(md_to_tg_html "${text:-}")\n\n⚠️ _Max turns reached. Use /retry to continue or /new for fresh session._" "HTML" "$thread_id" || true
             [[ -n "$user_msg_id" && "$user_msg_id" != "0" ]] && tg_react "$chat_id" "$user_msg_id" "👎"
         fi
+
+        # Release the session lock early — post-turn bookkeeping doesn't need it.
+        # The next queued message can start acquiring the lock immediately.
+        exec 200>&-
 
         save_history "$session_id"
         log_trajectory "$session_id" "completed"

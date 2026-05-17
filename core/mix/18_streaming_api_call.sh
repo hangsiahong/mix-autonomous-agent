@@ -165,6 +165,9 @@ def update_tg(text):
         reason_html = md_to_html(prev_reasoning.strip())
         html = f"<blockquote>💭 {reason_html}</blockquote>" + ("\n\n" + html if html else "")
     if not html.strip(): return
+
+    if len(html) > 4000:
+        html = html[:3900] + "\n\n<i>... [message truncated due to Telegram 4096 limit]</i>"
     try:
         resp = requests.post(tg_url, json={
             "chat_id": chat_id,

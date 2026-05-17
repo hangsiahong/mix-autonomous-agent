@@ -133,9 +133,27 @@ load_history() {
 import json, sys
 try:
     h = json.loads(open(sys.argv[1]).read())
+    # 1. Trim trailing orphaned user messages (no assistant reply yet)
     while h and h[-1].get('role') == 'user':
         h.pop()
-    print(json.dumps(h, separators=(',', ':')))
+    # 2. Trim incomplete tool-call exchanges — Gemini 400s if N function_calls
+    #    in a model turn don't have exactly N function_responses in the next turn.
+    #    This happens when the agent was stopped between append_tool_call and
+    #    append_tool_result, or a parallel batch failed partway through.
+    fixed = []
+    i = 0
+    while i < len(h):
+        msg = h[i]
+        if msg.get('role') == 'assistant' and msg.get('tool_calls'):
+            n_calls = len(msg['tool_calls'])
+            j = i + 1
+            while j < len(h) and h[j].get('role') == 'tool':
+                j += 1
+            if (j - i - 1) < n_calls:
+                break  # incomplete exchange — drop it and everything after
+        fixed.append(msg)
+        i += 1
+    print(json.dumps(fixed, separators=(',', ':')))
 except:
     pass
 " <(printf '%s' "$HISTORY") 2>/dev/null || echo "$HISTORY")

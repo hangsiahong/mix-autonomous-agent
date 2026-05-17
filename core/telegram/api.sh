@@ -108,6 +108,72 @@ print(json.dumps({'chat_id': os.environ['TG_CID'], 'message_id': os.environ['TG_
     tg_api "editMessageText" "$_payload"
 }
 
+# tg_edit with automatic fallback for final response delivery.
+# Fallback chain: full HTML → strip-tags plain text → send as new message.
+# Returns 0 if the message was delivered by any means, 1 if completely failed.
+tg_edit_safe() {
+    local chat_id="$1"
+    local message_id="$2"
+    local text="$3"
+    local parse_mode="${4:-HTML}"
+    local thread_id="${5:-}"
+
+    local _payload _result _ok _desc
+
+    # Attempt 1: full formatted edit
+    _payload=$(TG_CID="$chat_id" TG_MID="$message_id" TG_TXT="$text" TG_PM="$parse_mode" python3 -c "
+import json, os
+print(json.dumps({'chat_id': os.environ['TG_CID'], 'message_id': os.environ['TG_MID'],
+    'text': os.environ['TG_TXT'], 'parse_mode': os.environ['TG_PM']}))" 2>/dev/null)
+    _result=$(tg_api "editMessageText" "$_payload" 2>/dev/null)
+
+    { read _ok; read _desc; } < <(python3 -c "
+import json, sys
+try:
+    d = json.loads(sys.argv[1])
+    print('true' if d.get('ok') else 'false')
+    print(d.get('description', ''))
+except:
+    print('false')
+    print('')
+" "$_result" 2>/dev/null)
+
+    [[ "$_ok" == "true" ]] && return 0
+    # "not modified" is a no-op, not an error
+    [[ "$_desc" == *"message is not modified"* ]] && return 0
+
+    # Attempt 2: HTML/entity parse error → strip all tags, retry as plain text
+    if [[ "$_desc" == *"parse entities"* || "$_desc" == *"Unmatched"* || \
+          "$_desc" == *"can't parse"* || "$_desc" == *"Bad Request"* ]]; then
+        echo "AMA: tg_edit HTML error ('${_desc}'), retrying as plain text" >&2
+        local _plain
+        _plain=$(printf '%s' "$text" | python3 -c "
+import sys, re
+t = sys.stdin.read()
+t = re.sub(r'<[^>]+>', '', t)
+t = t.replace('&amp;','&').replace('&lt;','<').replace('&gt;','>') \
+     .replace('&#39;',\"'\").replace('&quot;','\"')
+print(t, end='')" 2>/dev/null || printf '%s' "$text")
+
+        _payload=$(TG_CID="$chat_id" TG_MID="$message_id" TG_TXT="$_plain" python3 -c "
+import json, os
+print(json.dumps({'chat_id': os.environ['TG_CID'], 'message_id': os.environ['TG_MID'],
+    'text': os.environ['TG_TXT']}))" 2>/dev/null)
+        _result=$(tg_api "editMessageText" "$_payload" 2>/dev/null)
+        _ok=$(python3 -c "
+import json,sys; print('true' if json.loads(sys.argv[1]).get('ok') else 'false'
+)" "$_result" 2>/dev/null || echo "false")
+
+        [[ "$_ok" == "true" ]] && return 0
+        text="$_plain"  # carry stripped text into the last fallback
+    fi
+
+    # Attempt 3: edit is dead (message too old / deleted) → send as new message
+    echo "AMA: tg_edit_safe all attempts failed, sending as new message" >&2
+    tg_send "$chat_id" "$text" "$thread_id" "" > /dev/null 2>&1 || true
+    return 1
+}
+
 tg_send_buttons() {
     local chat_id="$1"
     local text="$2"

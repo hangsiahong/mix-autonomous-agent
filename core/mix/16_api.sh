@@ -155,10 +155,18 @@ SKILL_PYEOF
     fi
     [[ -n "$_skill_index" ]] && _mem_block="${_mem_block}${_skill_index}\n"
     # Inject recent session recaps prominently — these answer "what did we do last session?"
-    # Placed FIRST so the agent sees them immediately before any other memory
+    # Placed FIRST so the agent sees them immediately before any other memory.
+    # Cache keyed by mtime of session_recaps.jsonl — only rebuild when file changes.
     if [[ -f "brain/state/session_recaps.jsonl" ]]; then
-        local _recaps_raw
-        _recaps_raw=$(python3 -c "
+        local _recaps_raw=""
+        local _recaps_cache="${DIR:-$(pwd)}/brain/state/recaps_cache_${session_id:-default}.txt"
+        local _recaps_mtime_file="${DIR:-$(pwd)}/brain/state/recaps_mtime_${session_id:-default}"
+        local _cur_recaps_mtime; _cur_recaps_mtime=$(stat -c '%Y' "brain/state/session_recaps.jsonl" 2>/dev/null || echo "0")
+        local _cached_recaps_mtime; _cached_recaps_mtime=$(cat "$_recaps_mtime_file" 2>/dev/null || echo "")
+        if [[ -f "$_recaps_cache" && "$_cur_recaps_mtime" == "$_cached_recaps_mtime" ]]; then
+            _recaps_raw=$(cat "$_recaps_cache" 2>/dev/null || true)
+        else
+            _recaps_raw=$(python3 -c "
 import json, sys
 lines = open('brain/state/session_recaps.jsonl').readlines()
 recent = []
@@ -174,9 +182,12 @@ for line in lines[-3:]:
 if recent:
     print('\n\n---\n'.join(recent))
 " 2>/dev/null || true)
+            if [[ -n "$_recaps_raw" ]]; then
+                printf '%s' "$_recaps_raw" > "$_recaps_cache"
+                printf '%s' "$_cur_recaps_mtime" > "$_recaps_mtime_file"
+            fi
+        fi
         if [[ -n "$_recaps_raw" ]]; then
-            # Inject recaps at the TOP of system prompt with a clear label
-            # so the agent reads them FIRST before calling any search tools
             system_prompt="## Recent Session Recaps — READ THIS FIRST for questions about past sessions
 ${_recaps_raw}
 
@@ -198,36 +209,52 @@ ${system_prompt}"
   #
   # brain/tools_extra.json (gitignored) holds agent-added custom tools.
   # It is merged at runtime so upstream brain/tools.json never conflicts.
-  local _all_tools
   # AMA_TOOLS_OVERRIDE: reflection/recap use this to pass their own tool subset
-  # without touching the shared brain/tools.json (prevents race condition corruption)
+  # without touching the shared brain/tools.json (prevents race condition corruption).
+  # When not overriding, merge tools + read config in a single Python subprocess.
+  local _all_tools _default_ts
   if [[ -n "${AMA_TOOLS_OVERRIDE:-}" ]]; then
     _all_tools="$AMA_TOOLS_OVERRIDE"
-  else
-    _all_tools=$(python3 -c "
-import json, sys
-base = json.load(open('brain/tools.json'))
+    _default_ts=$(python3 -c "
+import json
 try:
-    extra = json.load(open('brain/tools_extra.json'))
-    base_names = {t.get('name') for t in base}
-    base += [t for t in extra if t.get('name') not in base_names]
-except FileNotFoundError:
-    pass
-except Exception as e:
-    sys.stderr.write(f'tools_extra merge warning: {e}\n')
-print(json.dumps(base))
-" 2>/dev/null || cat brain/tools.json)
-  fi
-  local _default_ts
-  _default_ts=$(python3 -c "
-import json, sys
-try:
-    cfg = json.load(open('brain/config.json'))
-    ts = cfg.get('default_toolsets', ['core','search','memory','meta'])
+    ts = json.load(open('brain/config.json')).get('default_toolsets',['core','search','memory','meta'])
     print(' '.join(ts))
+except: print('core search memory meta')
+" 2>/dev/null || echo "core search memory meta")
+  else
+    local _combined
+    _combined=$(python3 -c "
+import json, sys
+# Merge tools.json + tools_extra.json
+try:
+    base = json.load(open('brain/tools.json'))
+    try:
+        extra = json.load(open('brain/tools_extra.json'))
+        base_names = {t.get('name') for t in base}
+        base += [t for t in extra if t.get('name') not in base_names]
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        sys.stderr.write(f'tools_extra merge warning: {e}\n')
+    tools_json = json.dumps(base)
+except Exception as e:
+    sys.stderr.write(f'tools load error: {e}\n')
+    tools_json = open('brain/tools.json').read()
+# Read default_toolsets from config
+try:
+    ts = json.load(open('brain/config.json')).get('default_toolsets',['core','search','memory','meta'])
+    ts_str = ' '.join(ts)
 except:
-    print('core search memory meta')
+    ts_str = 'core search memory meta'
+print(ts_str)
+print(tools_json)
 " 2>/dev/null)
+    _default_ts=$(printf '%s' "$_combined" | head -1)
+    _all_tools=$(printf '%s' "$_combined" | tail -n +2)
+    [[ -z "$_default_ts" ]] && _default_ts="core search memory meta"
+    [[ -z "$_all_tools" ]] && _all_tools=$(cat brain/tools.json 2>/dev/null || echo '[]')
+  fi
   local _active_ts="${TOOL_EXTRA_TOOLSETS:-} $_default_ts"
   local tools
   tools=$(python3 -c "

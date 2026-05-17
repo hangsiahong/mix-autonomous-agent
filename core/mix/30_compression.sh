@@ -14,16 +14,14 @@ compress_history() {
     local thread_id="$3"
     local msg_id="$4"
 
-    # Accurate token count via token_counter.py (tiktoken or improved char estimate)
-    local rough_tokens
-    rough_tokens=$(printf '%s' "$HISTORY" | python3 tools/token_counter.py count 2>/dev/null); rough_tokens=${rough_tokens:-0}
-
-    # Model-aware compression threshold (55% of context window for current MODEL)
-    local _threshold
-    _threshold=$(python3 tools/token_counter.py threshold "${MODEL:-}" 2>/dev/null)
+    # Single Python call: token count + threshold + message count (avoids 3 separate subprocess spawns)
+    local rough_tokens _threshold count
+    { read rough_tokens; read _threshold; read count; } < <(
+        printf '%s' "$HISTORY" | python3 tools/token_counter.py check "${MODEL:-}" 2>/dev/null
+    )
+    rough_tokens=${rough_tokens:-0}
     _threshold=${_threshold:-$_COMPRESSION_THRESHOLD_FALLBACK}
-
-    local count; count=$(python3 -c "import json,sys; print(len(json.loads(open(sys.argv[1]).read())))" <(printf '%s' "$HISTORY") 2>/dev/null); count=${count:-0}
+    count=${count:-0}
 
     if [ "$rough_tokens" -lt "$_threshold" ]; then
         return
@@ -93,8 +91,11 @@ print(json.dumps({"start": si, "end": ei}))
         return
     fi
 
-    start_index=$(python3 -c "import json,sys; print(json.loads(open(sys.argv[1]).read()).get('start',''))" <(printf '%s' "$boundary_json"))
-    end_index=$(python3 -c "import json,sys; print(json.loads(open(sys.argv[1]).read()).get('end',''))" <(printf '%s' "$boundary_json"))
+    { read start_index; read end_index; } < <(python3 -c "
+import json,sys
+b=json.loads(open(sys.argv[1]).read())
+print(b.get('start',''))
+print(b.get('end',''))" <(printf '%s' "$boundary_json") 2>/dev/null)
 
     if [ "$start_index" -ge "$end_index" ]; then
         echo "AMA: Compression skipped — no safe boundary found."
