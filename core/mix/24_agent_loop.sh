@@ -476,31 +476,32 @@ print('\n'.join(out))
 
         save_history "$session_id"
         log_trajectory "$session_id" "completed"
-        # Background post-turn work: reflection, session recap, curator — these
-        # all make API calls and used to race each other, causing rate-limit
-        # storms (3-4 concurrent calls to the same provider+model). Now serialised:
-        # they run in ONE background subshell, one after the other, with small
-        # stagger sleeps to let any rate-limit window cool down between them.
-        # The order matters: reflection writes to LanceDB; recap depends on the
-        # full turn; curator may read MEMORY.md after reflection wrote to it.
+        # Background post-turn work: reflection → recap → curator — chained so they
+        # don't race for the API rate-limit window. Must use the `( cmd & )` detach
+        # idiom (outer subshell exits → inner subshell orphaned → reparented to
+        # init → survives the run_agent EXIT trap's `pkill -TERM -P $BASHPID`).
+        # A plain `( ... ) &` would keep the chain as a child of run_agent and
+        # get TERMed the moment the turn finishes.
         if [[ $total_tool_calls -gt 0 ]]; then
             (
-                # Reflection (read-only inspection, saves to LanceDB)
-                reflect_turn "$chat_id" "$thread_id" "$session_id"
+                (
+                    # Reflection (read-only inspection, saves to LanceDB)
+                    reflect_turn "$chat_id" "$thread_id" "$session_id"
 
-                # Recap saves session_recaps.jsonl entry — only on clean completion
-                if [[ "$loop_completed" == true ]]; then
-                    sleep 2
-                    save_session_recap "$session_id" "$chat_id" "$thread_id"
-                fi
+                    # Recap saves session_recaps.jsonl entry — only on clean completion
+                    if [[ "$loop_completed" == true ]]; then
+                        sleep 2
+                        save_session_recap "$session_id" "$chat_id" "$thread_id"
+                    fi
 
-                # Curator: edits MEMORY.md / USER.md / skill prompts. Only on
-                # tool-heavy turns where learning is likely.
-                if [[ "$loop_completed" == true && $total_tool_calls -ge 3 ]]; then
-                    sleep 3
-                    curate_session "$session_id" "$skill" 2>&1 | sed 's/^/[curator] /' >> logs/curator.log
-                fi
-            ) &
+                    # Curator: edits MEMORY.md / USER.md / skill prompts. Only on
+                    # tool-heavy turns where learning is likely.
+                    if [[ "$loop_completed" == true && $total_tool_calls -ge 3 ]]; then
+                        sleep 3
+                        curate_session "$session_id" "$skill" 2>&1 | sed 's/^/[curator] /' >> logs/curator.log
+                    fi
+                ) &
+            )
         fi
         # Pre-warm memory for next turn — local embedding call, doesn't compete
         # with the LLM rate limit, runs in parallel without staggering.

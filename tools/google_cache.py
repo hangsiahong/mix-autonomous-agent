@@ -46,6 +46,9 @@ def _enabled() -> bool:
     return os.environ.get("ENABLE_GEMINI_CACHE", "1") not in ("0", "false", "")
 
 
+_VERTEX_CACHE_NEEDS_OAUTH_NOTED = False  # log once per process
+
+
 def _read_state() -> dict:
     try:
         with open(STATE_FILE) as f:
@@ -163,6 +166,19 @@ def get_or_create(
     create call fails — caller should fall back to inlining.
     """
     if not _enabled():
+        return None
+    # Vertex `cachedContents` API does NOT accept API keys — needs OAuth2.
+    # If we're in vertex mode with only an API key and no bearer token (e.g.
+    # gcloud isn't installed), skip silently rather than burning a 401 per turn.
+    if mode == "vertex" and not bearer:
+        global _VERTEX_CACHE_NEEDS_OAUTH_NOTED
+        if not _VERTEX_CACHE_NEEDS_OAUTH_NOTED:
+            sys.stderr.write(
+                "google_cache: Vertex caching skipped — cachedContents API requires "
+                "OAuth2 bearer token (`gcloud auth print-access-token`), not API key. "
+                "Install gcloud or set ENABLE_GEMINI_CACHE=0 to silence.\n"
+            )
+            _VERTEX_CACHE_NEEDS_OAUTH_NOTED = True
         return None
     # Skip if content is too small to be worth caching
     rough_tokens = (len(system_prompt) + len(tools_json)) // 4
