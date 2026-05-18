@@ -49,11 +49,17 @@ _api_build_payload() {
     system_prompt=$(cat brain/system_prompt.md)
     _scan_for_injection "$system_prompt" "brain/system_prompt.md" || system_prompt="[System prompt blocked due to injection pattern detected]"
 
-    # Inject current date/time and working directory so the agent always knows "today"
-    local _now _cwd
-    _now=$(date '+%A, %B %-d, %Y at %H:%M %Z')
-    _cwd=$(pwd)
-    system_prompt="Current date and time: ${_now}\nCurrent directory: ${_cwd}\n\n${system_prompt}"
+    # NOTE on caching: anything injected into `system_prompt` becomes part of
+    # the Vertex `cachedContents` prefix (see tools/google_cache.py). The cache
+    # key is sha256(systemInstruction + tools + model). If any part of the
+    # systemInstruction text changes per turn, the cache effectively dies.
+    #
+    # Things that USED to be injected here but moved to per-turn user context
+    # (so the cache stays warm across turns):
+    #   - Current date/time (was: `Current date and time: ...`)
+    #   - Current working directory (was: `Current directory: ...`)
+    # 24_agent_loop.sh now puts both into the [SYSTEM: Context Updated] block
+    # appended to the user's latest message.
 
     # Inject SOUL.md persona (user-editable, loaded fresh each session — hermes pattern)
     if [[ -f "SOUL.md" && -s "SOUL.md" ]]; then

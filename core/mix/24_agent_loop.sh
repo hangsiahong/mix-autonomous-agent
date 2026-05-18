@@ -96,8 +96,15 @@ run_agent() {
         tg_send_action "$chat_id" "typing" "$thread_id"
         load_history "$session_id"
         
-        # Context Injection
+        # Context Injection — per-turn volatile state goes here, NOT into the
+        # cached system prompt. Keeping date/cwd here lets the Vertex prefix
+        # cache stay warm across turns. See 16_api.sh comment.
+        local _now _cwd
+        _now=$(date '+%A, %B %-d, %Y at %H:%M %Z')
+        _cwd=$(pwd)
         local context_prompt="## Current Session Context\n"
+        context_prompt+="- **Date/Time**: ${_now}\n"
+        context_prompt+="- **Working Directory**: ${_cwd}\n"
         context_prompt+="- **Platform**: Telegram\n"
         [[ -n "$chat_title" ]] && context_prompt+="- **Chat**: $chat_title (ID: $chat_id)\n"
         [[ -n "$thread_id" ]] && context_prompt+="- **Topic/Thread ID**: $thread_id\n"
@@ -469,18 +476,34 @@ print('\n'.join(out))
 
         save_history "$session_id"
         log_trajectory "$session_id" "completed"
-        # Reflect only when tools were used — no-tool Q&A turns have nothing to analyze
-        [[ $total_tool_calls -gt 0 ]] && ( reflect_turn "$chat_id" "$thread_id" "$session_id" & )
-        [[ "$loop_completed" == true && $total_tool_calls -gt 0 ]] && \
-            ( save_session_recap "$session_id" "$chat_id" "$thread_id" & )
-        # Curator — patches MEMORY.md / USER.md / active skill prompt with newly
-        # discovered durable knowledge. Runs only on tool-heavy turns where the
-        # agent likely *learned* something worth baking in. Background; silent.
-        if [[ "$loop_completed" == true && $total_tool_calls -ge 3 ]]; then
-            ( curate_session "$session_id" "$skill" 2>&1 | sed 's/^/[curator] /' >> logs/curator.log & )
+        # Background post-turn work: reflection, session recap, curator — these
+        # all make API calls and used to race each other, causing rate-limit
+        # storms (3-4 concurrent calls to the same provider+model). Now serialised:
+        # they run in ONE background subshell, one after the other, with small
+        # stagger sleeps to let any rate-limit window cool down between them.
+        # The order matters: reflection writes to LanceDB; recap depends on the
+        # full turn; curator may read MEMORY.md after reflection wrote to it.
+        if [[ $total_tool_calls -gt 0 ]]; then
+            (
+                # Reflection (read-only inspection, saves to LanceDB)
+                reflect_turn "$chat_id" "$thread_id" "$session_id"
+
+                # Recap saves session_recaps.jsonl entry — only on clean completion
+                if [[ "$loop_completed" == true ]]; then
+                    sleep 2
+                    save_session_recap "$session_id" "$chat_id" "$thread_id"
+                fi
+
+                # Curator: edits MEMORY.md / USER.md / skill prompts. Only on
+                # tool-heavy turns where learning is likely.
+                if [[ "$loop_completed" == true && $total_tool_calls -ge 3 ]]; then
+                    sleep 3
+                    curate_session "$session_id" "$skill" 2>&1 | sed 's/^/[curator] /' >> logs/curator.log
+                fi
+            ) &
         fi
-        # Pre-warm memory for next turn — only when tools were used (meaningful content).
-        # Skipping on no-tool turns avoids wasting an embedding API call for simple Q&A.
+        # Pre-warm memory for next turn — local embedding call, doesn't compete
+        # with the LLM rate limit, runs in parallel without staggering.
         if [[ "${MEMORY_PREFETCH:-1}" != "0" && -n "$text" && $total_tool_calls -gt 0 ]]; then
             local _prefetch_cache="${DIR}/brain/state/prefetch_${session_id}"
             local _next_query
