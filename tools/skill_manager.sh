@@ -17,11 +17,14 @@ if [[ "$action" == "bind" ]]; then
         echo "Error: chat_id, thread_id and skill are required."
         exit 1
     fi
-    
-    # Check if skill exists (optional, but good for validation)
-    # For now, just create the directory if it doesn't exist to allow "proto-skills"
-    mkdir -p "${_ROOT_DIR}/brain/skills/${skill}"
-    
+
+    # Validate skill exists — refuse to bind on typo (was: silently mkdir orphan dir).
+    if [[ ! -f "${_ROOT_DIR}/brain/skills/${skill}/prompt.md" && \
+          ! -f "${_ROOT_DIR}/core/skills/${skill}/prompt.md" ]]; then
+        echo "Error: skill '${skill}' does not exist (no prompt.md in brain/skills/ or core/skills/). Use skill_manager(action=list) to see what's available, or skill_manager(action=create, ...) to create it first."
+        exit 1
+    fi
+
     topic_data=$(TID="$thread_id" SKILL="$skill" NAME="$name" python3 -c "
 import json, os
 print(json.dumps({'thread_id': os.environ['TID'], 'skill': os.environ['SKILL'], 'name': os.environ['NAME']}))

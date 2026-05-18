@@ -25,11 +25,11 @@ SKILL_ROOTS = [
 
 
 def _read_frontmatter(prompt_path):
-    """Return (desc, triggers, body_first_line) from a skill prompt.md."""
+    """Return (desc, triggers, body_first_line, body) from a skill prompt.md."""
     try:
         text = open(prompt_path, encoding="utf-8", errors="ignore").read()
     except Exception:
-        return ("", [], "")
+        return ("", [], "", "")
     desc = ""
     triggers = []
     body = text
@@ -63,7 +63,22 @@ def _read_frontmatter(prompt_path):
             continue
         first_line = s[:120]
         break
-    return (desc, triggers, first_line)
+    return (desc, triggers, first_line, body.lstrip("\n"))
+
+
+def _skill_paths(name):
+    """Return (brain_path, core_path) — either may be None if not present.
+    Prefer brain over core: a user-customised brain skill fully overrides
+    a same-named core skill (no implicit append/merge).
+    """
+    if not name or "/" in name or ".." in name:
+        return (None, None)
+    brain = os.path.join(ROOT, "brain", "skills", name, "prompt.md")
+    core = os.path.join(ROOT, "core", "skills", name, "prompt.md")
+    return (
+        brain if os.path.isfile(brain) else None,
+        core if os.path.isfile(core) else None,
+    )
 
 
 def _all_skills():
@@ -79,7 +94,7 @@ def _all_skills():
             if not os.path.isfile(prompt):
                 continue
             seen.add(name)
-            desc, triggers, fallback = _read_frontmatter(prompt)
+            desc, triggers, fallback, _body = _read_frontmatter(prompt)
             yield (name, desc or fallback, triggers, source)
 
 
@@ -133,9 +148,44 @@ def cmd_index():
             print(f"  • {name}")
 
 
+def cmd_exists(name):
+    """Exit 0 if a skill with this name has a prompt.md anywhere; exit 1 otherwise."""
+    brain, core = _skill_paths(name)
+    sys.exit(0 if (brain or core) else 1)
+
+
+def cmd_body(name):
+    """Print the skill prompt body with YAML frontmatter stripped.
+    Brain overrides core. Exits 2 if no prompt found so callers can detect.
+    """
+    brain, core = _skill_paths(name)
+    path = brain or core
+    if not path:
+        sys.exit(2)
+    _desc, _trig, _fl, body = _read_frontmatter(path)
+    # $(pwd) substitution kept for the core/skills/ama convention.
+    body = body.replace("$(pwd)", os.getcwd())
+    sys.stdout.write(body)
+
+
+def cmd_active_note(name):
+    """One-line note for the system prompt when a skill is bound.
+    Replaces the full skill index (which is unnecessary noise once routed)."""
+    brain, core = _skill_paths(name)
+    if not (brain or core):
+        return
+    desc, _trig, fallback, _body = _read_frontmatter(brain or core)
+    desc = desc or fallback or ""
+    print(f"## Active Skill: {name}")
+    if desc:
+        print(desc)
+    print('To switch skill: skill_manager(action=bind, name="<other>"). To unbind: skill_manager(action=unbind).')
+
+
 def main():
     if len(sys.argv) < 2:
-        print("usage: skill_router.py {route|describe <name>|index}", file=sys.stderr)
+        print("usage: skill_router.py {route|describe <name>|index|body <name>|exists <name>|active <name>}",
+              file=sys.stderr)
         sys.exit(2)
     cmd = sys.argv[1]
     if cmd == "route":
@@ -148,6 +198,12 @@ def main():
         cmd_describe(sys.argv[2] if len(sys.argv) > 2 else "")
     elif cmd == "index":
         cmd_index()
+    elif cmd == "body":
+        cmd_body(sys.argv[2] if len(sys.argv) > 2 else "")
+    elif cmd == "exists":
+        cmd_exists(sys.argv[2] if len(sys.argv) > 2 else "")
+    elif cmd == "active":
+        cmd_active_note(sys.argv[2] if len(sys.argv) > 2 else "")
     else:
         sys.exit(2)
 

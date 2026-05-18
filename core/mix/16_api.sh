@@ -103,19 +103,26 @@ except: pass
         _mem_block="${_mem_block}## About the User\n${_user_raw}\n"
     fi
 
-    # Inject skill index — cached per session to avoid disk I/O + Python on every turn.
-    # Cache invalidated when core/skills or brain/skills directory mtime changes.
+    # Inject skill index — but ONLY when no skill is bound. Once the router or user
+    # has picked a skill, listing all other skills is dead weight to the LLM (~500
+    # tokens for 8 skills). Hermes shows the index every turn because the LLM picks;
+    # AMA pre-routes deterministically so the index is leftover. When bound, inject
+    # a one-line note instead — the active skill prompt itself carries the details.
     local _skill_index
-    local _skill_cache="${DIR:-$(pwd)}/brain/state/skill_cache_${session_id:-default}.txt"
-    local _skill_mtime_file="${DIR:-$(pwd)}/brain/state/skill_mtime_${session_id:-default}"
-    local _cur_mtime; _cur_mtime=$(stat -c '%Y' core/skills brain/skills 2>/dev/null | md5sum | cut -c1-8)
-    local _cached_mtime; _cached_mtime=$(cat "$_skill_mtime_file" 2>/dev/null || echo "")
-    if [[ -f "$_skill_cache" && "$_cur_mtime" == "$_cached_mtime" ]]; then
-        _skill_index=$(cat "$_skill_cache")
+    if [[ -z "$skill" ]]; then
+        local _skill_cache="${DIR:-$(pwd)}/brain/state/skill_cache_${session_id:-default}.txt"
+        local _skill_mtime_file="${DIR:-$(pwd)}/brain/state/skill_mtime_${session_id:-default}"
+        local _cur_mtime; _cur_mtime=$(stat -c '%Y' core/skills brain/skills 2>/dev/null | md5sum | cut -c1-8)
+        local _cached_mtime; _cached_mtime=$(cat "$_skill_mtime_file" 2>/dev/null || echo "")
+        if [[ -f "$_skill_cache" && "$_cur_mtime" == "$_cached_mtime" ]]; then
+            _skill_index=$(cat "$_skill_cache")
+        else
+            _skill_index=$(python3 tools/skill_router.py index 2>/dev/null)
+            printf '%s' "$_skill_index" > "$_skill_cache"
+            printf '%s' "$_cur_mtime" > "$_skill_mtime_file"
+        fi
     else
-        _skill_index=$(python3 tools/skill_router.py index 2>/dev/null)
-        printf '%s' "$_skill_index" > "$_skill_cache"
-        printf '%s' "$_cur_mtime" > "$_skill_mtime_file"
+        _skill_index=$(python3 tools/skill_router.py active "$skill" 2>/dev/null)
     fi
     [[ -n "$_skill_index" ]] && _mem_block="${_mem_block}${_skill_index}\n"
     # Inject recent session recaps prominently — these answer "what did we do last session?"
@@ -246,47 +253,32 @@ print(json.dumps(t,separators=(',',':')))
 " <(cat brain/tools.json) 2>/dev/null || cat brain/tools.json)
   fi
 
-  # Skill-specific prompt injection
+  # Skill-specific prompt injection.
+  # Resolution order:
+  #   1. Validate the skill exists (brain/skills/X/prompt.md OR core/skills/X/prompt.md).
+  #      If neither exists, log a warning and continue WITHOUT a skill — better than
+  #      silently running with a stale/empty prompt on a typo.
+  #   2. Pick THE skill body via tools/skill_router.py body — brain overrides core.
+  #      Frontmatter (description, triggers) is stripped — that's routing metadata,
+  #      not LLM instructions. ~100 tokens/turn saved on skills with rich triggers.
+  #   3. Optional custom extension: brain/skills/X/custom/prompt.md appended with
+  #      a header so the agent treats it as user-additive.
+  #   4. tools.json — brain/X/tools.json wins; core only used if brain has none.
+  if [[ -n "$skill" ]]; then
+    if ! python3 tools/skill_router.py exists "$skill" 2>/dev/null; then
+        echo "AMA: warning — unknown skill '$skill' (no prompt.md in brain/skills/ or core/skills/). Running without skill prompt." >&2
+        skill=""
+    fi
+  fi
+
   if [[ -n "$skill" ]]; then
     local skill_prompt=""
     local skill_tools="[]"
 
-    # 1. Load from core (system skills) — prefer .md, fall back to .txt
-    local _core_prompt_file=""
-    if [[ -f "core/skills/${skill}/prompt.md" ]]; then
-        _core_prompt_file="core/skills/${skill}/prompt.md"
-    elif [[ -f "core/skills/${skill}/prompt.txt" ]]; then
-        _core_prompt_file="core/skills/${skill}/prompt.txt"
-    fi
-    if [[ -n "$_core_prompt_file" ]]; then
-        # Use a temporary python snippet to expand environment variables safely
-        skill_prompt=$(python3 -c '
-import sys
-content = open(sys.argv[1]).read()
-print(content.replace("$(pwd)", sys.argv[2]))
-' "$_core_prompt_file" "$(pwd)")
-    fi
-    if [[ -f "core/skills/${skill}/tools.json" ]]; then
-        skill_tools=$(cat "core/skills/${skill}/tools.json")
-    fi
+    # 1+2. Body, frontmatter stripped, $(pwd) substituted
+    skill_prompt=$(python3 tools/skill_router.py body "$skill" 2>/dev/null)
 
-    # 2. Load from brain (user overrides/new skills) — prefer .md, fall back to .txt
-    local _brain_prompt_file=""
-    if [[ -f "brain/skills/${skill}/prompt.md" ]]; then
-        _brain_prompt_file="brain/skills/${skill}/prompt.md"
-    elif [[ -f "brain/skills/${skill}/prompt.txt" ]]; then
-        _brain_prompt_file="brain/skills/${skill}/prompt.txt"
-    fi
-    if [[ -n "$_brain_prompt_file" ]]; then
-        local user_prompt=$(cat "$_brain_prompt_file")
-        skill_prompt="${skill_prompt}\n\n${user_prompt}"
-    fi
-    if [[ -f "brain/skills/${skill}/tools.json" ]]; then
-        local user_tools=$(cat "brain/skills/${skill}/tools.json")
-        skill_tools=$(python3 -c "import json,sys; print(json.dumps(json.loads(open(sys.argv[1]).read())+json.loads(open(sys.argv[2]).read()),separators=(',',':')))" <(printf '%s' "$skill_tools") <(printf '%s' "$user_tools"))
-    fi
-
-    # 3. Load from custom folder — prefer .md, fall back to .txt
+    # 3. Custom extension layer (additive — distinct concern from override)
     local _custom_prompt_file=""
     if [[ -f "brain/skills/${skill}/custom/prompt.md" ]]; then
         _custom_prompt_file="brain/skills/${skill}/custom/prompt.md"
@@ -294,12 +286,29 @@ print(content.replace("$(pwd)", sys.argv[2]))
         _custom_prompt_file="brain/skills/${skill}/custom/prompt.txt"
     fi
     if [[ -n "$_custom_prompt_file" ]]; then
-        local custom_prompt=$(cat "$_custom_prompt_file")
+        local custom_prompt
+        # Also strip frontmatter from custom prompts for consistency
+        custom_prompt=$(python3 -c "
+import sys, re
+text = open(sys.argv[1]).read()
+m = re.match(r'^---\s*\n.*?\n---\s*\n?', text, re.DOTALL)
+print(text[m.end():] if m else text, end='')" "$_custom_prompt_file")
         skill_prompt="${skill_prompt}\n\n### CUSTOM EXTENSION\n${custom_prompt}"
     fi
+
+    # 4. Tools — brain overrides core; custom layer adds to whichever was picked.
+    if [[ -f "brain/skills/${skill}/tools.json" ]]; then
+        skill_tools=$(cat "brain/skills/${skill}/tools.json")
+    elif [[ -f "core/skills/${skill}/tools.json" ]]; then
+        skill_tools=$(cat "core/skills/${skill}/tools.json")
+    fi
     if [[ -f "brain/skills/${skill}/custom/tools.json" ]]; then
-        local custom_tools=$(cat "brain/skills/${skill}/custom/tools.json")
-        skill_tools=$(python3 -c "import json,sys; print(json.dumps(json.loads(open(sys.argv[1]).read())+json.loads(open(sys.argv[2]).read()),separators=(',',':')))" <(printf '%s' "$skill_tools") <(printf '%s' "$custom_tools"))
+        local custom_tools; custom_tools=$(cat "brain/skills/${skill}/custom/tools.json")
+        skill_tools=$(python3 -c "
+import json, sys
+a = json.loads(open(sys.argv[1]).read())
+b = json.loads(open(sys.argv[2]).read())
+print(json.dumps(a + b, separators=(',', ':')))" <(printf '%s' "$skill_tools") <(printf '%s' "$custom_tools"))
     fi
 
     if [[ -n "$skill_prompt" ]]; then
@@ -348,7 +357,42 @@ print(json.dumps([x for x in st if not (isinstance(x,dict) and '_enabled_toolset
         tools=$(python3 -c "import json,sys; print(json.dumps(json.loads(open(sys.argv[1]).read())+json.loads(open(sys.argv[2]).read()),separators=(',',':')))" <(printf '%s' "$tools") <(printf '%s' "$skill_tools"))
     fi
   fi
-  
+
+  # Dedupe tools by name. When a skill defines a tool with the same name as the
+  # base set, the skill version wins (it appears later in the merged list). Some
+  # providers (Gemini native function_declarations) hard-reject duplicates with
+  # INVALID_ARGUMENT.
+  tools=$(python3 -c "
+import json, sys
+try:
+    raw = json.loads(open(sys.argv[1]).read())
+except Exception:
+    print(open(sys.argv[1]).read()); sys.exit(0)
+seen = {}
+order = []
+for t in raw:
+    n = t.get('name') if 'name' in t else t.get('function', {}).get('name', '')
+    if not n:
+        # Untyped entries (no name) — keep them but they can't dedupe
+        order.append(('@anon@' + str(len(order)), t))
+        continue
+    if n not in seen:
+        order.append((n, t))
+    seen[n] = t
+out = [seen.get(k, v) for k, v in order]
+# Collapse duplicates: keep last occurrence per name
+final = []
+final_names = set()
+for n, t in reversed(order):
+    if n.startswith('@anon@'):
+        final.append(t); continue
+    if n in final_names: continue
+    final_names.add(n)
+    final.append(seen[n])
+final.reverse()
+print(json.dumps(final, separators=(',', ':')))
+" <(printf '%s' "$tools") 2>/dev/null || printf '%s' "$tools")
+
   local _hist_for_api
   _hist_for_api=$(_apply_provider_history_filter "$HISTORY") || _hist_for_api="$HISTORY"
 
