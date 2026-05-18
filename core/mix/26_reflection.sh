@@ -286,3 +286,222 @@ for tc in json.loads(open(sys.argv[1]).read()):
     export _AMA_NO_RATE_MARK="$_saved_no_rate"
     HISTORY="$temp_history"
 }
+
+# ── Async Session Curator (hermes-style) ───────────────────────────────────
+# After a tool-heavy turn, fork a sub-agent constrained to memory + skill-editing
+# tools. It reads the just-completed trajectory, current MEMORY.md/USER.md, and
+# the active skill prompt — then patches them with newly discovered, durable
+# knowledge (API contracts, env quirks, user preferences) so the next run is
+# faster. Runs in background; never blocks or notifies the user.
+#
+# Why this is separate from reflect_turn():
+#   reflect_turn = read-only inspection (memory_remember to LanceDB, error_log).
+#   curate_session = actual file edits to brain/state/*.md and brain/skills/*/prompt.md.
+#   Keeping them apart lets us run reflection on every turn but curation only when
+#   the trajectory likely revealed something worth baking in.
+curate_session() {
+    local session_id="$1"
+    local active_skill="${2:-}"
+
+    # Skip short or trivial sessions
+    local count
+    count=$(python3 -c "import json,sys; print(len(json.loads(open(sys.argv[1]).read())))" <(printf '%s' "$HISTORY") 2>/dev/null); count=${count:-0}
+    [[ "$count" -lt 6 ]] && return
+
+    # Skip offline / cheap models — they're not strong enough for curation judgement
+    [[ "$PROVIDER" == "ollama" ]] && return
+
+    # Opt-out flag
+    [[ "${AMA_CURATOR:-1}" == "0" ]] && return
+
+    echo "AMA: Curating session $session_id (active skill: ${active_skill:-none})..."
+
+    # Snapshot current persistent state to show the curator what already exists.
+    local _mem_now _usr_now _skill_path _skill_now
+    _mem_now=$(cat brain/state/MEMORY.md 2>/dev/null || echo "(empty)")
+    _usr_now=$(cat brain/state/USER.md 2>/dev/null || echo "(empty)")
+    _skill_path=""
+    _skill_now=""
+    if [[ -n "$active_skill" ]]; then
+        for _p in "brain/skills/${active_skill}/prompt.md" "core/skills/${active_skill}/prompt.md"; do
+            if [[ -f "$_p" ]]; then
+                _skill_path="$_p"
+                _skill_now=$(cat "$_p")
+                break
+            fi
+        done
+    fi
+
+    # Compact trajectory: last 14 messages, tool args truncated to 300 chars,
+    # tool results to 600 chars. Curator just needs the shape, not full payloads.
+    local _trajectory
+    _trajectory=$(python3 -c "
+import json, sys
+h = json.loads(open(sys.argv[1]).read())
+take = h[-14:]
+lines = []
+for m in take:
+    role = m.get('role', '?')
+    if role == 'user':
+        c = m.get('content', '')
+        if isinstance(c, list):
+            c = ' '.join(p.get('text','') for p in c if isinstance(p, dict))
+        lines.append(f'USER: {str(c)[:600].strip()}')
+    elif role == 'assistant':
+        c = m.get('content') or ''
+        if c and str(c).strip(): lines.append(f'AGENT: {str(c)[:600].strip()}')
+        for tc in (m.get('tool_calls') or []):
+            n = tc.get('function',{}).get('name','?')
+            a = tc.get('function',{}).get('arguments','{}')
+            lines.append(f'  → tool {n}({str(a)[:300]})')
+    elif role == 'tool':
+        c = m.get('content', '')
+        n = m.get('name','?')
+        lines.append(f'  ← {n} result: {str(c)[:600].strip()}')
+print('\n'.join(lines))
+" <(printf '%s' "$HISTORY") 2>/dev/null)
+
+    [[ -z "$_trajectory" ]] && return
+
+    # The curator prompt: tightly scoped, action-only, NO_CHANGES sentinel for nothing-to-do
+    local _curator_sys="You are AMA's Session Curator. You run in the background after each session to bake newly-discovered durable knowledge into the agent's persistent state.
+
+WHAT TO PERSIST (only if not already captured):
+- API contracts the agent had to reverse-engineer (request shape, auth headers, field names, casing). Bake into the relevant skill prompt.
+- Environment quirks (filesystem layout, service names, config locations). Save via memory(target=memory).
+- User preferences inferred from this session (response style, terminology, defaults). Save via memory(target=user).
+- Working command/curl templates the agent had to discover. Bake into the skill prompt as a copy-pasteable block.
+
+WHAT TO IGNORE:
+- Conversational chatter, greetings, single-task data (e.g. \"user spent \$200 today\" is task data, not knowledge).
+- Anything already present in MEMORY.md, USER.md, or the active skill prompt.
+- Anything trivially discoverable by a single fresh tool call.
+- API contracts revealed by FAILED attempts in the trajectory — wait until they succeed.
+
+HOW:
+- memory(action=add|replace|remove, target=memory|user, content=\"...\") for MEMORY.md / USER.md.
+- edit_code(path=\"brain/skills/<name>/prompt.md\", old_string=\"...\", new_string=\"...\") to patch skill prompts.
+- read_code if you need to inspect a file you don't already have.
+
+LIMITS:
+- AT MOST 3 changes per pass. Be surgical.
+- Each fact: ONE LINE. No prose.
+- If nothing worth persisting, respond with exactly: NO_CHANGES — then stop.
+- NEVER call any tool not in this list. NEVER message the user. NEVER use bash."
+
+    # Build the user-side payload — current state + trajectory
+    local _curator_msg
+    _curator_msg=$(python3 -c "
+import sys, json
+mem = open(sys.argv[1]).read()
+usr = open(sys.argv[2]).read()
+sk_path = sys.argv[3]
+sk_body = open(sys.argv[4]).read() if sys.argv[4] else ''
+traj = open(sys.argv[5]).read()
+parts = []
+parts.append('## Current MEMORY.md')
+parts.append(mem if mem.strip() else '(empty)')
+parts.append('')
+parts.append('## Current USER.md')
+parts.append(usr if usr.strip() else '(empty)')
+parts.append('')
+if sk_path and sk_body:
+    parts.append(f'## Active skill prompt — {sk_path}')
+    parts.append(sk_body)
+    parts.append('')
+parts.append('## Trajectory of the session that just ended')
+parts.append(traj)
+print(json.dumps([{'role': 'user', 'content': chr(10).join(parts)}]))
+" <(printf '%s' "$_mem_now") <(printf '%s' "$_usr_now") "$_skill_path" <(printf '%s' "$_skill_now") <(printf '%s' "$_trajectory") 2>/dev/null)
+
+    [[ -z "$_curator_msg" ]] && return
+
+    # Tool override: only memory + edit_code + read_code (read_code is needed for verifying current state)
+    local _saved_override="${AMA_TOOLS_OVERRIDE:-}"
+    local _saved_no_rate="${_AMA_NO_RATE_MARK:-0}"
+    local _saved_history="$HISTORY"
+    export AMA_TOOLS_OVERRIDE=$(python3 -c "
+import json, sys
+try:
+    tools = json.loads(open(sys.argv[1]).read())
+    allowed = {'memory', 'edit_code', 'read_code'}
+    safe = [t for t in tools if t.get('name') in allowed]
+    print(json.dumps(safe, separators=(',', ':')))
+except: print('[]')
+" brain/tools.json 2>/dev/null)
+    export _AMA_NO_RATE_MARK=1
+    trap 'export AMA_TOOLS_OVERRIDE=\"$_saved_override\"; export _AMA_NO_RATE_MARK=\"$_saved_no_rate\"; HISTORY=\"$_saved_history\"' EXIT INT TERM
+
+    HISTORY="$_curator_msg"
+
+    local _changes=0
+    local _max_turns=4
+    local _turn=0
+    while [ "$_turn" -lt "$_max_turns" ]; do
+        _turn=$((_turn + 1))
+        local _resp
+        _resp=$(call_api "$_curator_sys")
+        if [[ -z "$_resp" || "$_resp" == "FAIL:"* ]]; then
+            echo "Curator: API call failed at turn $_turn — stopping" >&2
+            break
+        fi
+
+        local _parsed; _parsed=$(parse_resp "$_resp")
+        local _text; _text=$(echo "$_parsed" | grep "^TEXT:" | cut -c6-)
+        local _tc; _tc=$(echo "$_parsed" | grep "^TC:" | cut -c4-)
+
+        # Stop sentinel
+        if [[ "$_text" == *"NO_CHANGES"* && ( "$_tc" == "[]" || -z "$_tc" || "$_tc" == "null" ) ]]; then
+            echo "Curator: nothing to persist this session."
+            break
+        fi
+
+        # No tool calls + no sentinel → assume done
+        if [[ "$_tc" == "[]" || -z "$_tc" || "$_tc" == "null" ]]; then
+            break
+        fi
+
+        # Execute each tool call sequentially. Hard-block anything not in the allowlist.
+        local _tc_lines
+        _tc_lines=$(echo "$_tc" | python3 -c "
+import json, sys
+for tc in json.loads(open(sys.argv[1]).read()):
+    name = (tc.get('function') or {}).get('name','')
+    args = (tc.get('function') or {}).get('arguments','{}')
+    tc_json = json.dumps(tc, separators=(',',':'))
+    print(name + chr(0x1f) + args + chr(0x1f) + tc_json)
+" <(printf '%s' "$_tc") 2>/dev/null)
+
+        while IFS= read -r _line; do
+            [[ -z "$_line" ]] && continue
+            local _name _args _tcjson
+            IFS=$'\x1f' read -r _name _args _tcjson <<< "$_line"
+            case "$_name" in
+                memory|edit_code|read_code) ;;
+                *)
+                    echo "Curator: blocked unauthorized tool '$_name'" >&2
+                    continue
+                    ;;
+            esac
+            echo "Curator: $_name"
+            local _out; _out=$(run_tool "$_name" "$_args")
+            append_tool_call "[$_tcjson]"
+            append_tool_result "cur_$(date +%s%N)" "$_name" "$_out"
+            [[ "$_name" == "memory" || "$_name" == "edit_code" ]] && _changes=$((_changes + 1))
+            # Hard cap on changes per pass
+            if [[ "$_changes" -ge 3 ]]; then
+                echo "Curator: hit 3-change cap, stopping"
+                break 2
+            fi
+        done <<< "$_tc_lines"
+    done
+
+    trap - EXIT INT TERM
+    export AMA_TOOLS_OVERRIDE="$_saved_override"
+    export _AMA_NO_RATE_MARK="$_saved_no_rate"
+    HISTORY="$_saved_history"
+
+    if [[ "$_changes" -gt 0 ]]; then
+        echo "AMA: Curator applied $_changes change(s) for $session_id."
+    fi
+}

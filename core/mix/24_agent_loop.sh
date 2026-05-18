@@ -473,6 +473,12 @@ print('\n'.join(out))
         [[ $total_tool_calls -gt 0 ]] && ( reflect_turn "$chat_id" "$thread_id" "$session_id" & )
         [[ "$loop_completed" == true && $total_tool_calls -gt 0 ]] && \
             ( save_session_recap "$session_id" "$chat_id" "$thread_id" & )
+        # Curator — patches MEMORY.md / USER.md / active skill prompt with newly
+        # discovered durable knowledge. Runs only on tool-heavy turns where the
+        # agent likely *learned* something worth baking in. Background; silent.
+        if [[ "$loop_completed" == true && $total_tool_calls -ge 3 ]]; then
+            ( curate_session "$session_id" "$skill" 2>&1 | sed 's/^/[curator] /' >> logs/curator.log & )
+        fi
         # Pre-warm memory for next turn — only when tools were used (meaningful content).
         # Skipping on no-tool turns avoids wasting an embedding API call for simple Q&A.
         if [[ "${MEMORY_PREFETCH:-1}" != "0" && -n "$text" && $total_tool_calls -gt 0 ]]; then
