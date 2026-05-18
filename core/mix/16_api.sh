@@ -641,14 +641,73 @@ d = json.loads(open(sys.argv[1]).read())
 print(d.get('reason','unknown'))
 print(d.get('retryable','false'))
 print(d.get('should_compress','false'))
+print(d.get('action','retry_after_delay'))
 " <(printf '%s' "$classification") 2>/dev/null)
-      local reason retryable should_compress
-      IFS=$'\n' read -r reason retryable should_compress <<< "$_cls_parsed"
+      local reason retryable should_compress action
+      IFS=$'\n' read -r reason retryable should_compress action <<< "$_cls_parsed"
 
-      if [[ "$reason" == "rate_limit" ]]; then
-          mark_rate_limited "$PROVIDER" "$MODEL" 60
-          pool_mark_limited "${_POOL_IDX:-}" 60
-      fi
+      # Dispatch on the classified action — see core/mix/34_error_classifier.sh
+      # header comment for the full matrix.
+      case "$action" in
+          rotate_pool)
+              # Mark current pool entry limited so pool_apply picks a different one
+              # next iteration. Also record provider/model rate-limit so we don't
+              # keep hammering it across separate run_agent invocations.
+              pool_mark_limited "${_POOL_IDX:-}" 120
+              mark_rate_limited "$PROVIDER" "$MODEL" 60
+              ;;
+          retry_after_delay)
+              # rate_limit / server_error / timeout
+              if [[ "$reason" == "rate_limit" ]]; then
+                  mark_rate_limited "$PROVIDER" "$MODEL" 60
+                  pool_mark_limited "${_POOL_IDX:-}" 60
+              fi
+              ;;
+          switch_model)
+              # 404 model-not-found or 503 overloaded — switch to FALLBACK_MODEL
+              # this attempt onwards. Pool may rotate anyway; this handles the
+              # static fallback case.
+              if [[ -n "${FALLBACK_MODEL:-}" && "$MODEL" != "$FALLBACK_MODEL" ]]; then
+                  echo "AMA: action=switch_model — $MODEL → $FALLBACK_MODEL" >&2
+                  MODEL="$FALLBACK_MODEL"
+              fi
+              ;;
+          disable_thinking)
+              # thoughtSignature mismatch — drop thinking for the next attempt.
+              # Doesn't persist across run_agent calls (env scope only).
+              echo "AMA: action=disable_thinking — clearing THINKING_BUDGET for retry" >&2
+              export THINKING_BUDGET=none
+              ;;
+          reinline_cache)
+              # cachedContent expired or revoked — purge local cache state so the
+              # next request rebuilds inline. google_stream.py also handles this
+              # in-flight; the purge here covers the non-streaming path.
+              echo "AMA: action=reinline_cache — purging gemini_cache.json" >&2
+              python3 -c "
+import sys, os
+sys.path.insert(0, os.path.join(os.getcwd(), 'tools'))
+try:
+    import google_cache
+    google_cache._write_state({})
+except Exception: pass" 2>/dev/null || true
+              ;;
+          compress)
+              # context_overflow / payload_too_large — caller (compact_history)
+              # uses should_compress flag; nothing to do here.
+              :
+              ;;
+          fail_user)
+              # Provider policy / safety block — don't retry. Surface a friendly
+              # error so the user understands why it failed.
+              echo "AMA: action=fail_user (provider_policy/safety) — not retrying" >&2
+              echo "FAIL:$code:provider_policy:$(echo "$body" | head -c 400)"
+              return 1
+              ;;
+          fail)
+              # Permanent bad_request — retry won't fix it.
+              echo "AMA: action=fail ($reason) — not retrying" >&2
+              ;;
+      esac
 
       # Log error for reflection
       local err_entry
