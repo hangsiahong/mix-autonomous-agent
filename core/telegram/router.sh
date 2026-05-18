@@ -300,20 +300,38 @@ print(json.dumps(combined))
 
     # Auto-load AMA skill if mentioning AMA or autonomous-agent
     local topic_cfg=$(get_topic_config "$chat_id" "$thread_id")
-    local skill=$(python3 -c "import json,sys; d=json.loads(sys.argv[1]); print(d.get('skill','') or '')" "$topic_cfg" 2>/dev/null)
+    local _topic_skill=$(python3 -c "import json,sys; d=json.loads(sys.argv[1]); print(d.get('skill','') or '')" "$topic_cfg" 2>/dev/null)
+    local skill="$_topic_skill"
     if [[ -z "$skill" ]] && [[ "$text" =~ ([[:space:]]|^)[Aa][Mm][Aa]([[:space:]]|$) || "$text" =~ "autonomous-agent" ]]; then
         skill="ama"
     fi
 
+    # Active-skill persistence: if a previous turn in this session routed to a
+    # different skill, prefer continuing with it. The topic skill is just the
+    # *default* — a session can drift to a different skill mid-conversation, and
+    # short follow-ups ("did you do it?", "thanks", "more details") shouldn't
+    # snap back to the default and lose context.
+    local _active_skill_file="${DIR}/brain/state/active_skill_${session_id}"
+    local _active_skill=""
+    [[ -f "$_active_skill_file" ]] && _active_skill=$(cat "$_active_skill_file" 2>/dev/null)
+    if [[ -n "$_active_skill" ]]; then
+        skill="$_active_skill"
+    fi
+
     # Keyword-based skill auto-router (skip for slash commands).
-    # If the user message strongly matches a different skill's triggers,
-    # override the topic-default for this turn — saves probing turns/tokens.
+    # Only overrides when the new message strongly matches a DIFFERENT skill.
     if [[ "$text" != /* ]] && [[ -n "$text" ]]; then
         local _routed
         _routed=$(printf '%s' "$text" | python3 "${DIR}/tools/skill_router.py" route "$skill" 2>/dev/null)
         if [[ -n "$_routed" ]]; then
             skill="$_routed"
         fi
+    fi
+
+    # Persist the chosen skill for the next turn (only if non-empty and not a slash command)
+    if [[ "$text" != /* ]] && [[ -n "$skill" ]]; then
+        mkdir -p "$(dirname "$_active_skill_file")"
+        printf '%s' "$skill" > "$_active_skill_file" 2>/dev/null || true
     fi
 
     # Handle Slash Commands
@@ -379,7 +397,9 @@ print(json.dumps(combined))
                 # Clear session-level overrides on reset
                 rm -f "${DIR}/brain/state/model_${session_id}" \
                       "${DIR}/brain/state/steer_${session_id}" \
-                      "${DIR}/brain/state/queue_${session_id}" 2>/dev/null || true
+                      "${DIR}/brain/state/queue_${session_id}" \
+                      "${DIR}/brain/state/active_skill_${session_id}" \
+                      "${DIR}/brain/state/prefetch_${session_id}" 2>/dev/null || true
                 tg_send "$chat_id" "🆕 New session started. Past conversations are archived and searchable with \`session_search\`." "$thread_id"
                 ;;
 
