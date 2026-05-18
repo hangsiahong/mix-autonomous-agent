@@ -313,6 +313,7 @@ tg_set_commands() {
         {"command": "stop",     "description": "Stop the running task — /stop all to kill everything"},
         {"command": "steer",    "description": "Inject guidance mid-run: /steer <note>"},
         {"command": "queue",    "description": "Queue a message for after current run: /queue <text>"},
+        {"command": "goal",     "description": "Autonomous goal loop: /goal <prose> (or status|stop|pause|resume|max <n>)"},
         {"command": "model",    "description": "Switch model this session: /model <name>"},
         {"command": "history",  "description": "Show recent conversation turns: /history [n]"},
         {"command": "topic",    "description": "Name this thread/topic: /topic <name>"},

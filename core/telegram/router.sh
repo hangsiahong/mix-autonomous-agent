@@ -334,6 +334,27 @@ print(json.dumps(combined))
         printf '%s' "$skill" > "$_active_skill_file" 2>/dev/null || true
     fi
 
+    # Goal auto-pause: if a goal loop is active and the user sends a non-/goal
+    # message, pause the loop so the user's message takes precedence.
+    # User can resume with /goal resume.
+    if [[ "$text" != /goal* ]] && [[ "$text" != /* ]] && [[ -n "$text" ]]; then
+        local _gfile="${DIR}/brain/state/goal_${session_id}.json"
+        if [[ -f "$_gfile" ]]; then
+            local _gstatus; _gstatus=$(python3 -c "
+import json,sys
+try: print(json.load(open(sys.argv[1])).get('status',''))
+except: pass" "$_gfile" 2>/dev/null)
+            if [[ "$_gstatus" == "active" ]]; then
+                python3 -c "
+import json,sys
+d=json.load(open(sys.argv[1]))
+d['status']='paused'
+open(sys.argv[1],'w').write(json.dumps(d, separators=(',',':')))" "$_gfile" 2>/dev/null || true
+                tg_send "$chat_id" "⏸ <i>Goal auto-paused — your message takes priority. <code>/goal resume</code> to continue.</i>" "$thread_id" "HTML"
+            fi
+        fi
+    fi
+
     # Handle Slash Commands
     if [[ "$text" == /* ]]; then
         local cmd=$(echo "$text" | awk '{print $1}')
@@ -352,6 +373,7 @@ print(json.dumps(combined))
 /undo — remove last exchange from history
 /steer &lt;note&gt; — inject guidance mid-run (after next tool call)
 /queue &lt;text&gt; — queue a message for after current run
+/goal &lt;prose&gt; — autonomous goal loop (judge decides done each turn); /goal status|stop|pause|resume|max
 
 <b>Config</b>
 /model &lt;name&gt; — switch model this session
@@ -399,7 +421,8 @@ print(json.dumps(combined))
                       "${DIR}/brain/state/steer_${session_id}" \
                       "${DIR}/brain/state/queue_${session_id}" \
                       "${DIR}/brain/state/active_skill_${session_id}" \
-                      "${DIR}/brain/state/prefetch_${session_id}" 2>/dev/null || true
+                      "${DIR}/brain/state/prefetch_${session_id}" \
+                      "${DIR}/brain/state/goal_${session_id}.json" 2>/dev/null || true
                 tg_send "$chat_id" "🆕 New session started. Past conversations are archived and searchable with \`session_search\`." "$thread_id"
                 ;;
 
@@ -649,6 +672,81 @@ print(f'Session: {total_calls} API calls\n{total_in:,} input + {total_out:,} out
                     local _qdepth; _qdepth=$(wc -l < "$_queue_file" 2>/dev/null || echo 1)
                     tg_send "$chat_id" "📥 Queued (position $_qdepth)." "$thread_id"
                 fi
+                ;;
+
+            /goal)
+                # Autonomous goal-loop: agent runs the goal turn-by-turn, judge
+                # decides done/continue after each turn (hermes /goal pattern).
+                local _goal_sub="${args%% *}"
+                local _goal_rest="${args#* }"; [[ "$_goal_rest" == "$args" ]] && _goal_rest=""
+                local _goal_file_path="${DIR}/brain/state/goal_${session_id}.json"
+                case "$_goal_sub" in
+                    "" )
+                        tg_send "$chat_id" "Usage:
+<code>/goal &lt;prose&gt;</code> — set + run an autonomous goal
+<code>/goal status</code> — show current goal
+<code>/goal stop</code> — clear goal, stop looping
+<code>/goal pause</code> / <code>/goal resume</code> — toggle the loop
+<code>/goal max &lt;n&gt;</code> — change max turns (default 20)" "$thread_id" "HTML"
+                        ;;
+                    status)
+                        local _status_html
+                        _status_html=$(goal_status_html "$session_id" 2>/dev/null)
+                        tg_send "$chat_id" "${_status_html:-<i>No goal set.</i>}" "$thread_id" "HTML"
+                        ;;
+                    stop|done|clear|reset)
+                        if [[ -f "$_goal_file_path" ]]; then
+                            rm -f "$_goal_file_path"
+                            tg_send "$chat_id" "🛑 Goal cleared." "$thread_id"
+                        else
+                            tg_send "$chat_id" "<i>No active goal.</i>" "$thread_id" "HTML"
+                        fi
+                        ;;
+                    pause)
+                        if [[ -f "$_goal_file_path" ]]; then
+                            goal_set "$session_id" status=paused
+                            tg_send "$chat_id" "⏸ Goal paused. Use <code>/goal resume</code> to continue." "$thread_id" "HTML"
+                        else
+                            tg_send "$chat_id" "<i>No active goal.</i>" "$thread_id" "HTML"
+                        fi
+                        ;;
+                    resume)
+                        if [[ -f "$_goal_file_path" ]]; then
+                            goal_set "$session_id" status=active
+                            # Kick the loop by queueing the goal text now
+                            local _gtext; _gtext=$(goal_field "$session_id" text "")
+                            if [[ -n "$_gtext" ]]; then
+                                printf '%s\n' "[GOAL RESUME] ${_gtext}" >> "${DIR}/brain/state/queue_${session_id}"
+                                tg_send "$chat_id" "▶ Goal resumed." "$thread_id"
+                                # Trigger run_agent so the queue gets consumed even when idle
+                                ( set -m; run_agent "$chat_id" "[GOAL RESUME] ${_gtext}" "$user_id" "[]" "$thread_id" "$session_id" "$chat_title" "$username" "$skill" "0" ) &
+                                # Pop the line we just added since we're handling it directly
+                                sed -i '$d' "${DIR}/brain/state/queue_${session_id}" 2>/dev/null || true
+                            else
+                                tg_send "$chat_id" "⚠️ Goal has no text. Set a new one with <code>/goal &lt;prose&gt;</code>." "$thread_id" "HTML"
+                            fi
+                        else
+                            tg_send "$chat_id" "<i>No paused goal to resume.</i>" "$thread_id" "HTML"
+                        fi
+                        ;;
+                    max)
+                        local _n="${_goal_rest%% *}"
+                        if [[ -f "$_goal_file_path" && "$_n" =~ ^[0-9]+$ ]]; then
+                            goal_set "$session_id" max_turns="$_n"
+                            tg_send "$chat_id" "🎯 Max turns set to $_n." "$thread_id"
+                        else
+                            tg_send "$chat_id" "Usage: <code>/goal max &lt;n&gt;</code> while a goal is active." "$thread_id" "HTML"
+                        fi
+                        ;;
+                    *)
+                        # Treat as the goal text itself.
+                        local _gtext="$args"
+                        goal_create "$session_id" "$_gtext"
+                        tg_send "$chat_id" "🎯 Goal set: <code>${_gtext}</code>\nMax turns: $(goal_field "$session_id" max_turns 20). Working on it…" "$thread_id" "HTML"
+                        # Fire run_agent immediately on the goal text
+                        ( set -m; run_agent "$chat_id" "$_gtext" "$user_id" "[]" "$thread_id" "$session_id" "$chat_title" "$username" "$skill" "${message_id:-0}" ) &
+                        ;;
+                esac
                 ;;
             /status)
                 local _title="Untitled"

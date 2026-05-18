@@ -490,6 +490,44 @@ print('\n'.join(out))
         fi
     ) 200>"$lock_file"
 
+    # Goal-loop continuation: if a /goal is active, ask the judge whether the
+    # last turn finished it. If not, the judge appends the goal text to
+    # queue_file and the existing queue handler below re-runs run_agent.
+    # Skipped on /stop or when the user has explicitly paused/cleared the goal.
+    if [[ ! -f "$stop_flag" ]] && type goal_maybe_continue >/dev/null 2>&1; then
+        # Read the last assistant message from history for the judge prompt
+        local _last_resp
+        _last_resp=$(python3 -c "
+import json
+try:
+    h = json.load(open('brain/state/history_${session_id}.json'))
+    for m in reversed(h):
+        if m.get('role') == 'assistant':
+            c = m.get('content') or ''
+            if isinstance(c, str) and c.strip():
+                print(c[:2000]); break
+except: pass" 2>/dev/null)
+        # Capture verdict for user-visible feedback after the next message
+        local _goal_status_before; _goal_status_before=$(goal_field "$session_id" status "")
+        if [[ "$_goal_status_before" == "active" ]]; then
+            goal_maybe_continue "$session_id" "$_last_resp" "$queue_file"
+            local _gret=$?
+            # Brief Telegram notice on terminal states so the user knows the loop ended
+            case "$_gret" in
+                1)  # DONE
+                    tg_send "$chat_id" "✅ <i>Goal complete.</i>" "$thread_id" "HTML"
+                    ;;
+                2)  # exhausted
+                    tg_send "$chat_id" "⏱ <i>Goal stopped — max turns reached. Use /goal max &lt;n&gt; or /goal resume to extend.</i>" "$thread_id" "HTML"
+                    ;;
+                3)  # failed
+                    local _why; _why=$(goal_field "$session_id" last_reason "")
+                    tg_send "$chat_id" "⚠️ <i>Goal stopped: ${_why:-judge halted}</i>" "$thread_id" "HTML"
+                    ;;
+            esac
+        fi
+    fi
+
     # Process queued message after lock is released (hermes /queue pattern)
     # Check stop flag again just in case a /stop hit right as the lock released
     if [[ -f "$queue_file" && ! -f "$stop_flag" ]]; then
