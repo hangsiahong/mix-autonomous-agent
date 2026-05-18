@@ -373,6 +373,7 @@ open(sys.argv[1],'w').write(json.dumps(d, separators=(',',':')))" "$_gfile" 2>/d
 /undo — remove last exchange from history
 /steer &lt;note&gt; — inject guidance mid-run (after next tool call)
 /queue &lt;text&gt; — queue a message for after current run
+/btw &lt;question&gt; — ephemeral side question, doesn't interrupt or persist
 /goal &lt;prose&gt; — autonomous goal loop (judge decides done each turn); /goal status|stop|pause|resume|max
 
 <b>Config</b>
@@ -672,6 +673,13 @@ print(f'Session: {total_calls} API calls\n{total_in:,} input + {total_out:,} out
                     local _qdepth; _qdepth=$(wc -l < "$_queue_file" 2>/dev/null || echo 1)
                     tg_send "$chat_id" "📥 Queued (position $_qdepth)." "$thread_id"
                 fi
+                ;;
+
+            /btw)
+                # Ephemeral side-question — uses current session as background,
+                # doesn't write to history, no tools, no thinking. Runs in a
+                # detached subshell so it doesn't block other commands.
+                ( ( btw_command "$chat_id" "$thread_id" "$session_id" "$args" "${message_id:-0}" ) & )
                 ;;
 
             /goal)
