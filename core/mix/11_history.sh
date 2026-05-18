@@ -168,7 +168,11 @@ compact_history() {
     local thread_id="${3:-}"
     local msg_id="${4:-}"
 
-    # First, try smart compression if history is long
+    # Cheap pass first — collapse stale tool results + redact verbose write args
+    # so they don't bloat token count before we even consider summarization.
+    decay_history
+
+    # Then smart compression if still over threshold
     compress_history "$session_id" "$chat_id" "$thread_id" "$msg_id"
 
     # Fallback to hard truncation if still over max limit
@@ -213,4 +217,78 @@ _apply_provider_history_filter() {
     [ -z "$hist" ] && hist="$1"
   fi
   printf '%s' "$hist"
+}
+
+# Progressive decay: tool results older than DECAY_KEEP turns get collapsed to a
+# 1-line marker, and write_file/patch/edit_code arguments get their `content`/
+# `code`/`patch_text`/`new_string` redacted. Cheap (no LLM call) and bounded —
+# keeps mid-session history ~3-5× lighter without waiting for full compression.
+# Only the freshest DECAY_KEEP tool exchanges keep their full content.
+decay_history() {
+    local _keep="${DECAY_KEEP:-4}"
+    local _arg_cap="${DECAY_ARG_CAP:-2000}"
+    HISTORY=$(DECAY_KEEP="$_keep" DECAY_ARG_CAP="$_arg_cap" python3 -c '
+import json, os, sys
+h = json.loads(open(sys.argv[1]).read())
+keep = int(os.environ.get("DECAY_KEEP", "4"))
+arg_cap = int(os.environ.get("DECAY_ARG_CAP", "2000"))
+
+# Index of tool_call → tool_result groups, in order.
+# A "group" = assistant(tool_calls) + its trailing tool messages.
+groups = []
+i = 0
+while i < len(h):
+    msg = h[i]
+    if msg.get("role") == "assistant" and msg.get("tool_calls"):
+        j = i + 1
+        while j < len(h) and h[j].get("role") == "tool":
+            j += 1
+        groups.append((i, j))  # [start, end)
+        i = j
+    else:
+        i += 1
+
+# Decay every group except the last `keep`
+to_decay = groups[:-keep] if len(groups) > keep else []
+_VERBOSE_ARGS = ("content", "code", "patch_text", "new_string", "new_body", "text", "body")
+
+for (start, end) in to_decay:
+    # 1. Redact verbose argument fields in assistant tool_calls
+    a = h[start]
+    for tc in (a.get("tool_calls") or []):
+        try:
+            args = tc.get("function", {}).get("arguments", "{}")
+            if isinstance(args, str):
+                parsed = json.loads(args)
+            else:
+                parsed = dict(args)
+            changed = False
+            for k in _VERBOSE_ARGS:
+                v = parsed.get(k)
+                if isinstance(v, str) and len(v) > arg_cap:
+                    parsed[k] = f"[elided {len(v)} chars]"
+                    changed = True
+            if changed:
+                tc["function"]["arguments"] = json.dumps(parsed, separators=(",", ":"))
+        except Exception:
+            pass
+
+    # 2. Collapse tool results to 1-line summary
+    for k in range(start + 1, end):
+        msg = h[k]
+        if msg.get("role") != "tool":
+            continue
+        c = msg.get("content", "")
+        if not isinstance(c, str):
+            c = str(c)
+        if len(c) < 200:
+            continue  # already small
+        # Keep first non-empty line; mark size
+        first = next((line.strip() for line in c.splitlines() if line.strip()), "").replace("\n", " ")
+        if len(first) > 140:
+            first = first[:140]
+        msg["content"] = f"[decayed | {len(c)} chars] {first}"
+
+print(json.dumps(h, separators=(",", ":")))
+' <(printf '%s' "$HISTORY") 2>/dev/null || printf '%s' "$HISTORY")
 }

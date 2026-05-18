@@ -18,7 +18,7 @@ _ama_handle_callback() {
             local _sid="${data#stop:}"
             local _pid_file="${DIR}/brain/state/run_${_sid}.pid"
             local _stop_flag="${DIR}/brain/state/stop_${_sid}"
-            local _stop_btn_file="${DIR}/brain/state/stopbtn_${_sid}"
+            local _stop_btn_file="${DIR}/brain/state/stopbtn_${_sid}"  # legacy
 
             touch "$_stop_flag"
             rm -f "${DIR}/brain/state/queue_${_sid}" \
@@ -37,7 +37,9 @@ _ama_handle_callback() {
                 [[ -n "$_agent_msg_id" && -n "$_orig_chat" ]] && \
                     tg_edit "$_orig_chat" "$_agent_msg_id" "🛑 <i>Stopped.</i>" "HTML" > /dev/null 2>&1 || true
             fi
-            [[ -n "$btn_msg_id" ]] && tg_delete "$chat_id" "$btn_msg_id" > /dev/null 2>&1 || true
+            # Stop button now lives on the agent's main message → just strip buttons,
+            # don't delete the message (the "Stopped" edit above is the visible state).
+            [[ -n "$btn_msg_id" ]] && tg_remove_buttons "$chat_id" "$btn_msg_id" > /dev/null 2>&1 || true
             rm -f "$_stop_btn_file"
             ;;
 
@@ -301,6 +303,17 @@ print(json.dumps(combined))
     local skill=$(python3 -c "import json,sys; d=json.loads(sys.argv[1]); print(d.get('skill','') or '')" "$topic_cfg" 2>/dev/null)
     if [[ -z "$skill" ]] && [[ "$text" =~ ([[:space:]]|^)[Aa][Mm][Aa]([[:space:]]|$) || "$text" =~ "autonomous-agent" ]]; then
         skill="ama"
+    fi
+
+    # Keyword-based skill auto-router (skip for slash commands).
+    # If the user message strongly matches a different skill's triggers,
+    # override the topic-default for this turn — saves probing turns/tokens.
+    if [[ "$text" != /* ]] && [[ -n "$text" ]]; then
+        local _routed
+        _routed=$(printf '%s' "$text" | python3 "${DIR}/tools/skill_router.py" route "$skill" 2>/dev/null)
+        if [[ -n "$_routed" ]]; then
+            skill="$_routed"
+        fi
     fi
 
     # Handle Slash Commands

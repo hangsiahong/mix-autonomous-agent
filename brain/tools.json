@@ -1,361 +1,190 @@
 [
   {
     "name": "web_search",
-    "description": "Search the web. Auto-selects backend: Tavily (if TAVILY_API_KEY set) \u2192 Exa \u2192 Brave \u2192 SearXNG \u2192 DuckDuckGo. Returns titles, URLs, and snippets. SSRF-protected.",
+    "description": "Search the web. Returns titles, URLs, snippets.",
     "parameters": {
       "type": "object",
       "properties": {
-        "query": {
-          "type": "string",
-          "description": "The search query string."
-        },
-        "limit": {
-          "type": "integer",
-          "description": "Number of results to return (1-15, default 8)."
-        }
+        "query": {"type": "string", "description": "Search query."},
+        "limit": {"type": "integer", "description": "1-15, default 8."}
       },
-      "required": [
-        "query"
-      ]
+      "required": ["query"]
     },
     "toolset": "search"
   },
   {
     "name": "fetch_url",
-    "description": "Fetch the content of a URL as clean Markdown (via Jina Reader). SSRF-protected \u2014 blocks private IPs and cloud metadata endpoints. Optionally uses LLM to extract the relevant portion when 'query' is provided. Truncates large pages intelligently around matching content.",
+    "description": "Fetch a URL as clean Markdown via Jina Reader. Pass `query` to extract a specific portion.",
     "parameters": {
       "type": "object",
       "properties": {
-        "url": {
-          "type": "string",
-          "description": "The full URL to fetch (must be a public http/https URL)."
-        },
-        "query": {
-          "type": "string",
-          "description": "Optional: what you want to extract from the page. If provided, content is centered around matching sections and optionally summarized by LLM."
-        },
-        "max_chars": {
-          "type": "integer",
-          "description": "Max characters to return before truncation/summarization (default 8000)."
-        }
+        "url": {"type": "string", "description": "Public http/https URL."},
+        "query": {"type": "string", "description": "Optional: what to extract from the page."},
+        "max_chars": {"type": "integer", "description": "Truncation cap, default 8000."}
       },
-      "required": [
-        "url"
-      ]
+      "required": ["url"]
     },
     "toolset": "search"
   },
   {
     "name": "bash",
-    "description": "Run a bash command in the project directory. Blocked: /etc/passwd, ~/.ssh, .env reads, destructive commands (rm -rf /, mkfs, fork bombs). Capped at TOOL_timeout seconds (default 30, max 120).",
+    "description": "Run a bash command in the project directory. Capped at `timeout` seconds (default 30, max 120).",
     "parameters": {
       "type": "object",
       "properties": {
-        "command": {
-          "type": "string",
-          "description": "The bash command to run."
-        },
-        "timeout": {
-          "type": "integer",
-          "description": "Seconds before the command is killed. Default 30, max 120."
-        }
+        "command": {"type": "string", "description": "The command."},
+        "timeout": {"type": "integer", "description": "Kill after N seconds. Default 30, max 120."}
       },
-      "required": [
-        "command"
-      ]
+      "required": ["command"]
     },
     "toolset": "core"
   },
   {
     "name": "write_file",
-    "description": "Create or overwrite a file. Use for creating new files from scratch \u2014 prefer edit_code or patch when modifying existing files. For .sh / .py / .json the new content is syntax-checked before any write. Refuses sensitive system paths and credential directories. Set append=true to add to an existing file.",
+    "description": "Create or overwrite a file. Prefer edit_code/patch for existing files. Syntax-checked for .sh/.py/.json.",
     "parameters": {
       "type": "object",
       "properties": {
-        "path": {
-          "type": "string",
-          "description": "Relative path to the file to create or overwrite."
-        },
-        "content": {
-          "type": "string",
-          "description": "The full content to write to the file."
-        },
-        "append": {
-          "type": "boolean",
-          "description": "If true, append to the file instead of overwriting. Default: false."
-        }
+        "path": {"type": "string", "description": "Relative path."},
+        "content": {"type": "string", "description": "Full content."},
+        "append": {"type": "boolean", "description": "Append instead of overwrite."}
       },
-      "required": [
-        "path",
-        "content"
-      ]
+      "required": ["path", "content"]
     },
     "toolset": "core"
   },
   {
     "name": "search_files",
-    "description": "Search for a text pattern across project files using grep. Returns matching lines with file paths and line numbers.",
+    "description": "grep a pattern across project files. Returns file:line matches.",
     "parameters": {
       "type": "object",
       "properties": {
-        "pattern": {
-          "type": "string",
-          "description": "The text or regex pattern to search for."
-        },
-        "path": {
-          "type": "string",
-          "description": "Directory or file to search in. Defaults to project root."
-        },
-        "file_glob": {
-          "type": "string",
-          "description": "Filename glob to filter files, e.g. '*.sh' or '*.py'. Default: all files."
-        },
-        "ignore_case": {
-          "type": "boolean",
-          "description": "Case-insensitive search. Default: false."
-        }
+        "pattern": {"type": "string", "description": "Text or regex."},
+        "path": {"type": "string", "description": "Directory or file. Default: project root."},
+        "file_glob": {"type": "string", "description": "e.g. '*.sh'."},
+        "ignore_case": {"type": "boolean"}
       },
-      "required": [
-        "pattern"
-      ]
+      "required": ["pattern"]
     },
     "toolset": "search"
   },
   {
     "name": "todo",
-    "description": "Manage a per-session task list. Use to plan and track multi-step work. Actions: add, list, done, delete, clear.",
+    "description": "Per-session task list. Actions: add, list, done, delete, clear.",
     "parameters": {
       "type": "object",
       "properties": {
-        "action": {
-          "type": "string",
-          "enum": [
-            "add",
-            "list",
-            "done",
-            "delete",
-            "clear"
-          ],
-          "description": "Action to perform."
-        },
-        "session": {
-          "type": "string",
-          "description": "Session identifier for the todo list. Defaults to 'default'."
-        },
-        "text": {
-          "type": "string",
-          "description": "Task description (required for 'add')."
-        },
-        "id": {
-          "type": "string",
-          "description": "Task ID (required for 'done' and 'delete')."
-        }
+        "action": {"type": "string", "enum": ["add", "list", "done", "delete", "clear"]},
+        "session": {"type": "string", "description": "Default 'default'."},
+        "text": {"type": "string", "description": "Required for add."},
+        "id": {"type": "string", "description": "Required for done/delete."}
       },
-      "required": [
-        "action"
-      ]
+      "required": ["action"]
     },
     "toolset": "meta"
   },
   {
     "name": "clarify",
-    "description": "Send a clarifying question to the user before taking an ambiguous or irreversible action. Stops the current turn and waits for their reply.",
+    "description": "Ask the user a clarifying question. Stops the turn and waits.",
     "parameters": {
       "type": "object",
-      "properties": {
-        "question": {
-          "type": "string",
-          "description": "The question to ask the user."
-        }
-      },
-      "required": [
-        "question"
-      ]
+      "properties": {"question": {"type": "string"}},
+      "required": ["question"]
     },
     "toolset": "core"
   },
   {
     "name": "process",
-    "description": "Run shell commands in the background and manage them. Actions: run (start), list (show all), output (get logs), kill (stop).",
+    "description": "Run/manage background shell processes. Actions: run, list, output, kill.",
     "parameters": {
       "type": "object",
       "properties": {
-        "action": {
-          "type": "string",
-          "enum": [
-            "run",
-            "list",
-            "output",
-            "kill"
-          ],
-          "description": "Action to perform."
-        },
-        "command": {
-          "type": "string",
-          "description": "The bash command to run in background (required for 'run')."
-        },
-        "name": {
-          "type": "string",
-          "description": "A label for the process. Used to reference it in output/kill. Auto-generated if not provided."
-        }
+        "action": {"type": "string", "enum": ["run", "list", "output", "kill"]},
+        "command": {"type": "string", "description": "Required for run."},
+        "name": {"type": "string", "description": "Label for output/kill. Auto-generated otherwise."}
       },
-      "required": [
-        "action"
-      ]
+      "required": ["action"]
     },
     "toolset": "meta"
   },
   {
     "name": "session_search",
-    "description": "Search past conversation sessions for a topic or keyword. Ranks sessions by relevance, extracts context windows around matches, and uses LLM to summarize the top matching sessions. Perfect for recalling past conversations, decisions, or code from earlier chats.",
+    "description": "Search past sessions by keyword/topic. Returns ranked summaries.",
     "parameters": {
       "type": "object",
       "properties": {
-        "query": {
-          "type": "string",
-          "description": "The topic, keyword, or phrase to search for across past sessions."
-        },
-        "session": {
-          "type": "string",
-          "description": "Specific session ID to search (e.g. 'tg_670967877'). Searches all sessions if omitted."
-        },
-        "limit": {
-          "type": "integer",
-          "description": "Max number of sessions to return (1-5). Default: 3."
-        }
+        "query": {"type": "string"},
+        "session": {"type": "string", "description": "Optional: specific session ID."},
+        "limit": {"type": "integer", "description": "1-5, default 3."}
       },
-      "required": [
-        "query"
-      ]
+      "required": ["query"]
     },
     "toolset": "memory"
   },
   {
     "name": "memory",
-    "description": "Manage persistent curated memory across two stores: 'memory' (your own notes, facts, learnings) and 'user' (what you know about the user). These are injected into every session as a frozen snapshot. Use add/replace/remove to maintain them. Do NOT store sensitive data, credentials, or large blobs.",
+    "description": "Curated MEMORY.md / USER.md notes (injected every turn). Actions: add, replace, remove, read.",
     "parameters": {
       "type": "object",
       "properties": {
-        "action": {
-          "type": "string",
-          "enum": [
-            "add",
-            "replace",
-            "remove",
-            "read"
-          ],
-          "description": "add: append a new fact. replace: find old_text and swap it. remove: delete entry containing old_text. read: show all entries."
-        },
-        "target": {
-          "type": "string",
-          "enum": [
-            "memory",
-            "user"
-          ],
-          "description": "Which store: 'memory' for agent notes (3000 char limit), 'user' for user profile (2000 char limit). Defaults to 'memory'."
-        },
-        "content": {
-          "type": "string",
-          "description": "The new fact/entry to add (required for action=add)."
-        },
-        "old_text": {
-          "type": "string",
-          "description": "Unique substring of the entry to replace or remove (required for action=replace and action=remove)."
-        },
-        "new_content": {
-          "type": "string",
-          "description": "Replacement text (required for action=replace)."
-        }
+        "action": {"type": "string", "enum": ["add", "replace", "remove", "read"]},
+        "target": {"type": "string", "enum": ["memory", "user"], "description": "memory=agent notes (3KB cap), user=user profile (2KB cap)."},
+        "content": {"type": "string", "description": "Required for add."},
+        "old_text": {"type": "string", "description": "Unique substring. Required for replace/remove."},
+        "new_content": {"type": "string", "description": "Required for replace."}
       },
-      "required": [
-        "action"
-      ]
+      "required": ["action"]
     },
     "toolset": "memory"
   },
   {
     "name": "image_generate",
-    "description": "Generate an image from a text prompt using Pollinations AI (free, no key required). Returns a URL to the generated image.",
+    "description": "Generate an image via Pollinations. Returns a URL.",
     "parameters": {
       "type": "object",
       "properties": {
-        "prompt": {
-          "type": "string",
-          "description": "Description of the image to generate."
-        },
-        "width": {
-          "type": "integer",
-          "description": "Image width in pixels. Default: 1024."
-        },
-        "height": {
-          "type": "integer",
-          "description": "Image height in pixels. Default: 1024."
-        }
+        "prompt": {"type": "string"},
+        "width": {"type": "integer", "description": "Default 1024."},
+        "height": {"type": "integer", "description": "Default 1024."}
       },
-      "required": [
-        "prompt"
-      ]
+      "required": ["prompt"]
     },
     "toolset": "media"
   },
   {
     "name": "edit_code",
-    "description": "Replace old_string with new_string in a file. Tolerates minor whitespace/indent drift. Match must be unique unless replace_all=true. Validates syntax for .sh/.py/.json. Returns unified diff. Use patch for multi-file or multi-hunk changes.",
+    "description": "Replace old_string with new_string in a file. Tolerates whitespace drift. Match must be unique unless replace_all=true. Returns unified diff.",
     "parameters": {
       "type": "object",
       "properties": {
-        "path": {
-          "type": "string",
-          "description": "Path to the file to edit (relative to project root)."
-        },
-        "old_string": {
-          "type": "string",
-          "description": "Exact text to find. Multi-line is supported. Must match uniquely or pass replace_all=true."
-        },
-        "new_string": {
-          "type": "string",
-          "description": "Replacement text. Multi-line is supported."
-        },
-        "replace_all": {
-          "type": "boolean",
-          "description": "Replace every occurrence. Default false (must be unique)."
-        }
+        "path": {"type": "string"},
+        "old_string": {"type": "string", "description": "Multi-line OK."},
+        "new_string": {"type": "string", "description": "Multi-line OK."},
+        "replace_all": {"type": "boolean"}
       },
-      "required": [
-        "path",
-        "old_string",
-        "new_string"
-      ]
+      "required": ["path", "old_string", "new_string"]
     },
     "toolset": "core"
   },
   {
     "name": "patch",
-    "description": "Apply a V4A-format patch for multi-file or multi-hunk edits. Two-phase: validates everything in-memory first \u2014 if any op fails, nothing is written. Format: *** Begin Patch / *** Update File: path @@ hint @@ -old +new / *** Add File: path / *** End Patch",
+    "description": "Apply a V4A-format multi-file/multi-hunk patch. Validates all hunks before writing any.",
     "parameters": {
       "type": "object",
       "properties": {
-        "patch": {
-          "type": "string",
-          "description": "Full patch text in V4A format, including the *** Begin Patch / *** End Patch markers."
-        }
+        "patch": {"type": "string", "description": "Full V4A patch text incl. *** Begin Patch / *** End Patch."}
       },
-      "required": [
-        "patch"
-      ]
+      "required": ["patch"]
     },
     "toolset": "core"
   },
   {
     "name": "repo_map",
-    "description": "File tree + function/class symbols via ripgrep. Use before editing to locate where logic lives. Faster than reading files one by one. Optional: TOOL_query (file filter), TOOL_path (subtree), TOOL_depth (tree depth).",
+    "description": "File tree + symbols via ripgrep. Use before editing to locate logic.",
     "parameters": {
       "type": "object",
       "properties": {
-        "depth": {
-          "type": "integer",
-          "description": "Max depth for the tree. Defaults to 3."
-        }
+        "depth": {"type": "integer", "description": "Default 3."}
       },
       "required": []
     },
@@ -363,233 +192,118 @@
   },
   {
     "name": "memory_remember",
-    "description": "Save an important fact or note to long-term vector memory (LanceDB). Long texts are automatically chunked for precise retrieval. Always include a 'topic' in metadata_json for better search and deduplication. Access timestamps are tracked automatically for pruning.",
+    "description": "Save text to long-term vector memory (LanceDB). Include topic in metadata_json.",
     "parameters": {
       "type": "object",
       "properties": {
-        "text": {
-          "type": "string",
-          "description": "The information to remember."
-        },
-        "metadata_json": {
-          "type": "string",
-          "description": "Optional JSON metadata string, e.g. {\"topic\": \"user preferences\"}."
-        }
+        "text": {"type": "string"},
+        "metadata_json": {"type": "string", "description": "e.g. '{\"topic\":\"...\"}'."}
       },
-      "required": [
-        "text"
-      ]
+      "required": ["text"]
     },
     "toolset": "memory"
   },
   {
     "name": "memory_recall",
-    "description": "Search long-term vector memory (LanceDB) using semantic similarity. Returns top matches with topic, access count, and relevance score. Chunks from the same topic are deduplicated automatically. Try 2-3 different phrasings if results are empty.",
+    "description": "Semantic search over long-term memory. Try 2-3 phrasings if empty.",
     "parameters": {
       "type": "object",
       "properties": {
-        "query": {
-          "type": "string",
-          "description": "Search query to find relevant memories."
-        },
-        "limit": {
-          "type": "integer",
-          "description": "Max number of results to return. Defaults to 3."
-        }
+        "query": {"type": "string"},
+        "limit": {"type": "integer", "description": "Default 3."}
       },
-      "required": [
-        "query"
-      ]
+      "required": ["query"]
     },
     "toolset": "memory"
   },
   {
     "name": "sys_info",
-    "description": "Get current system stats: CPU load, memory usage, disk space, uptime.",
-    "parameters": {
-      "type": "object",
-      "properties": {},
-      "required": []
-    },
+    "description": "CPU, memory, disk, uptime stats.",
+    "parameters": {"type": "object", "properties": {}, "required": []},
     "toolset": "inspect"
   },
   {
     "name": "read_error_log",
-    "description": "Read recent errors from the agent error log to diagnose issues.",
-    "parameters": {
-      "type": "object",
-      "properties": {},
-      "required": []
-    },
+    "description": "Recent agent errors for diagnosis.",
+    "parameters": {"type": "object", "properties": {}, "required": []},
     "toolset": "inspect"
   },
   {
     "name": "custom_tool_manager",
-    "description": "Create, list, or delete custom tools. Use 'create' to build new automation scripts.",
+    "description": "Create/list/delete custom tools (saved to tools/custom/, survives Docker rebuilds).",
     "parameters": {
       "type": "object",
       "properties": {
-        "action": {
-          "type": "string",
-          "enum": [
-            "create",
-            "list",
-            "delete"
-          ],
-          "description": "Action to perform."
-        },
-        "name": {
-          "type": "string",
-          "description": "Tool name (used as filename, no spaces)."
-        },
-        "description": {
-          "type": "string",
-          "description": "What the tool does."
-        },
-        "code": {
-          "type": "string",
-          "description": "The bash script code for the tool."
-        },
-        "parameters_json": {
-          "type": "string",
-          "description": "JSON schema of the tool's parameters."
-        }
+        "action": {"type": "string", "enum": ["create", "list", "delete"]},
+        "name": {"type": "string", "description": "No spaces."},
+        "description": {"type": "string"},
+        "code": {"type": "string", "description": "Bash script body."},
+        "parameters_json": {"type": "string", "description": "JSON schema of params."}
       },
-      "required": [
-        "action"
-      ]
+      "required": ["action"]
     },
     "toolset": "meta"
   },
   {
     "name": "skill_manager",
-    "description": "Manage agent skills. list: show all available skills (core + user). create: make a new skill with a system prompt injected into future turns (optionally enable extra toolsets). bind/unbind: attach a skill to a Telegram topic thread.",
+    "description": "Manage skills. list / create / bind / unbind (bind attaches to a Telegram topic).",
     "parameters": {
       "type": "object",
       "properties": {
-        "action": {
-          "type": "string",
-          "enum": [
-            "list",
-            "create",
-            "bind",
-            "unbind"
-          ],
-          "description": "Action to perform."
-        },
-        "skill": {
-          "type": "string",
-          "description": "Skill name (required for create/bind/unbind)."
-        },
-        "prompt": {
-          "type": "string",
-          "description": "System prompt text injected when this skill is active (required for create)."
-        },
-        "toolsets": {
-          "type": "string",
-          "description": "Space-separated extra toolsets to enable for this skill, e.g. 'inspect media'."
-        },
-        "chat_id": {
-          "type": "string",
-          "description": "Telegram chat ID (required for bind/unbind)."
-        },
-        "thread_id": {
-          "type": "string",
-          "description": "Telegram thread/topic ID (required for bind/unbind)."
-        }
+        "action": {"type": "string", "enum": ["list", "create", "bind", "unbind"]},
+        "skill": {"type": "string", "description": "Required for create/bind/unbind."},
+        "prompt": {"type": "string", "description": "Required for create."},
+        "toolsets": {"type": "string", "description": "Space-separated extras, e.g. 'inspect media'."},
+        "chat_id": {"type": "string", "description": "Required for bind/unbind."},
+        "thread_id": {"type": "string", "description": "Required for bind/unbind."}
       },
-      "required": [
-        "action"
-      ]
+      "required": ["action"]
     },
     "toolset": "meta"
   },
   {
     "name": "skill_install",
-    "description": "Install an external skill from a git repo in one shot \u2014 clones the repo, reads SKILL.md to build the prompt, and writes brain/skills/<name>/. Use this instead of manually cloning + creating files. Requires a public https:// git URL.",
+    "description": "Clone a public skill repo and install to brain/skills/<name>/. Reads SKILL.md for prompt.",
     "parameters": {
       "type": "object",
       "properties": {
-        "skill": {
-          "type": "string",
-          "description": "Short name for the skill (used as directory name and /skill activation key)."
-        },
-        "repo": {
-          "type": "string",
-          "description": "Public https:// git URL to clone, e.g. https://github.com/org/repo"
-        },
-        "toolsets": {
-          "type": "string",
-          "description": "Optional space-separated extra toolsets to enable, e.g. 'inspect media'."
-        }
+        "skill": {"type": "string", "description": "Short name."},
+        "repo": {"type": "string", "description": "https:// git URL."},
+        "toolsets": {"type": "string", "description": "Optional extras."}
       },
-      "required": [
-        "skill",
-        "repo"
-      ]
+      "required": ["skill", "repo"]
     },
     "toolset": "meta"
   },
   {
     "name": "insights",
-    "description": "Show token usage statistics and tool usage frequency.",
-    "parameters": {
-      "type": "object",
-      "properties": {},
-      "required": []
-    },
+    "description": "Token + tool usage stats.",
+    "parameters": {"type": "object", "properties": {}, "required": []},
     "toolset": "inspect"
   },
   {
     "name": "browser",
-    "description": "Control a headless Chromium browser for JS-heavy pages. Use when fetch_url fails or the page requires interaction (login forms, SPAs, infinite scroll). Returns page text and interactive elements.",
+    "description": "Headless Chromium for JS-heavy pages. Use when fetch_url fails. Actions: navigate, snapshot, click, type, scroll.",
     "parameters": {
       "type": "object",
       "properties": {
-        "action": {
-          "type": "string",
-          "enum": [
-            "navigate",
-            "snapshot",
-            "click",
-            "type",
-            "scroll"
-          ],
-          "description": "navigate: open URL. snapshot: re-read page. click: by CSS selector or visible text. type: fill input. scroll: up or down."
-        },
-        "url": {
-          "type": "string",
-          "description": "URL to navigate to (required for navigate)"
-        },
-        "selector": {
-          "type": "string",
-          "description": "CSS selector or visible text for click/type/scroll"
-        },
-        "text": {
-          "type": "string",
-          "description": "Text to type (required for type action)"
-        }
+        "action": {"type": "string", "enum": ["navigate", "snapshot", "click", "type", "scroll"]},
+        "url": {"type": "string", "description": "Required for navigate."},
+        "selector": {"type": "string", "description": "CSS selector or visible text."},
+        "text": {"type": "string", "description": "Required for type."}
       },
-      "required": [
-        "action"
-      ]
+      "required": ["action"]
     },
     "toolset": "search"
   },
   {
     "name": "recap",
-    "description": "Quickly summarize the current session or a specific session by reading raw logs directly. Use this instead of session_search when you need a summary of what just happened in the current chat.",
+    "description": "Summarize current session (or specific session) from raw logs. Faster than session_search for current chat.",
     "parameters": {
       "type": "object",
       "properties": {
-        "session_id": {
-          "type": "string",
-          "description": "Specific session ID (e.g. \"tg_670967877\"). Auto-detected if omitted."
-        },
-        "last_n": {
-          "type": "integer",
-          "description": "Number of recent messages to include in the recap. Default: 20."
-        }
+        "session_id": {"type": "string", "description": "Auto-detected if omitted."},
+        "last_n": {"type": "integer", "description": "Default 20."}
       },
       "required": []
     },
@@ -597,170 +311,83 @@
   },
   {
     "name": "kanban_show",
-    "description": "Read a task's full state and dependencies.",
+    "description": "Read a kanban task's state and dependencies.",
     "parameters": {
       "type": "object",
-      "properties": {
-        "task_id": {
-          "type": "string",
-          "description": "Task ID"
-        }
-      },
-      "required": [
-        "task_id"
-      ]
+      "properties": {"task_id": {"type": "string"}},
+      "required": ["task_id"]
     },
     "toolset": "kanban"
   },
   {
     "name": "kanban_create",
-    "description": "Create a new kanban task.",
+    "description": "Create a kanban task.",
     "parameters": {
       "type": "object",
       "properties": {
-        "title": {
-          "type": "string",
-          "description": "Short task title"
-        },
-        "assignee": {
-          "type": "string",
-          "description": "Profile to execute this task"
-        },
-        "body": {
-          "type": "string",
-          "description": "Full spec / opening post"
-        },
-        "parents": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "description": "Parent task IDs"
-        },
-        "priority": {
-          "type": "integer",
-          "description": "Tiebreaker priority"
-        }
+        "title": {"type": "string"},
+        "assignee": {"type": "string"},
+        "body": {"type": "string", "description": "Full spec."},
+        "parents": {"type": "array", "items": {"type": "string"}},
+        "priority": {"type": "integer"}
       },
-      "required": [
-        "title",
-        "assignee"
-      ]
+      "required": ["title", "assignee"]
     },
     "toolset": "kanban"
   },
   {
     "name": "kanban_complete",
-    "description": "Mark your current task done.",
+    "description": "Mark task done with handoff summary.",
     "parameters": {
       "type": "object",
       "properties": {
-        "task_id": {
-          "type": "string",
-          "description": "Task ID"
-        },
-        "summary": {
-          "type": "string",
-          "description": "1-3 sentence handoff summary"
-        },
-        "metadata": {
-          "type": "object",
-          "description": "Structured facts/results"
-        }
+        "task_id": {"type": "string"},
+        "summary": {"type": "string", "description": "1-3 sentences."},
+        "metadata": {"type": "object"}
       },
-      "required": [
-        "task_id",
-        "summary"
-      ]
+      "required": ["task_id", "summary"]
     },
     "toolset": "kanban"
   },
   {
     "name": "kanban_block",
-    "description": "Stop work and ask for human input.",
+    "description": "Block task pending human input.",
     "parameters": {
       "type": "object",
       "properties": {
-        "task_id": {
-          "type": "string",
-          "description": "Task ID"
-        },
-        "reason": {
-          "type": "string",
-          "description": "What you need answered"
-        }
+        "task_id": {"type": "string"},
+        "reason": {"type": "string"}
       },
-      "required": [
-        "task_id",
-        "reason"
-      ]
+      "required": ["task_id", "reason"]
     },
     "toolset": "kanban"
   },
   {
     "name": "ast_edit",
-    "description": "AST-aware Python editor. Validates syntax before and after every change. Actions: validate, list_symbols, get_symbol, replace_func, add_import, rename. Use instead of edit_code for Python structural changes.",
+    "description": "AST-aware Python editor. Cannot produce syntax errors. Actions: validate, list_symbols, get_symbol, replace_func, add_import, rename.",
     "parameters": {
       "type": "object",
       "properties": {
-        "action": {
-          "type": "string",
-          "enum": [
-            "validate",
-            "list_symbols",
-            "get_symbol",
-            "replace_func",
-            "add_import",
-            "rename"
-          ],
-          "description": "Operation to perform."
-        },
-        "path": {
-          "type": "string",
-          "description": "Path to the Python file."
-        },
-        "name": {
-          "type": "string",
-          "description": "Function or class name (get_symbol, replace_func)."
-        },
-        "new_body": {
-          "type": "string",
-          "description": "Full replacement function/class source (replace_func). Must be valid Python."
-        },
-        "import": {
-          "type": "string",
-          "description": "Import statement to add (add_import). E.g. \"import os\""
-        },
-        "old_name": {
-          "type": "string",
-          "description": "Symbol to rename (rename)."
-        },
-        "new_name": {
-          "type": "string",
-          "description": "New name (rename)."
-        }
+        "action": {"type": "string", "enum": ["validate", "list_symbols", "get_symbol", "replace_func", "add_import", "rename"]},
+        "path": {"type": "string"},
+        "name": {"type": "string", "description": "Function/class name."},
+        "new_body": {"type": "string", "description": "Full replacement source."},
+        "import": {"type": "string", "description": "e.g. 'import os'."},
+        "old_name": {"type": "string"},
+        "new_name": {"type": "string"}
       },
-      "required": [
-        "action",
-        "path"
-      ]
+      "required": ["action", "path"]
     },
     "toolset": "inspect"
   },
   {
     "name": "last_session",
-    "description": "Instantly recall recent session summaries. Reads session_recaps.jsonl directly \u2014 no embeddings, no latency (~0.1s). Use this when user asks what happened in past sessions. Returns structured summaries with Key Facts, Unresolved Items, and Next Steps for the last N sessions.",
+    "description": "Instant recall of recent session recaps (~0.1s, no embeddings). Use when user asks about past sessions.",
     "parameters": {
       "type": "object",
       "properties": {
-        "n": {
-          "type": "integer",
-          "description": "Number of recent sessions to show (default 3)."
-        },
-        "session": {
-          "type": "string",
-          "description": "Optional: specific session_id to look up."
-        }
+        "n": {"type": "integer", "description": "Default 3."},
+        "session": {"type": "string"}
       },
       "required": []
     },
@@ -768,59 +395,19 @@
   },
   {
     "name": "delegate",
-    "description": "Delegate a task to a sub-agent (Claude Code, Codex, or mini AMA). sync: blocks until done (< 2 min tasks). async: starts in tmux, returns session name \u2014 poll with mode=check every 30-60s. kill: stop session. list: show active sessions.",
+    "description": "Delegate to a sub-agent (Claude Code / Codex / self). sync blocks; async returns a session name — poll with mode=check. For async always pass notify_session+notify_msg_id so the watcher sends Telegram progress.",
     "parameters": {
       "type": "object",
       "properties": {
-        "mode": {
-          "type": "string",
-          "enum": [
-            "sync",
-            "async",
-            "check",
-            "kill",
-            "list"
-          ],
-          "description": "sync=blocking (default). async=start in tmux and return immediately. check=poll async session. kill=stop async session. list=show running sessions."
-        },
-        "goal": {
-          "type": "string",
-          "description": "Specific task goal. Required for sync/async. E.g. \"Refactor auth.py to use JWT. Keep API contract.\""
-        },
-        "context": {
-          "type": "string",
-          "description": "Relevant context: file paths, constraints, existing patterns."
-        },
-        "session": {
-          "type": "string",
-          "description": "Tmux session name returned by mode=async. Required for mode=check and mode=kill."
-        },
-        "notify_session": {
-          "type": "string",
-          "description": "AMA session_id (e.g. tg_670967877). When set with mode=async, spawns a background watcher that sends Telegram messages directly every 3min and on completion. Always pass this \u2014 messages fire immediately without waiting for user input."
-        },
-        "notify_msg_id": {
-          "type": "string",
-          "description": "Telegram message_id of the user's request. Used by the watcher to reply-to the original message. Pass the user_msg_id from session context."
-        },
-        "backend": {
-          "type": "string",
-          "enum": [
-            "auto",
-            "claude",
-            "codex",
-            "self"
-          ],
-          "description": "Agent backend (default: auto). self is sync-only."
-        },
-        "timeout": {
-          "type": "integer",
-          "description": "Max seconds before timeout (default 300)."
-        },
-        "max_turns": {
-          "type": "integer",
-          "description": "Max turns for self backend (default 20)."
-        }
+        "mode": {"type": "string", "enum": ["sync", "async", "check", "kill", "list"], "description": "Default sync."},
+        "goal": {"type": "string", "description": "Required for sync/async."},
+        "context": {"type": "string", "description": "File paths, constraints, patterns."},
+        "session": {"type": "string", "description": "tmux session name. Required for check/kill."},
+        "notify_session": {"type": "string", "description": "AMA session_id for async progress notifications."},
+        "notify_msg_id": {"type": "string", "description": "Original user msg_id for reply-to."},
+        "backend": {"type": "string", "enum": ["auto", "claude", "codex", "self"]},
+        "timeout": {"type": "integer", "description": "Seconds. Default 300."},
+        "max_turns": {"type": "integer", "description": "self backend. Default 20."}
       },
       "required": []
     },
@@ -828,30 +415,16 @@
   },
   {
     "name": "send_file",
-    "description": "Send a file from the server directly to the Telegram chat. Use this when the user asks for a file, a log, or a generated asset.",
+    "description": "Send a file from disk to the Telegram chat. Use when user asks to download/share a file.",
     "parameters": {
       "type": "object",
       "properties": {
-        "path": {
-          "type": "string",
-          "description": "Absolute or relative path to the file on disk."
-        },
-        "caption": {
-          "type": "string",
-          "description": "Optional text to accompany the file."
-        },
-        "chat_id": {
-          "type": "string",
-          "description": "Optional: telegram chat id. Defaults to current chat."
-        },
-        "thread_id": {
-          "type": "string",
-          "description": "Optional: telegram thread/topic id."
-        }
+        "path": {"type": "string"},
+        "caption": {"type": "string"},
+        "chat_id": {"type": "string", "description": "Default: current chat."},
+        "thread_id": {"type": "string"}
       },
-      "required": [
-        "path"
-      ]
+      "required": ["path"]
     },
     "toolset": "core"
   }

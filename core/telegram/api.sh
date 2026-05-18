@@ -100,11 +100,17 @@ tg_edit() {
     local message_id="$2"
     local text="$3"
     local parse_mode="${4:-Markdown}"
+    local buttons_json="${5:-}"   # optional inline keyboard JSON (e.g. [[{"text":"...","callback_data":"..."}]])
     local _payload
-    _payload=$(TG_CID="$chat_id" TG_MID="$message_id" TG_TXT="$text" TG_PM="$parse_mode" python3 -c "
+    _payload=$(TG_CID="$chat_id" TG_MID="$message_id" TG_TXT="$text" TG_PM="$parse_mode" TG_BTN="$buttons_json" python3 -c "
 import json, os
-print(json.dumps({'chat_id': os.environ['TG_CID'], 'message_id': os.environ['TG_MID'],
-    'text': os.environ['TG_TXT'], 'parse_mode': os.environ['TG_PM']}))")
+d = {'chat_id': os.environ['TG_CID'], 'message_id': os.environ['TG_MID'],
+     'text': os.environ['TG_TXT'], 'parse_mode': os.environ['TG_PM']}
+b = os.environ.get('TG_BTN','').strip()
+if b:
+    try: d['reply_markup'] = {'inline_keyboard': json.loads(b)}
+    except: pass
+print(json.dumps(d))")
     tg_api "editMessageText" "$_payload"
 }
 

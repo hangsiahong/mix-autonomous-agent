@@ -43,7 +43,12 @@ run_agent() {
             "[[{\"text\":\"⚡ Interrupt\",\"callback_data\":\"interrupt:${session_id}\"}]]" \
             "$thread_id" "HTML" "$user_msg_id")
     else
-        msg_id=$(tg_send_r "$chat_id" "⏳ <i>${_status_pick}…</i>" "$thread_id" "HTML" "$user_msg_id")
+        # Working message — Stop button is attached directly so we don't need a
+        # separate ephemeral message that has to be cleaned up at the end.
+        msg_id=$(tg_send_buttons "$chat_id" \
+            "⏳ <i>${_status_pick}…</i>" \
+            "[[{\"text\":\"⏹ Stop\",\"callback_data\":\"stop:${session_id}\"}]]" \
+            "$thread_id" "HTML" "$user_msg_id")
     fi
 
     # Capture our own PID before entering subshell ($$  in subshell returns
@@ -79,16 +84,13 @@ run_agent() {
             rm -f "$stop_flag" 2>/dev/null || true
         fi
 
-        # Send Stop button after stop/interrupt check (skip if we already exited)
-        local _stop_btn_id
-        _stop_btn_id=$(tg_send_buttons "$chat_id" "<i>Press the button to cancel</i>" \
-            "[[{\"text\":\"⏹ Stop\",\"callback_data\":\"stop:${session_id}\"}]]" \
-            "$thread_id" "HTML")
-        [[ -n "$_stop_btn_id" ]] && printf '%s' "$_stop_btn_id" > "$stop_btn_file"
-
-        # Optimization: Only edit if we were actually queued
+        # Stop button is already attached to msg_id by tg_send_buttons above.
+        # If we were Queued, swap text from "🕒 Queued" to "⏳ Thinking…" and replace
+        # the Interrupt button with Stop.
         if [[ "$initial_status" == "Queued" ]]; then
-            tg_edit "$chat_id" "$msg_id" "⏳ <i>${_status_pick}…</i>" "HTML" > /dev/null 2>&1
+            tg_edit "$chat_id" "$msg_id" "⏳ <i>${_status_pick}…</i>" "HTML" \
+                "[[{\"text\":\"⏹ Stop\",\"callback_data\":\"stop:${session_id}\"}]]" \
+                > /dev/null 2>&1
         fi
 
         tg_send_action "$chat_id" "typing" "$thread_id"
@@ -146,9 +148,12 @@ run_agent() {
         local total_input_tokens=0
         local total_output_tokens=0
         local _thought_snippet=""  # persists across turns — shows last known reasoning
-        local _think_msg_id=""     # separate Telegram message for reasoning (OpenClaw pattern)
         local _last_tc_fingerprint=""
         local _tc_repeat_count=0
+        # Persistent step log for the whole agent turn (Claude-Code-style cumulative pane).
+        # Lines separated by \x1e (RS); each line = "<emoji>|<name>|<key_arg>|<duration_s>"
+        local _steps_log=""
+        local _RS=$'\x1e'
         while [ "$turn" -lt "$MAX_TURNS" ]; do
             turn=$((turn + 1))
             [[ "$turn" -gt 1 ]] && tg_send_action "$chat_id" "typing" "$thread_id"
@@ -166,8 +171,6 @@ run_agent() {
             local tool_calls=$(echo "$result" | grep "^TC:" | cut -c4-)
             local usage=$(echo "$result" | grep "^USAGE:" | cut -c7-)
             local _think_line=$(echo "$result" | grep "^THINK:" | head -1 | cut -c7-)
-            local _new_think_msg=$(echo "$result" | grep "^THINKMSG:" | head -1 | cut -c10-)
-            [[ -n "$_new_think_msg" ]] && _think_msg_id="$_new_think_msg"
             local text
             text=$(printf '%s' "$result" | python3 -c "import sys, re; c = sys.stdin.read(); m = re.search(r'(?m)^TEXT:(.*?)(?=\nUSAGE:|\Z)', c, re.DOTALL); print(m.group(1) if m else '', end='')" 2>/dev/null)
             
@@ -229,13 +232,48 @@ print(', '.join(c.get('function',{}).get('name','?') for c in calls))" \
                 [[ -n "$batch_names" ]] && all_tool_names+="${all_tool_names:+, }$batch_names"
 
                 if [[ $batch_count -gt 1 ]] && is_batch_parallel_safe "$tool_calls"; then
+                    local _batch_start=$(date +%s)
                     execute_parallel_batch "$chat_id" "$msg_id" "$thread_id" "$tool_calls" "$session_id"
+                    local _batch_elapsed=$(( $(date +%s) - _batch_start ))
+                    # Append one step per parallel tool (same duration since they ran concurrently)
+                    while IFS='|' read -r _pn _pkey; do
+                        [[ -z "$_pn" ]] && continue
+                        _steps_log+="${_steps_log:+$_RS}✓|${_pn}|${_pkey}|${_batch_elapsed}"
+                    done < <(python3 -c "
+import json,sys
+for tc in json.loads(open(sys.argv[1]).read()):
+    name = (tc.get('function',{}).get('name') or tc.get('name','') or '').strip()
+    args = tc.get('function',{}).get('arguments') or '{}'
+    key = ''
+    try:
+        a = json.loads(args) if isinstance(args,str) else args
+        for k in ('query','path','command','url','file_path','name','target','action'):
+            if k in a:
+                key = str(a[k]).replace('\n',' ').strip()[:60]
+                break
+    except: pass
+    print(f'{name}|{key}')" <(printf '%s' "$tool_calls") 2>/dev/null)
                 else
                     while IFS='|' read -r name tc_id; do
                         [[ -z "$name" ]] && continue
                         [[ -z "$tc_id" ]] && tc_id="tc_$(date +%s%N)"
                         local single_tc=$(python3 -c "import json, sys, os; calls = json.loads(open(sys.argv[1]).read()); target_id = os.environ.get('TC_ID',''); match = next((t for t in calls if t.get('id') == target_id), None); print(json.dumps(match or calls[0], separators=(',',':')) if calls else '')" <(printf '%s' "$tool_calls") TC_ID="$tc_id" 2>/dev/null)
+                        local _tool_start=$(date +%s)
                         local output=$(process_tc "$chat_id" "$msg_id" "$single_tc" "$thread_id")
+                        local _tool_elapsed=$(( $(date +%s) - _tool_start ))
+                        # Extract key arg for the step log
+                        local _key
+                        _key=$(printf '%s' "$single_tc" | python3 -c "
+import sys, json
+try:
+    tc = json.loads(sys.stdin.read())
+    args = tc.get('function',{}).get('arguments','{}')
+    a = json.loads(args) if isinstance(args,str) else args
+    for k in ('query','path','command','url','file_path','name','target','action'):
+        if k in a:
+            print(str(a[k]).replace(chr(10),' ').strip()[:60]); break
+except: pass" 2>/dev/null)
+                        _steps_log+="${_steps_log:+$_RS}✓|${name}|${_key}|${_tool_elapsed}"
                         append_tool_result "$tc_id" "$name" "$output"
                     done < <(python3 -c "
 import sys, json
@@ -282,38 +320,60 @@ print(json.dumps(h, separators=(',',':')))
                     _last_tc_fingerprint="$_tc_fp"
                 fi
 
-                # Show completed tool names + session prefix + elapsed timer
+                # Cumulative step-log pane (Claude-Code-style) — replaces the prior
+                # "last 4 tool names" block. Shows every completed step in this turn
+                # with status emoji, key arg, and elapsed duration.
                 local _between_msg
-                _between_msg=$(TOOL_NAMES="$batch_names" \
+                _between_msg=$(STEPS_LOG="$_steps_log" \
                                STATUS_WORD="$_status_pick" \
                                REASONING_SNIPPET="$_thought_snippet" \
-                               TOOL_COUNT="$total_tool_calls" \
                                python3 -c "
-import os
+import os, re
 EMOJI = {'bash':'🛠️','web_search':'🔍','fetch_url':'🌐','read_file':'📖','write_file':'✍️',
          'edit_code':'📝','search_files':'🔎','todo':'📋','memory':'🧠','memory_remember':'🧠',
          'memory_recall':'🧠','process':'⚙️','browser':'🌍','image_generate':'🎨','patch':'🩹',
          'repo_map':'🗺️','clarify':'💬','session_search':'🗂️','sys_info':'📊','recap':'📝',
          'custom_tool_manager':'🔧','skill_manager':'🎯','skill_install':'📦','insights':'📈',
          'kanban_show':'📌','kanban_create':'📌','kanban_complete':'✅','kanban_block':'🚧',
-         'delegate':'🤖','ast_edit':'🔬','last_session':'🗓️'}
-names = [n.strip() for n in os.environ.get('TOOL_NAMES','').split(',') if n.strip()]
-lines = ['<code>' + EMOJI.get(n,'🧩') + ' ' + n.replace('_',' ') + '</code>' for n in names[:4]]
-word  = os.environ.get('STATUS_WORD','Thinking')
+         'delegate':'🤖','ast_edit':'🔬','last_session':'🗓️','send_file':'📤','clarify':'❓'}
+def esc(s):
+    return s.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+raw = os.environ.get('STEPS_LOG','')
+lines = []
+if raw:
+    entries = raw.split(chr(0x1e))
+    # Keep the last 8 entries to avoid overflowing Telegram (4096 cap on msg)
+    for e in entries[-8:]:
+        parts = e.split('|')
+        if len(parts) < 4: continue
+        st, name, key, dur = parts[0], parts[1], parts[2], parts[3]
+        em = EMOJI.get(name, '🧩')
+        # Bullet (•) = light dim; ✓ = done; ▸ = running
+        sym = '✓' if st == '✓' else '▸' if st == '▸' else '•'
+        # Pretty name + dim duration
+        try:
+            d = int(dur)
+            dur_s = f' <i>{d}s</i>' if d >= 1 else ''
+        except: dur_s = ''
+        key_s = f' <i>{esc(key)[:60]}</i>' if key else ''
+        lines.append(f'{sym} <code>{em} {name}</code>{key_s}{dur_s}')
+
 snippet = os.environ.get('REASONING_SNIPPET','').strip()
-# Reasoning in blockquote (matches streaming display), tools below
+word = os.environ.get('STATUS_WORD','Thinking')
+
+def md_light(t):
+    t = esc(t)
+    t = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', t)
+    t = re.sub(r'_([^_]+)_', r'<i>\1</i>', t)
+    return t
+
+out = []
 if snippet:
-    import re as _re
-    def _md(t):
-        t=t.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
-        t=_re.sub(r'\*\*(.+?)\*\*',r'<b>\1</b>',t)
-        t=_re.sub(r'_([^_]+)_',r'<i>\1</i>',t)
-        return t
-    think_block = f'<blockquote>💭 {_md(snippet)}</blockquote>'
-    print(think_block + '\n' + '\n'.join(lines) if lines else think_block)
-else:
-    header = f'<i>{word}…</i>'
-    print(header + '\n' + '\n'.join(lines) if lines else f'⏳ {header}')
+    out.append(f'<blockquote>💭 {md_light(snippet)}</blockquote>')
+if lines:
+    out.append('\n'.join(lines))
+out.append(f'<i>{word}…</i>')
+print('\n'.join(out))
 " 2>/dev/null || echo "⏳ <i>Thinking…</i>")
                 tg_edit "$chat_id" "$msg_id" "$_between_msg" "HTML" > /dev/null 2>&1
                 export _AMA_REASONING_HTML=""
@@ -335,12 +395,9 @@ else:
             break
         done
 
-        # Delete ephemeral messages (Stop button + reasoning lane) now that agent is done
-        local _sbid; _sbid=$(cat "$stop_btn_file" 2>/dev/null)
-        [[ -n "$_sbid" ]] && tg_delete "$chat_id" "$_sbid" > /dev/null 2>&1 || true
-        rm -f "$stop_btn_file"
-        [[ -n "$_think_msg_id" ]] && tg_delete "$chat_id" "$_think_msg_id" > /dev/null 2>&1 || true
-        _think_msg_id=""
+        # Remove the Stop button from the main message — agent is done
+        tg_remove_buttons "$chat_id" "$msg_id" > /dev/null 2>&1 || true
+        rm -f "$stop_btn_file"  # legacy: clean up any leftover marker from old code path
 
         if [[ "$loop_completed" == true ]]; then
             local _elapsed_total=$(( $(date +%s) - _turn_start ))
@@ -353,10 +410,40 @@ else:
                 _tok_str=$(python3 -c "t=$_ttok; print(f' | {t/1000:.1f}k tok' if t>=1000 else f' | {t} tok')" 2>/dev/null || echo "")
             fi
             if [[ $total_tool_calls -gt 0 && -n "$text" ]]; then
-                local footer_parts=$(echo "$all_tool_names" | tr ',' '\n' | sed 's/^ *//' | grep -v '^$' | sort | uniq -c | sort -rn | awk '{cnt=$1; name=$2; for(i=3;i<=NF;i++) name=name" "$i; if(cnt>1) print name" ×"cnt; else print name}' | paste -sd ', ')
-                local full_md="${text}"$'\n\n'"_🔧 ${total_tool_calls} tool call$([[ $total_tool_calls -ne 1 ]] && echo 's'): ${footer_parts}${_tok_str}${_elapsed_str}_"
-                [[ -n "$_ctx_warn" ]] && full_md+=$'\n'"${_ctx_warn}"
-                tg_edit_safe "$chat_id" "$msg_id" "$(md_to_tg_html "$full_md")" "HTML" "$thread_id"
+                # Per-tool counts (e.g. "bash×2, edit_code") for the dim footer line
+                local footer_parts=$(echo "$all_tool_names" | tr ',' '\n' | sed 's/^ *//' | grep -v '^$' | sort | uniq -c | sort -rn | awk '{cnt=$1; name=$2; for(i=3;i<=NF;i++) name=name" "$i; if(cnt>1) print name"×"cnt; else print name}' | paste -sd ', ')
+                local _rendered_text; _rendered_text=$(md_to_tg_html "$text")
+                # Build the step pane (separate from rendered markdown to avoid HTML escaping the icons)
+                local _step_pane
+                _step_pane=$(STEPS_LOG="$_steps_log" python3 -c "
+import os
+EMOJI = {'bash':'🛠️','web_search':'🔍','fetch_url':'🌐','read_file':'📖','write_file':'✍️',
+         'edit_code':'📝','search_files':'🔎','todo':'📋','memory':'🧠','memory_remember':'🧠',
+         'memory_recall':'🧠','process':'⚙️','browser':'🌍','image_generate':'🎨','patch':'🩹',
+         'repo_map':'🗺️','clarify':'❓','session_search':'🗂️','sys_info':'📊','recap':'📝',
+         'custom_tool_manager':'🔧','skill_manager':'🎯','skill_install':'📦','insights':'📈',
+         'delegate':'🤖','ast_edit':'🔬','last_session':'🗓️','send_file':'📤'}
+def esc(s): return s.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+raw = os.environ.get('STEPS_LOG','')
+out = []
+if raw:
+    for e in raw.split(chr(0x1e))[-8:]:
+        p = e.split('|')
+        if len(p) < 4: continue
+        st, name, key, dur = p[0], p[1], p[2], p[3]
+        em = EMOJI.get(name, '🧩')
+        try: dur_s = f' <i>{int(dur)}s</i>' if int(dur) >= 1 else ''
+        except: dur_s = ''
+        key_s = f' <i>{esc(key)[:60]}</i>' if key else ''
+        out.append(f'✓ <code>{em} {name}</code>{key_s}{dur_s}')
+print('\n'.join(out))
+" 2>/dev/null)
+                local _footer="<i>╴ ${total_tool_calls} tool$([[ $total_tool_calls -ne 1 ]] && echo 's') · ${footer_parts}${_tok_str}${_elapsed_str}</i>"
+                local _full_html="$_rendered_text"
+                [[ -n "$_step_pane" ]] && _full_html="${_step_pane}"$'\n\n'"${_full_html}"
+                _full_html="${_full_html}"$'\n\n'"${_footer}"
+                [[ -n "$_ctx_warn" ]] && _full_html+=$'\n'"${_ctx_warn}"
+                tg_edit_safe "$chat_id" "$msg_id" "$_full_html" "HTML" "$thread_id"
             elif [[ -n "$text" && "$text" != "null" && $total_tool_calls -eq 0 ]]; then
                 local _final_html; _final_html="$(md_to_tg_html "$text")"
                 [[ -n "$_ctx_warn" ]] && _final_html+=$'\n'"${_ctx_warn}"

@@ -113,43 +113,7 @@ except: pass
     if [[ -f "$_skill_cache" && "$_cur_mtime" == "$_cached_mtime" ]]; then
         _skill_index=$(cat "$_skill_cache")
     else
-        _skill_index=$(python3 - <<'SKILL_PYEOF' 2>/dev/null
-import os, re, unicodedata
-
-def _is_garbage(line):
-    if len(line) < 8: return True
-    junk = sum(1 for c in line if unicodedata.category(c) in ('So','Sm','Sk') or ord(c)>0x2500)
-    return junk / max(len(line),1) > 0.3
-
-def _extract_desc(path):
-    text = open(path, encoding="utf-8", errors="ignore").read()
-    fm = re.match(r'^---\s*\n(.*?)\n---', text, re.DOTALL)
-    if fm:
-        m = re.search(r'^description:\s*(.+)', fm.group(1), re.MULTILINE)
-        if m: return m.group(1).strip()[:90]
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.startswith(("#","---","```",">")):  continue
-        if _is_garbage(line): continue
-        return line[:90]
-    return ""
-
-entries = []
-for base in ["core/skills","brain/skills"]:
-    if not os.path.isdir(base): continue
-    for name in sorted(os.listdir(base)):
-        prompt = os.path.join(base, name, "prompt.md")
-        if not os.path.isfile(prompt): continue
-        desc = _extract_desc(prompt)
-        entries.append(f"  • {name} — {desc}" if desc else f"  • {name}")
-
-if entries:
-    print("## Available Skills")
-    print("Activate with: skill_manager(action=bind, name=\"<name>\")")
-    print("Auto-activate when user request matches a skill domain — don't wait to be asked.")
-    print("\n".join(entries))
-SKILL_PYEOF
-)
+        _skill_index=$(python3 tools/skill_router.py index 2>/dev/null)
         printf '%s' "$_skill_index" > "$_skill_cache"
         printf '%s' "$_cur_mtime" > "$_skill_mtime_file"
     fi

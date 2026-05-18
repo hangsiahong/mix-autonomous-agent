@@ -1,45 +1,28 @@
-import json, sys, time, os, requests, re, threading
+import json, sys, time, os, requests, re, threading, subprocess
 
-def md_to_html(text):
-    if not text: return ""
-    result = []
-    # Simplified markdown to HTML for Telegram
-    FENCE_RE = re.compile(r"(```[\w]*\n?[\s\S]*?```|`[^`\n]+`)")
-    parts = FENCE_RE.split(text)
-    for i, part in enumerate(parts):
-        if i % 2 == 1:
-            if part.startswith("```"):
-                code = re.sub(r"^```\w*\n?", "", part)
-                code = re.sub(r"\n?```$", "", code)
-                code = code.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
-                result.append("<pre><code>" + code + "</code></pre>")
-            else:
-                code = part[1:-1]
-                code = code.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
-                result.append("<code>" + code + "</code>")
-        else:
-            p = part.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
-            p = re.sub(r"^#{1,6} +(.+)$", r"<b>\1</b>", p, flags=re.MULTILINE)
-            p = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", p, flags=re.DOTALL)
-            p = re.sub(r"__(.+?)__", r"<b>\1</b>", p, flags=re.DOTALL)
-            # Python regex for italic *text* (non-greedy, no nested stars)
-            p = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\s)\*(?!\*)", r"<i>\1</i>", p)
-            p = re.sub(r"_([^_\n]+?)_", r"<i>\1</i>", p)
-            p = re.sub(r"~~(.+?)~~", r"<s>\1</s>", p)
-            href_repl = "<a href=\"" + "\\2" + "\">" + "\\1" + "</a>"
-            p = re.sub(r"\[([^\]]+)\]\((https?://[^)]+)\)", href_repl, p)
-            result.append(p)
-            
-    html = "".join(result)
-    
-    def format_think(match):
-        content = match.group(2)
-        if len(content) > 1000:
-            content = content[:500] + "\n\n<i>... [thinking truncated] ...</i>\n\n" + content[-500:]
-        return "<blockquote><b>🧠 Thinking</b>\n<i>" + content.strip() + "</i></blockquote>\n"
-        
-    html = re.sub(r"&lt;(think|thinking|reasoning|thought)&gt;(.*?)(&lt;/\1&gt;|$)", format_think, html, flags=re.DOTALL|re.IGNORECASE)
-    return html
+# Make tools/ importable so we can use google_cache without a subprocess
+_AMA_ROOT = os.environ.get("AMA_DIR") or os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
+if os.path.join(_AMA_ROOT, "tools") not in sys.path:
+    sys.path.insert(0, os.path.join(_AMA_ROOT, "tools"))
+
+try:
+    import google_cache  # type: ignore
+except Exception:
+    google_cache = None
+
+try:
+    from md_to_html import md_to_html  # type: ignore
+except Exception:
+    # Fallback: trivial pass-through if shared module unavailable (shouldn't happen)
+    def md_to_html(text):  # type: ignore
+        return (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+def _strip_tags(html):
+    plain = re.sub(r"<[^>]+>", "", html)
+    return (plain.replace("&amp;","&").replace("&lt;","<").replace("&gt;",">")
+                 .replace("&#39;","'").replace("&quot;",'"'))
 
 def update_tg(tg_url, chat_id, message_id, text, reasoning=""):
     if not text and not reasoning: return
@@ -55,8 +38,21 @@ def update_tg(tg_url, chat_id, message_id, text, reasoning=""):
             "text": html,
             "parse_mode": "HTML"
         }, timeout=5)
-        if not resp.ok:
-            sys.stderr.write(f"TG edit failed {resp.status_code}: {resp.text[:200]}\n")
+        if resp.ok:
+            return
+        body = resp.text or ""
+        # On HTML parse errors, retry once as plain text so the user doesn't see stale state
+        if resp.status_code == 400 and ("parse" in body.lower() or "unmatched" in body.lower() or "can't parse" in body.lower()):
+            try:
+                requests.post(tg_url, json={
+                    "chat_id": chat_id,
+                    "message_id": int(message_id) if message_id else message_id,
+                    "text": _strip_tags(html)
+                }, timeout=5)
+                return
+            except Exception:
+                pass
+        sys.stderr.write(f"TG edit failed {resp.status_code}: {body[:200]}\n")
     except Exception as e:
         sys.stderr.write(f"TG edit error: {e}\n")
 
@@ -109,16 +105,55 @@ def main():
             # API key: append as ?key= query param (correct for native Vertex endpoint)
             url += ("&" if "?" in url else "?") + f"key={api_key}"
 
+    # ── Vertex/Gemini context caching ──────────────────────────────────────
+    # If the stable prefix (system_instruction + tools) is cacheable, swap it
+    # for a `cachedContent` reference — ~75% input-token cost reduction.
+    _cached_name = None
+    if google_cache is not None and mode in ("vertex", "studio"):
+        try:
+            sys_text = ""
+            si = payload.get("system_instruction") or payload.get("systemInstruction") or {}
+            for part in (si.get("parts") or []):
+                if "text" in part:
+                    sys_text += part["text"]
+            tools_blob = json.dumps(payload.get("tools", []), separators=(",", ":"))
+            _bearer = ""
+            if mode == "vertex" and headers.get("Authorization", "").startswith("Bearer "):
+                _bearer = headers["Authorization"][7:]
+            _cached_name = google_cache.get_or_create(
+                system_prompt=sys_text,
+                tools_json=tools_blob,
+                model=os.environ.get("MODEL", ""),
+                mode=mode,
+                project=os.environ.get("GOOGLE_PROJECT", ""),
+                region=os.environ.get("GOOGLE_REGION", "global"),
+                api_key=api_key or "",
+                bearer=_bearer,
+            )
+        except Exception as e:
+            sys.stderr.write(f"google_cache: lookup failed: {e}\n")
+            _cached_name = None
+
+    if _cached_name:
+        # Move the heavy bits into the cache reference and drop them from inline payload
+        payload["cachedContent"] = _cached_name
+        payload.pop("system_instruction", None)
+        payload.pop("systemInstruction", None)
+        payload.pop("tools", None)
+
     tg_url = f"https://api.telegram.org/bot{tg_token}/editMessageText"
     tg_action_url = f"https://api.telegram.org/bot{tg_token}/sendChatAction"
 
+    import atexit
     _typing_stop = threading.Event()
     def _typing_loop():
         while not _typing_stop.wait(4):
             try: requests.post(tg_action_url, json={"chat_id": chat_id, "action": "typing"}, timeout=3)
             except: pass
-    
+
     threading.Thread(target=_typing_loop, daemon=True).start()
+    # Even on sys.exit/uncaught exceptions, ensure the typing thread terminates.
+    atexit.register(_typing_stop.set)
 
     full_text = ""
     thought_text = ""
@@ -170,7 +205,28 @@ def main():
         try:
             with requests.post(url, json=payload, headers=headers, stream=True, timeout=60) as r:
                 if r.status_code != 200:
-                    sys.stderr.write(f"API Error {r.status_code}: {r.text[:500]}\n")
+                    body = r.text[:500]
+                    sys.stderr.write(f"API Error {r.status_code}: {body}\n")
+                    # Cache miss/expired → drop the reference, reinline system+tools, retry once
+                    if _cached_name and r.status_code in (400, 404) and ("cachedContent" in body or "cached_content" in body or "CachedContent" in body):
+                        try:
+                            if google_cache is not None:
+                                google_cache.invalidate(_cached_name)
+                            sys.stderr.write("google_cache: invalidated stale cache, retrying without it\n")
+                        except Exception:
+                            pass
+                        # Re-inline the heavy bits from the original payload data we stashed
+                        try:
+                            orig = json.loads(payload_data)
+                            payload.pop("cachedContent", None)
+                            for k in ("system_instruction", "systemInstruction", "tools"):
+                                if k in orig:
+                                    payload[k] = orig[k]
+                            _cached_name = None
+                            if _attempt < MAX_STREAM_ATTEMPTS:
+                                continue
+                        except Exception:
+                            pass
                     if r.status_code in (429, 503) and _attempt < MAX_STREAM_ATTEMPTS:
                         continue
                     sys.exit(1)

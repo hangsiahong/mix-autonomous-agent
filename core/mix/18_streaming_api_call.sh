@@ -69,29 +69,9 @@ api_key = os.environ.get("API_KEY")
 extra_headers = json.loads(os.environ.get("EXTRA_HEADERS", "{}"))
 prev_reasoning = os.environ.get("PREV_REASONING", "").strip()
 
-# Reasoning lane — separate Telegram message for thinking (OpenClaw pattern)
-_think_msg_id = None
+# Reasoning lane removed (decided 2026-05-16 in project_vertex_thinking memory):
+# the between-tool snippet header in 24_agent_loop is the single source of truth.
 _think_text = ""
-_think_last_update = 0.0
-def _send_or_update_think(text):
-    global _think_msg_id, _think_last_update
-    snippet = " ".join(text.split())[-200:]
-    escaped = snippet.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
-    now = time.time()
-    if _think_msg_id is None:
-        try:
-            r = requests.post(f"https://api.telegram.org/bot{tg_token}/sendMessage",
-                json={"chat_id": chat_id, "text": f"💭 <i>{escaped}…</i>", "parse_mode": "HTML"}, timeout=5)
-            if r.ok: _think_msg_id = r.json().get("result", {}).get("message_id")
-            _think_last_update = now
-        except Exception: pass
-    elif now - _think_last_update > 1.5:
-        try:
-            requests.post(f"https://api.telegram.org/bot{tg_token}/editMessageText",
-                json={"chat_id": chat_id, "message_id": _think_msg_id,
-                      "text": f"💭 <i>{escaped}…</i>", "parse_mode": "HTML"}, timeout=5)
-            _think_last_update = now
-        except Exception: pass
 
 url = f"{base_url}/chat/completions"
 payload = json.loads(sys.stdin.read())
@@ -119,43 +99,15 @@ def _typing_loop():
 _typing_thread = threading.Thread(target=_typing_loop, daemon=True)
 _typing_thread.start()
 
-def md_to_html(text):
-    result = []
-    FENCE_RE = re.compile(r"(```[\w]*\n?[\s\S]*?```|`[^`\n]+`)")
-    parts = FENCE_RE.split(text)
-    for i, part in enumerate(parts):
-        if i % 2 == 1:
-            if part.startswith("```"):
-                code = re.sub(r"^```\w*\n?", "", part)
-                code = re.sub(r"\n?```$", "", code)
-                code = code.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
-                result.append("<pre><code>" + code + "</code></pre>")
-            else:
-                code = part[1:-1]
-                code = code.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
-                result.append("<code>" + code + "</code>")
-        else:
-            p = part.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
-            p = re.sub(r"^#{1,6} +(.+)$", r"<b>\1</b>", p, flags=re.MULTILINE)
-            p = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", p, flags=re.DOTALL)
-            p = re.sub(r"__(.+?)__", r"<b>\1</b>", p, flags=re.DOTALL)
-            p = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\s)\*(?!\*)", r"<i>\1</i>", p)
-            p = re.sub(r"_([^_\n]+?)_", r"<i>\1</i>", p)
-            p = re.sub(r"~~(.+?)~~", r"<s>\1</s>", p)
-            href_repl = "<a href=\"" + "\\2" + "\">" + "\\1" + "</a>"
-            p = re.sub(r"\[([^\]]+)\]\((https?://[^)]+)\)", href_repl, p)
-            result.append(p)
-            
-    html = "".join(result)
-    
-    def format_think(match):
-        content = match.group(2)
-        if len(content) > 1000:
-            content = content[:500] + "\n\n<i>... [thinking truncated] ...</i>\n\n" + content[-500:]
-        return "<blockquote><b>🧠 Thinking</b>\n<i>" + content.strip() + "</i></blockquote>\n"
-        
-    html = re.sub(r"&lt;(think|thinking|reasoning|thought)&gt;(.*?)(&lt;/\1&gt;|$)", format_think, html, flags=re.DOTALL|re.IGNORECASE)
-    return html
+# Single source of truth: tools/md_to_html.py
+_AMA_ROOT = os.environ.get("AMA_DIR") or os.getcwd()
+if os.path.join(_AMA_ROOT, "tools") not in sys.path:
+    sys.path.insert(0, os.path.join(_AMA_ROOT, "tools"))
+try:
+    from md_to_html import md_to_html  # type: ignore
+except Exception:
+    def md_to_html(text):  # type: ignore
+        return (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 def update_tg(text):
     if not text and not prev_reasoning: return
@@ -269,7 +221,6 @@ while _stream_attempt < MAX_STREAM_ATTEMPTS:
                     thought_active = True
                 content += delta["thought"]
                 _think_text += delta["thought"]
-                _send_or_update_think(_think_text)
 
             if "content" in delta and delta["content"]:
                 if thought_active:
@@ -342,8 +293,6 @@ for k, v in sorted(tool_calls.items()):
         tc["thought_signature"] = v["thought_signature"]
     tc_list.append(tc)
 
-if _think_msg_id:
-    print(f"THINKMSG:{_think_msg_id}")
 if _think_text.strip():
     _ts = " ".join(_think_text.split())[:300]
     print("THINK:" + _ts)
