@@ -26,15 +26,21 @@ fi
 OFFSET_FILE="${DIR}/brain/last_offset"
 [ ! -f "$OFFSET_FILE" ] && echo "0" > "$OFFSET_FILE"
 
-# Single-instance lock
+# Single-instance lock — broad-sweep: kill ANY other bot.sh process (not just
+# the one in bot.pid). Live testing hit 13 zombie bots; each turn was 13× API
+# calls, instant rate-limit storms, curator never finishing. The previous lock
+# only killed brain/state/bot.pid which missed orphans (PPID=1 from earlier
+# crashes / disowned shells).
 LOCK_FILE="${DIR}/brain/state/bot.pid"
-if [ -f "$LOCK_FILE" ]; then
-    OLD_PID=$(cat "$LOCK_FILE" 2>/dev/null)
-    if kill -0 "$OLD_PID" 2>/dev/null; then
-        echo "AMA: Another instance is already running (PID $OLD_PID). Killing it..."
-        kill "$OLD_PID" 2>/dev/null
-        sleep 2
-    fi
+_OTHER_BOTS=$(pgrep -f "bash bot.sh" 2>/dev/null | grep -v "^$$$" || true)
+if [ -n "$_OTHER_BOTS" ]; then
+    echo "AMA: Found other bot.sh instances → terminating before start: $(echo $_OTHER_BOTS | tr '\n' ' ')"
+    echo "$_OTHER_BOTS" | xargs -r kill -TERM 2>/dev/null || true
+    sleep 1
+    # Force-kill any survivor
+    _STRAGGLER=$(pgrep -f "bash bot.sh" 2>/dev/null | grep -v "^$$$" || true)
+    [ -n "$_STRAGGLER" ] && echo "$_STRAGGLER" | xargs -r kill -KILL 2>/dev/null || true
+    sleep 1
 fi
 echo $$ > "$LOCK_FILE"
 trap 'rm -f "$LOCK_FILE"; exit 0' EXIT INT TERM
