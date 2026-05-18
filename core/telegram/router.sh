@@ -114,9 +114,25 @@ src_from = (msg.get('from') or cbq.get('from')) or {}
 chat = src_msg.get('chat') or {}
 bot_username = os.environ.get('BOT_USERNAME', '')
 
-# Reply-to: capture the original message's ID and text for threading
+# Reply-to: capture the original message's ID, author, and text so the LLM
+# can see what specific message the user is responding to. Without this, a
+# reply to an older message looks identical to a normal continuation turn
+# and the LLM misattributes context.
 reply_to_msg = msg.get('reply_to_message') or {}
 reply_to_id = str(reply_to_msg.get('message_id', '') or '')
+reply_to_text = ''
+reply_to_author = ''
+if reply_to_msg:
+    reply_to_text = str(reply_to_msg.get('text', '') or reply_to_msg.get('caption', '') or '')
+    # Truncate to keep context_prompt small. If it was a long bot message,
+    # the full text is already in history anyway.
+    if len(reply_to_text) > 400:
+        reply_to_text = reply_to_text[:400] + ' …'
+    _rf = reply_to_msg.get('from') or {}
+    if _rf.get('is_bot'):
+        reply_to_author = 'Bot'
+    else:
+        reply_to_author = _rf.get('first_name') or _rf.get('username') or 'User'
 
 # For group @mention gate: check if bot is @mentioned in text or caption
 raw_text = str(msg.get('text', '') or msg.get('caption', '') or cbq.get('data', '') or '')
@@ -139,6 +155,8 @@ vals = {
     'username':      str(src_from.get('username', '') or ''),
     'message_id':    str(src_msg.get('message_id', '') or ''),
     'reply_to_id':   reply_to_id,
+    'reply_to_text': reply_to_text,
+    'reply_to_author': reply_to_author,
     'is_mention':    '1' if is_mention else '0',
     'is_reply_to_bot': '1' if is_reply_to_bot else '0',
     'media_group_id': media_group_id,

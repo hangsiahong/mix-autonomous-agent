@@ -110,6 +110,17 @@ run_agent() {
         [[ -n "$thread_id" ]] && context_prompt+="- **Topic/Thread ID**: $thread_id\n"
         context_prompt+="- **User**: ${username:-$user_id}\n"
         context_prompt+="- **Session Key**: $session_id\n"
+        # Telegram reply context: when the user replies to a specific message
+        # (their own or the bot's), tell the LLM what they're pointing at.
+        # Without this, replies look identical to normal continuations and
+        # the model misattributes context. reply_to_text/reply_to_author are
+        # set by tg_handle_update's parser and inherited via the subshell fork.
+        if [[ -n "${reply_to_text:-}" ]]; then
+            local _author="${reply_to_author:-User}"
+            # Single-line the replied-to text for the bullet
+            local _replied; _replied=$(printf '%s' "$reply_to_text" | tr '\n' ' ' | sed 's/  */ /g')
+            context_prompt+="- **Replying to** (msg #${reply_to_id:-?}, by ${_author}): \"${_replied}\"\n"
+        fi
         
         if [[ -z "$skill" ]]; then
             local topic_config=$(get_topic_config "$chat_id" "$thread_id")
