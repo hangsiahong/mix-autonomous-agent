@@ -145,7 +145,14 @@ def _chunk_text(text: str) -> list[str]:
 
 
 def _ensure_table(db, first_row):
-    """Get or create the memory table, handling model changes."""
+    """Get or create the memory table.
+
+    If the embedding model has changed since the table was built, the existing
+    embeddings will no longer match new queries (different vector spaces).
+    Earlier behavior silently dropped the entire table — surprise data loss.
+    We now refuse the operation unless AMA_MEMORY_ALLOW_WIPE=1 is set, leaving
+    the user's stored memories intact.
+    """
     provider = os.environ.get("EMBEDDING_PROVIDER") or os.environ.get("PROVIDER", "google")
     cur_model = (
         os.environ.get("EMBEDDING_MODEL", "embeddinggemma")
@@ -153,19 +160,44 @@ def _ensure_table(db, first_row):
         else "google"
     )
     meta = _load_dim_meta()
-    model_changed = meta.get("model") != cur_model
+    stored_model = meta.get("model")
 
     try:
-        db.open_table(TABLE_NAME)
+        existing = db.open_table(TABLE_NAME)
         table_exists = True
     except Exception:
+        existing = None
         table_exists = False
 
-    if not table_exists or model_changed:
+    if not table_exists:
         table = db.create_table(TABLE_NAME, data=[first_row], mode="overwrite")
         _save_dim_meta(cur_model, len(first_row["vector"]))
         return table, True  # first_row already added
-    return db.open_table(TABLE_NAME), False
+
+    if stored_model and stored_model != cur_model:
+        allow_wipe = os.environ.get("AMA_MEMORY_ALLOW_WIPE", "0") == "1"
+        if not allow_wipe:
+            sys.stderr.write(
+                f"[memory_helper] Embedding model changed: stored='{stored_model}' "
+                f"current='{cur_model}'.\n"
+                f"Existing memories were embedded with the old model and won't match "
+                f"new queries.\nFix: revert EMBEDDING_PROVIDER/EMBEDDING_MODEL back to "
+                f"'{stored_model}', OR run with AMA_MEMORY_ALLOW_WIPE=1 to drop the "
+                f"table and start fresh.\n"
+            )
+            raise RuntimeError(
+                f"Embedding model mismatch (stored={stored_model}, current={cur_model}). "
+                f"Refusing to wipe memory. Set AMA_MEMORY_ALLOW_WIPE=1 to override."
+            )
+        sys.stderr.write(
+            f"[memory_helper] AMA_MEMORY_ALLOW_WIPE=1: dropping memory table because "
+            f"embedding model changed from '{stored_model}' to '{cur_model}'.\n"
+        )
+        table = db.create_table(TABLE_NAME, data=[first_row], mode="overwrite")
+        _save_dim_meta(cur_model, len(first_row["vector"]))
+        return table, True
+
+    return existing, False
 
 
 def save_memory(text, metadata=None):
@@ -217,29 +249,29 @@ def search_memory(query, limit=5):
 
     deduped = sorted(seen_topics.values(), key=lambda x: x[1])[:limit]
 
-    # Update access metadata for each recalled entry (track last_accessed + access_count)
+    # Update access metadata for each recalled entry. We do per-row updates via
+    # table.update(where=...) — the previous implementation rewrote the WHOLE
+    # table via create_table(mode="overwrite"), which clobbered any concurrent
+    # writes (saves from another tool call, the curator, a parallel recall).
+    # That race silently destroyed data on every concurrent save+recall.
     now = int(time.time())
-    all_rows = table.to_arrow().to_pylist()
-    updated = False
     for r, _dist, meta in deduped:
         text_key = r.get("text", "")
-        for row in all_rows:
-            if row.get("text") == text_key:
-                try:
-                    m = json.loads(row.get("metadata") or "{}")
-                except Exception:
-                    m = {}
-                m["last_accessed"] = now
-                m["access_count"] = m.get("access_count", 0) + 1
-                row["metadata"] = json.dumps(m)
-                updated = True
-    if updated:
+        if not text_key:
+            continue
+        new_meta = dict(meta)
+        new_meta["last_accessed"] = now
+        new_meta["access_count"] = new_meta.get("access_count", 0) + 1
         try:
-            import pyarrow as pa
-            table.create_fts_index  # probe — if table supports overwrite update
-            db.create_table(TABLE_NAME, data=all_rows, mode="overwrite")
+            # DataFusion single-quote escape; safe for arbitrary text content.
+            escaped = text_key.replace("'", "''")
+            table.update(
+                where=f"text = '{escaped}'",
+                values={"metadata": json.dumps(new_meta)},
+            )
         except Exception:
-            pass  # non-critical — don't break search if update fails
+            # Access tracking is non-essential — never let it break search.
+            pass
 
     return [x[0] for x in deduped]
 

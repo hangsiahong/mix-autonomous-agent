@@ -199,10 +199,11 @@ case "$PROV_NUM" in
     MODEL_DEFAULT=gemini-3-flash-preview
     GCP_PROJECT=$(ask "GCP project ID")
     GCP_REGION=$(ask "GCP region" "global")
+    # NOTE: code reads GOOGLE_PROJECT / GOOGLE_REGION (NOT GOOGLE_CLOUD_*).
     PROVIDER_ENV=$(cat <<EOF
 GOOGLE_MODE=vertex
-GOOGLE_CLOUD_PROJECT=$GCP_PROJECT
-GOOGLE_CLOUD_REGION=$GCP_REGION
+GOOGLE_PROJECT=$GCP_PROJECT
+GOOGLE_REGION=$GCP_REGION
 EOF
 )
     if command -v gcloud >/dev/null 2>&1; then

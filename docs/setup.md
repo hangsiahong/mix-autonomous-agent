@@ -76,10 +76,15 @@ In `.env`, pick ONE:
 **Google Vertex AI** (recommended — Gemini 3 Flash is fast and multimodal):
 ```bash
 PROVIDER=google
-GOOGLE_CLOUD_PROJECT=your-gcp-project-id
-GOOGLE_CLOUD_REGION=global   # use global for Gemini 3.x preview models
+GOOGLE_MODE=vertex
+GOOGLE_PROJECT=your-gcp-project-id
+GOOGLE_REGION=global         # use global for Gemini 3.x preview models
 MODEL=gemini-3-flash-preview
 ```
+
+Note: the env var names are `GOOGLE_PROJECT` / `GOOGLE_REGION` — **not** the gcloud-style
+`GOOGLE_CLOUD_PROJECT` / `GOOGLE_CLOUD_REGION`. The code in `core/mix/providers/google.sh`
+and `tools/memory_helper.py` reads the short names.
 
 Authentication: install `gcloud` CLI and run `gcloud auth application-default login`. Vertex prompt-caching requires this.
 
