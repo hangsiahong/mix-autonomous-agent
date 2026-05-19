@@ -18,11 +18,14 @@ gcloud config set project YOUR_GCP_PROJECT
 Then in `.env`:
 ```bash
 PROVIDER=google
-GOOGLE_CLOUD_PROJECT=your-gcp-project-id
-GOOGLE_CLOUD_REGION=global   # use global for Gemini 3.x preview
-MODEL=gemini-3-flash-preview
 GOOGLE_MODE=vertex
+GOOGLE_PROJECT=your-gcp-project-id
+GOOGLE_REGION=global         # use global for Gemini 3.x preview
+MODEL=gemini-3-flash-preview
 ```
+
+The env var names are `GOOGLE_PROJECT` / `GOOGLE_REGION` (the short, code-internal
+names) — not the gcloud-style `GOOGLE_CLOUD_*`.
 
 ### Setup with API key (no prompt caching)
 

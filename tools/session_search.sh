@@ -29,8 +29,13 @@ state_dir = os.path.join(script_dir, "brain", "state")
 if session_filter:
     files = [os.path.join(state_dir, f"history_{session_filter}.json")]
 else:
-    # Search both active sessions and archived ones (post-/new)
-    files = sorted(sorted(glob.glob(os.path.join(state_dir, "history_*.json")), key=os.path.getmtime, reverse=True))
+    # Search both active sessions and archived ones (post-/new). Newest first
+    # for the active set, then everything in sessions/ (order doesn't matter
+    # for ranking because we score-then-sort below).
+    files = sorted(
+        glob.glob(os.path.join(state_dir, "history_*.json")),
+        key=os.path.getmtime, reverse=True,
+    )
     files += sorted(glob.glob(os.path.join(state_dir, "sessions", "history_*.json")))
 
 if not files:
@@ -140,7 +145,9 @@ Write a concise factual recap in past tense. Preserve specific technical details
         result = subprocess.run(
             ["bash", "-c", f"""
 cd '{script_dir}'
-source core/mix/init.sh 2>/dev/null
+# Silence source-time provider activation banners — they would otherwise be
+# concatenated onto call_api's stdout and corrupt the summary text.
+source core/mix/init.sh >/dev/null 2>&1
 HISTORY=$(python3 -c 'import json,sys; prompt=open(sys.argv[1]).read(); print(json.dumps([{{"role":"user","content":prompt}}]))' '{prompt_file}' 2>/dev/null)
 export HISTORY
 call_api "You are a conversation summarizer. Respond with a focused, factual summary." 2>/dev/null | python3 -c '
