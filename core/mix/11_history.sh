@@ -101,6 +101,15 @@ print(json.dumps(h, separators=(',', ':')))
 save_history() {
     local session_id="$1"
     local _hfile="brain/state/history_${session_id}.json"
+    # Refuse to write empty/null HISTORY. Live incident 2026-05-19: a turn
+    # that crashed before HISTORY was populated wrote a 0-byte file that
+    # then crashed every subsequent turn with JSONDecodeError on load. If
+    # the value isn't a valid non-empty JSON, leave the existing file alone
+    # (better stale than corrupt).
+    if [[ -z "${HISTORY:-}" || "$HISTORY" == "null" ]]; then
+        echo "AMA: save_history refusing empty HISTORY for ${session_id}" >&2
+        return 1
+    fi
     local _tmp; _tmp=$(mktemp "${_hfile}.XXXXXX")
     printf '%s' "$HISTORY" > "$_tmp" && mv "$_tmp" "$_hfile" || { rm -f "$_tmp"; return 1; }
     # Mirror to SQLite session DB in background (hermes durability pattern)
@@ -109,7 +118,17 @@ save_history() {
 
 load_history() {
     local session_id="$1"
-    if [[ -f "brain/state/history_${session_id}.json" ]]; then
+    local _hfile="brain/state/history_${session_id}.json"
+    # Handle the empty-file case: a 0-byte file is NOT valid JSON. Treat it
+    # the same as a missing file → start fresh with []. Was crashing the
+    # downstream payload builder (Vertex 400 "contents required") because
+    # `cat "" | json.loads()` raises JSONDecodeError. Same handling if the
+    # file has content but isn't parseable.
+    if [[ -f "$_hfile" && ! -s "$_hfile" ]]; then
+        echo "AMA: load_history found empty file at $_hfile — treating as []" >&2
+        rm -f "$_hfile"  # clean up so save_history can write fresh later
+    fi
+    if [[ -f "$_hfile" ]]; then
         # Session idle auto-reset (hermes pattern): if file is older than SESSION_IDLE_HOURS,
         # treat session as expired and start fresh — avoids resuming week-old conversations
         local _idle_hours="${SESSION_IDLE_HOURS:-0}"  # 0 = disabled
@@ -126,20 +145,22 @@ load_history() {
             fi
         fi
 
-        HISTORY=$(cat "brain/state/history_${session_id}.json")
+        HISTORY=$(cat "$_hfile")
         # Sanity check: if history ends with consecutive user messages (no assistant reply),
         # the conversation is in an invalid state — trim the orphaned user messages.
-        HISTORY=$(python3 -c "
+        # On any parse failure (corrupt JSON), fall back to [] instead of cascading.
+        local _sanitized
+        _sanitized=$(python3 -c "
 import json, sys
 try:
     h = json.loads(open(sys.argv[1]).read())
+    if not isinstance(h, list):
+        print('[]'); sys.exit(0)
     # 1. Trim trailing orphaned user messages (no assistant reply yet)
     while h and h[-1].get('role') == 'user':
         h.pop()
     # 2. Trim incomplete tool-call exchanges — Gemini 400s if N function_calls
     #    in a model turn don't have exactly N function_responses in the next turn.
-    #    This happens when the agent was stopped between append_tool_call and
-    #    append_tool_result, or a parallel batch failed partway through.
     fixed = []
     i = 0
     while i < len(h):
@@ -154,9 +175,18 @@ try:
         fixed.append(msg)
         i += 1
     print(json.dumps(fixed, separators=(',', ':')))
-except:
-    pass
-" <(printf '%s' "$HISTORY") 2>/dev/null || echo "$HISTORY")
+except Exception as e:
+    sys.stderr.write(f'AMA: load_history parse failed: {e} — resetting to []\n')
+    print('[]')
+" <(printf '%s' "$HISTORY") 2>/dev/null)
+        # If the python script produced something usable, take it.
+        # Otherwise fall back to [] (don't leave HISTORY as raw corrupt text).
+        if [[ -n "$_sanitized" ]]; then
+            HISTORY="$_sanitized"
+        else
+            echo "AMA: load_history could not parse $_hfile — resetting to []" >&2
+            HISTORY="[]"
+        fi
     else
         HISTORY="[]"
     fi
