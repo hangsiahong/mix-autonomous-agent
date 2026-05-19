@@ -1,3 +1,27 @@
+#!/bin/bash
+# core/mix/16_api.sh — payload building + non-streaming API call.
+#
+# `_api_build_payload` is the single source of truth for what gets sent to
+# the LLM each turn. It assembles:
+#   - System prompt (brain/system_prompt.md), with SOUL.md persona, todo
+#     plan, MEMORY.md/USER.md snapshots, skill index, recent recaps, and
+#     active skill prompt all stitched in
+#   - Tools schema (brain/tools.json filtered by active toolsets + skill
+#     extras, deduped by name)
+#   - History (filtered through `${PROVIDER}_filter_history` for
+#     provider-specific shape)
+#   - Memory-prefetch context injected into the most recent user message
+#   - Anthropic prompt caching (`cache_control: ephemeral`) when provider=anthropic
+#
+# `call_api` is the non-streaming caller — used by reflection, curator,
+# title generation, compression, /btw, /goal judge. For streaming see
+# 18_streaming_api_call.sh.
+#
+# Error handling: every non-200 response is classified by
+# 34_error_classifier.sh; the dispatched action (rotate_pool / switch_model /
+# disable_thinking / compress / fail_user / fail / retry_after_delay) is
+# applied before the next attempt. See that file for the full taxonomy.
+
 # Prompt injection scanner — blocks obvious attacks in context files before injection
 _scan_for_injection() {
     local content="$1"

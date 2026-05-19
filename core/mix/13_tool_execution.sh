@@ -1,4 +1,15 @@
-# Tool execution
+#!/bin/bash
+# core/mix/13_tool_execution.sh — invoke a single tool by name.
+#
+# `run_tool <name> <args_json> <chat_id> <thread_id>` resolves the tool to
+# `tools/<name>.sh` (falling back to `tools/custom/<name>.sh` for agent-
+# created tools), exports each JSON arg as `TOOL_<key>` env var, exports
+# chat/thread context for Telegram-aware tools (clarify, send_file), and
+# runs the script. Returns whatever the script prints on stdout/stderr.
+#
+# Permission gating happens via `check_tool_permission` (core/access_control.sh)
+# before any execution.
+
 run_tool() {
     local name="$1"
     local args_json="$2"

@@ -1,4 +1,28 @@
-# History Management
+#!/bin/bash
+# core/mix/11_history.sh — conversation history persistence + smart trimming.
+#
+# Every message exchanged in a session lives in $HISTORY (a JSON array of
+# OpenAI-format `{role, content, ...}` messages). This file owns:
+#
+#   append_text()        — append a user/assistant text message
+#   append_tool_call()   — append an assistant message with tool_calls
+#   append_tool_result() — append a tool-role result, with smart fold to
+#                          80-line head+tail + summary line for long outputs
+#   save_history()       — atomic write to brain/state/history_<sid>.json
+#                          (refuses to write empty HISTORY — see live incident
+#                          2026-05-19 where a 0-byte file then broke every
+#                          subsequent turn)
+#   load_history()       — read from disk; handle missing, empty, and corrupt
+#                          files by returning HISTORY="[]"; also auto-reset
+#                          on idle (SESSION_IDLE_HOURS) and trim incomplete
+#                          tool-call exchanges Gemini would reject
+#   compact_history()    — cheap decay pass + LLM-based compression at
+#                          context threshold
+#   decay_history()      — progressive decay: collapse tool results older
+#                          than DECAY_KEEP turns, redact verbose write args
+#   _apply_provider_history_filter() — delegate to ${PROVIDER}_filter_history
+#                          for provider-specific shape (e.g. Google's
+#                          thoughtSignature preservation)
 
 append_text() {
     local role="$1"

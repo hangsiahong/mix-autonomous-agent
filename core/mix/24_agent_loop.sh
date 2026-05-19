@@ -1,4 +1,21 @@
-# Main Loop
+#!/bin/bash
+# core/mix/24_agent_loop.sh — main turn loop for AMA.
+#
+# `run_agent` is the entry point for every Telegram message (and every
+# scheduled / queued / goal-loop fire). It acquires a per-session flock,
+# loads history, builds the per-turn `context_prompt`, calls the streaming
+# API in a loop (up to MAX_TURNS), dispatches tool calls (parallel-safe
+# batches go through 23_parallel_tools.sh; single calls through 22_process_
+# one_tool_call.sh), and renders the result to Telegram via the
+# tg_edit/tg_send helpers in core/telegram/api.sh.
+#
+# Post-turn background work (reflection → recap → curator) is fired via the
+# `( ( cmd ) & )` detach idiom so it survives the EXIT trap that cleans up
+# the run_agent subshell. See [[feedback-bash-detach-idiom]] for why.
+#
+# Queued messages (from /queue, /goal continuation, or scheduler fires) are
+# picked up at the END of run_agent and re-enter via another run_agent call.
+
 run_agent() {
     local chat_id="$1"
     local input="$2"

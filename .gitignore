@@ -59,6 +59,19 @@ reference/
 .mix/
 node_modules/
 .playwright/
+venv/
+.venv/
+.serena/
+.claude/
+
+# ── Editor / IDE ──────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.iml
+
+# ── Lock + pid files anywhere ─────────────────────────────────────────────────
+*.lock
+*.pid
 
 # ── Agent-generated output ─────────────────────────────────────────────────────
 max_agent_site*.html

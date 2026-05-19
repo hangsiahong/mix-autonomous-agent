@@ -1,4 +1,20 @@
-# Process tool call
+#!/bin/bash
+# core/mix/22_process_one_tool_call.sh — single-tool dispatcher.
+#
+# `process_tc <chat_id> <msg_id> <tc_json> <thread_id>` is called once per
+# tool call when the agent's response includes one or many. It:
+#   1. Parses the tool name + arguments from the OpenAI-format `tool_calls`
+#      entry the model produced.
+#   2. Enforces per-turn caps (loop detection, idempotent vs mutating
+#      classification, hard caps per tool category).
+#   3. Updates the Telegram working message with a live status line
+#      (`🔧 <name>` → `✓ <name>: <preview>`) unless AMA_PARALLEL=true
+#      (then 23_parallel_tools.sh owns display).
+#   4. Calls `run_tool` (13_tool_execution.sh) to actually execute.
+#   5. Sends generated photos via tg_send_photo for image_generate output.
+#   6. Returns the tool output for the caller to append_tool_result into
+#      history.
+
 process_tc() {
     local chat_id="$1"
     local msg_id="$2"

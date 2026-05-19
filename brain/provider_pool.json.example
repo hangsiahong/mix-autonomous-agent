@@ -1,5 +1,5 @@
 {
-  "_comment": "Copy to provider_pool.json and fill in your keys. Remove _comment lines.",
+  "_comment": "Copy this to provider_pool.json and replace REPLACE_ME_* values with your real keys. The file is gitignored so your keys never get committed. Remove _comment lines if you want a tidy file.",
   "strategy": "fallback",
   "_strategy_options": "fallback (ordered priority) | round-robin (distribute load)",
   "_tier_note": "Optional 'tier' field: 'fast' (cheap/quick) | 'standard' (default) | 'power' (best quality). Set TASK_TIER=fast env var to prefer fast-tier entries for simple Q&A.",
@@ -8,28 +8,21 @@
     {
       "label": "Google-1",
       "provider": "google",
-      "key": "AIzaSy...",
+      "key": "REPLACE_ME_GOOGLE_API_KEY_1",
       "model": "gemini-3-flash-preview",
       "tier": "standard"
     },
     {
       "label": "Google-2",
       "provider": "google",
-      "key": "AIzaSy...",
-      "model": "gemini-3-flash-preview",
-      "tier": "standard"
-    },
-    {
-      "label": "Google-3",
-      "provider": "google",
-      "key": "AIzaSy...",
+      "key": "REPLACE_ME_GOOGLE_API_KEY_2",
       "model": "gemini-3-flash-preview",
       "tier": "standard"
     },
     {
       "label": "Anthropic-Claude",
       "provider": "anthropic",
-      "key": "sk-ant-...",
+      "key": "REPLACE_ME_ANTHROPIC_API_KEY",
       "model": "claude-sonnet-4-6",
       "tier": "power",
       "_note": "Prompt caching enabled automatically — 90% cost reduction on repeated system prompts"
@@ -37,7 +30,7 @@
     {
       "label": "Groq-fast",
       "provider": "groq",
-      "key": "gsk_...",
+      "key": "REPLACE_ME_GROQ_API_KEY",
       "model": "llama-3.3-70b-versatile",
       "tier": "fast",
       "_note": "Use for simple Q&A (set TASK_TIER=fast). Very cheap and fast."
@@ -45,14 +38,14 @@
     {
       "label": "Z.AI",
       "provider": "zai",
-      "key": "...",
+      "key": "REPLACE_ME_ZAI_API_KEY",
       "model": "glm-4-plus",
       "tier": "standard"
     },
     {
       "label": "DeepSeek",
       "provider": "deepseek",
-      "key": "sk-...",
+      "key": "REPLACE_ME_DEEPSEEK_API_KEY",
       "model": "deepseek-chat",
       "tier": "standard"
     },
