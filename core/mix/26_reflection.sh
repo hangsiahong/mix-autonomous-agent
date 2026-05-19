@@ -363,6 +363,60 @@ print('\n'.join(lines))
 
     [[ -z "$_trajectory" ]] && return
 
+    # Cross-session pattern signals: aggregate error_log + tool_usage so the
+    # curator can spot recurring issues that no single session would expose
+    # (same tool failing the same way across 3 different chats, etc.).
+    local _patterns
+    _patterns=$(python3 -c "
+import json, sys, os, collections
+err_path = 'brain/state/error_log.jsonl'
+tool_path = 'brain/state/tool_usage.jsonl'
+
+# Last 200 API errors — group by reason × model
+err_counts = collections.Counter()
+err_examples = {}
+if os.path.exists(err_path):
+    try:
+        with open(err_path) as f:
+            for line in f.readlines()[-200:]:
+                try:
+                    e = json.loads(line)
+                    key = (e.get('reason','unknown'), e.get('model','?'))
+                    err_counts[key] += 1
+                    if key not in err_examples:
+                        body = (e.get('body') or '')[:200].replace('\n',' ')
+                        err_examples[key] = body
+                except: pass
+    except: pass
+
+# Last 500 tool calls — frequency by tool name
+tool_counts = collections.Counter()
+if os.path.exists(tool_path):
+    try:
+        with open(tool_path) as f:
+            for line in f.readlines()[-500:]:
+                try:
+                    e = json.loads(line)
+                    tool_counts[e.get('tool','?')] += 1
+                except: pass
+    except: pass
+
+lines = []
+if err_counts:
+    lines.append('### Recent API error patterns (last 200 errors)')
+    for (reason, model), n in err_counts.most_common(8):
+        if n < 3: break  # only patterns that repeat
+        ex = err_examples.get((reason, model), '')[:120]
+        lines.append(f'  • {n}× {reason} on {model}' + (f' — e.g. {ex!r}' if ex else ''))
+if tool_counts:
+    lines.append('')
+    lines.append('### Recent tool usage frequency (last 500 calls)')
+    for tool, n in tool_counts.most_common(10):
+        lines.append(f'  • {n}× {tool}')
+
+print(chr(10).join(lines) if lines else '(no recent patterns)')
+" 2>/dev/null)
+
     # The curator prompt: tightly scoped, action-only, NO_CHANGES sentinel for nothing-to-do
     local _curator_sys="You are AMA's Session Curator. You run in the background after each session to bake newly-discovered durable knowledge into the agent's persistent state.
 
@@ -371,6 +425,7 @@ WHAT TO PERSIST (only if not already captured):
 - Environment quirks (filesystem layout, service names, config locations). Save via memory(target=memory).
 - User preferences inferred from this session (response style, terminology, defaults). Save via memory(target=user).
 - Working command/curl templates the agent had to discover. Bake into the skill prompt as a copy-pasteable block.
+- **Recurring cross-session issues**: if the patterns block below shows the same error/tool problem 3+ times, write a one-line note to MEMORY.md prefixed with '## Recurring issue:' so the agent sees it next session. Example: '## Recurring issue: bash tool returns Permission denied when writing to brain/state/ — verify ownership before write.'
 
 WHAT TO IGNORE:
 - Conversational chatter, greetings, single-task data (e.g. \"user spent \$200 today\" is task data, not knowledge).
@@ -378,9 +433,14 @@ WHAT TO IGNORE:
 - Anything trivially discoverable by a single fresh tool call.
 - API contracts revealed by FAILED attempts in the trajectory — wait until they succeed.
 
+WHAT YOU CAN AND CAN'T EDIT:
+- ✓ MEMORY.md / USER.md via memory()
+- ✓ brain/skills/*/prompt.md via edit_code()
+- ✗ NEVER edit core/* or tools/* — those are harness code. If you see a likely harness bug in the patterns, write a '## Recurring issue:' note to MEMORY.md describing it; the user reviews and fixes.
+
 HOW:
-- memory(action=add|replace|remove, target=memory|user, content=\"...\") for MEMORY.md / USER.md.
-- edit_code(path=\"brain/skills/<name>/prompt.md\", old_string=\"...\", new_string=\"...\") to patch skill prompts.
+- memory(action=add|replace|remove, target=memory|user, content=\"...\")
+- edit_code(path=\"brain/skills/<name>/prompt.md\", old_string=\"...\", new_string=\"...\")
 - read_code if you need to inspect a file you don't already have.
 
 LIMITS:
@@ -389,7 +449,7 @@ LIMITS:
 - If nothing worth persisting, respond with exactly: NO_CHANGES — then stop.
 - NEVER call any tool not in this list. NEVER message the user. NEVER use bash."
 
-    # Build the user-side payload — current state + trajectory
+    # Build the user-side payload — current state + trajectory + cross-session patterns
     local _curator_msg
     _curator_msg=$(python3 -c "
 import sys, json
@@ -398,6 +458,7 @@ usr = open(sys.argv[2]).read()
 sk_path = sys.argv[3]
 sk_body = open(sys.argv[4]).read() if sys.argv[4] else ''
 traj = open(sys.argv[5]).read()
+pat = open(sys.argv[6]).read() if len(sys.argv) > 6 else ''
 parts = []
 parts.append('## Current MEMORY.md')
 parts.append(mem if mem.strip() else '(empty)')
@@ -411,8 +472,12 @@ if sk_path and sk_body:
     parts.append('')
 parts.append('## Trajectory of the session that just ended')
 parts.append(traj)
+parts.append('')
+if pat and pat.strip() and pat.strip() != '(no recent patterns)':
+    parts.append('## Cross-session patterns (recurring issues across sessions)')
+    parts.append(pat)
 print(json.dumps([{'role': 'user', 'content': chr(10).join(parts)}]))
-" <(printf '%s' "$_mem_now") <(printf '%s' "$_usr_now") "$_skill_path" <(printf '%s' "$_skill_now") <(printf '%s' "$_trajectory") 2>/dev/null)
+" <(printf '%s' "$_mem_now") <(printf '%s' "$_usr_now") "$_skill_path" <(printf '%s' "$_skill_now") <(printf '%s' "$_trajectory") <(printf '%s' "$_patterns") 2>/dev/null)
 
     [[ -z "$_curator_msg" ]] && return
 

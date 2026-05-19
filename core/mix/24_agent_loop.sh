@@ -121,6 +121,88 @@ run_agent() {
             local _replied; _replied=$(printf '%s' "$reply_to_text" | tr '\n' ' ' | sed 's/  */ /g')
             context_prompt+="- **Replying to** (msg #${reply_to_id:-?}, by ${_author}): \"${_replied}\"\n"
         fi
+
+        # Token-budget self-awareness: show the model how much it's spending
+        # in the CURRENT session (since last /new), the per-turn average, and
+        # the recent context size. Goal: model self-throttles when burning
+        # tokens unusually fast.
+        # Session boundary anchor = history file's mtime — /new archives + rm,
+        # so the file's ctime/mtime resets at session start. Usage log entries
+        # before that timestamp belong to a prior session.
+        local _budget_line _hist_mtime=0
+        [[ -f "${DIR}/brain/state/history_${session_id}.json" ]] && \
+            _hist_mtime=$(stat -c '%Y' "${DIR}/brain/state/history_${session_id}.json" 2>/dev/null || echo 0)
+        _budget_line=$(SID="$session_id" MDL="${MODEL:-}" SINCE="${_hist_mtime}" python3 -c "
+import json, os, sys
+sid = os.environ.get('SID','')
+model = (os.environ.get('MDL','') or '').lower()
+since = int(os.environ.get('SINCE','0') or 0)
+# Model context window (matches 32_usage.sh context_warning)
+if 'gemini-3' in model or 'gemini-2.5' in model or 'flash' in model:
+    ctx = 1_000_000
+elif 'gemini-2' in model:
+    ctx = 1_048_576
+elif 'claude' in model:
+    ctx = 200_000
+else:
+    ctx = 128_000
+
+log_path = 'brain/state/usage_log.jsonl'
+session_calls = []   # current session only (ts >= since)
+recent_calls = []    # last 20 calls regardless of session, for lifetime baseline
+try:
+    with open(log_path) as f:
+        lines = f.readlines()
+    for line in lines[-500:]:  # cap scan
+        try:
+            e = json.loads(line)
+            ts = int(e.get('ts', 0) or 0)
+            u = e.get('usage', {}) or {}
+            pt = int(u.get('prompt_tokens', 0) or 0)
+            ct = int(u.get('completion_tokens', 0) or 0)
+            recent_calls.append((pt, ct))
+            if e.get('chat_id') == sid and (since == 0 or ts >= since - 60):
+                # 60s grace window in case usage was logged slightly before
+                # history file got its first mtime stamp.
+                session_calls.append((pt, ct))
+        except Exception: continue
+except FileNotFoundError:
+    pass
+
+def fmt(n):
+    return f'{n/1000:.1f}k' if n >= 1000 else str(n)
+
+# Lifetime baseline = last 20 calls across all sessions (rolling, not historical)
+recent_n = recent_calls[-20:] if recent_calls else []
+recent_avg = (sum(p+c for p,c in recent_n) // len(recent_n)) if recent_n else 0
+
+if not session_calls:
+    print(f'- **Token budget**: fresh session · ctx window {ctx:,} · recent baseline avg/turn {fmt(recent_avg)}')
+    sys.exit(0)
+
+s_in = sum(c[0] for c in session_calls)
+s_out = sum(c[1] for c in session_calls)
+s_total = s_in + s_out
+s_turns = len(session_calls)
+s_avg = s_total // s_turns if s_turns else 0
+last_pt, last_ct = session_calls[-1]
+last_total = last_pt + last_ct
+# Context %: use the LAST prompt size (current state), not session sum
+ctx_pct = round(last_pt / ctx * 100, 1)
+
+# Pacing hint — flag when this session is burning unusually fast
+hint = ''
+if recent_avg and s_avg > recent_avg * 1.5:
+    hint = f' · ⚠ above baseline ({fmt(recent_avg)}/turn) — consider compressing replies'
+
+line = (
+    f'- **Token budget**: session {fmt(s_total)} ({s_turns} turn'
+    + ('s' if s_turns != 1 else '')
+    + f', {fmt(s_avg)} avg) · last turn {fmt(last_total)} · ctx {ctx_pct}% used{hint}'
+)
+print(line)
+" 2>/dev/null)
+        [[ -n "$_budget_line" ]] && context_prompt+="${_budget_line}\n"
         
         if [[ -z "$skill" ]]; then
             local topic_config=$(get_topic_config "$chat_id" "$thread_id")
