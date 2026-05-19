@@ -19,7 +19,9 @@ found_skill=$(get_topic_config "$chat_id" "$thread_id" | python3 -c "import json
 assert_eq "$found_skill" "test_skill" "Skill lookup in topic config"
 
 # Test Case 2: API Payload Construction with Skill
-HISTORY="[]"
+# _api_build_payload bails with exit 2 ("GUARD: empty history") if there are no
+# user messages, so seed one before building.
+HISTORY='[{"role":"user","content":"hi"}]'
 # We need to simulate _api_build_payload
 source "${DIR}/core/mix/16_api.sh"
 

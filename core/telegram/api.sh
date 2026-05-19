@@ -13,7 +13,11 @@ tg_send() {
     local chat_id="$1"
     local text="$2"
     local thread_id="$3"
-    local parse_mode="${4:-Markdown}"
+    # `${4-Markdown}` (no colon): unset → Markdown default, but an explicit
+    # empty arg disables parsing. `${4:-Markdown}` collapsed both, so
+    # tg_edit_safe's plain-text fallback was silently re-Markdown-parsed and
+    # failed on stripped HTML that still contained stray * or _.
+    local parse_mode="${4-Markdown}"
     local reply_to_id="${5:-}"   # optional: reply_to_message_id (hermes-style threading)
     local payload
     payload=$(TG_CID="$chat_id" TG_TXT="$text" TG_PM="$parse_mode" python3 -c "

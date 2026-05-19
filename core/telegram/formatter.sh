@@ -1,9 +1,10 @@
 #!/bin/bash
 # core/telegram/formatter.sh - Text processing
 
-# Escape for MarkdownV2
+# Escape for MarkdownV2 — backslash must be escaped first, otherwise the
+# substitutions below would double-escape every `\<char>` they produce.
 tg_escape() {
-    echo "$1" | sed 's/\([_*[]()~`>#+\-=|{}.!]\)/\\\1/g'
+    printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/\([_*[]()~`>#+\-=|{}.!]\)/\\\1/g'
 }
 
 # Convert Markdown to Telegram HTML — delegates to tools/md_to_html.py

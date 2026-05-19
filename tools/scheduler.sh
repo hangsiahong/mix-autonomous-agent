@@ -128,7 +128,11 @@ tasks.append({
     'total_runs': 0,
     'created_at': now,
 })
-open(path, 'w').write(json.dumps(tasks, indent=2))
+import tempfile
+_fd, _tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix='.scheduled_tasks.', suffix='.tmp')
+with os.fdopen(_fd, 'w') as _f:
+    _f.write(json.dumps(tasks, indent=2))
+os.replace(_tmp, path)
 import datetime
 nr = datetime.datetime.fromtimestamp(now + secs).strftime('%Y-%m-%d %H:%M')
 override = []
@@ -193,7 +197,11 @@ except: tasks = []
 tid = int(os.environ['ID'])
 before = len(tasks)
 tasks = [t for t in tasks if t.get('id') != tid]
-open(path, 'w').write(json.dumps(tasks, indent=2))
+import tempfile
+_fd, _tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix='.scheduled_tasks.', suffix='.tmp')
+with os.fdopen(_fd, 'w') as _f:
+    _f.write(json.dumps(tasks, indent=2))
+os.replace(_tmp, path)
 print(f"Removed task #{tid}" if len(tasks) < before else f"No task with id {tid}")
 PYEOF
     # Also clean up any orphan sidecar files for this task across all sessions.
@@ -227,7 +235,11 @@ for t in tasks:
             t['consecutive_failures'] = 0
         hit = True
         break
-open(path, 'w').write(json.dumps(tasks, indent=2))
+import tempfile
+_fd, _tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix='.scheduled_tasks.', suffix='.tmp')
+with os.fdopen(_fd, 'w') as _f:
+    _f.write(json.dumps(tasks, indent=2))
+os.replace(_tmp, path)
 print(f"Task #{tid} → {new_status}" if hit else f"No task with id {tid}")
 PYEOF
     ;;
@@ -291,7 +303,11 @@ for t in tasks:
         t['total_runs'] = int(t.get('total_runs', 0)) + 1
         t['consecutive_failures'] = 0
         break
-open(path, 'w').write(json.dumps(tasks, indent=2))
+import tempfile
+_fd, _tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix='.scheduled_tasks.', suffix='.tmp')
+with os.fdopen(_fd, 'w') as _f:
+    _f.write(json.dumps(tasks, indent=2))
+os.replace(_tmp, path)
 PYEOF
     ;;
 
@@ -321,7 +337,11 @@ for t in tasks:
             t['next_run'] = now
             out_action = f"RETRY\t{tid}"
         break
-open(path, 'w').write(json.dumps(tasks, indent=2))
+import tempfile
+_fd, _tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix='.scheduled_tasks.', suffix='.tmp')
+with os.fdopen(_fd, 'w') as _f:
+    _f.write(json.dumps(tasks, indent=2))
+os.replace(_tmp, path)
 print(out_action)
 PYEOF
     ;;

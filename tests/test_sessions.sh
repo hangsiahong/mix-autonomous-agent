@@ -25,6 +25,9 @@ load_history "test_session"
 assert_eq "$HISTORY" "[]" "Load empty history"
 
 append_text "user" "hello world"
+# load_history sanity-trims trailing orphan user messages (Gemini 400 guard).
+# Pair with an assistant reply so the round-trip preserves content.
+append_text "assistant" "hi there"
 save_history "test_session"
 assert_contains "$(cat brain/state/history_test_session.json)" "hello world" "Save history content"
 

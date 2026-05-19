@@ -54,6 +54,20 @@
     "toolset": "core"
   },
   {
+    "name": "read_code",
+    "description": "Read a file with line numbers. Use this before edit_code/patch — never guess content.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": {"type": "string", "description": "Relative path within the project."},
+        "offset": {"type": "integer", "description": "1-based starting line. Default 1."},
+        "limit": {"type": "integer", "description": "Max lines (default 500, max 2000)."}
+      },
+      "required": ["path"]
+    },
+    "toolset": "core"
+  },
+  {
     "name": "search_files",
     "description": "grep a pattern across project files. Returns file:line matches.",
     "parameters": {
@@ -65,6 +79,18 @@
         "ignore_case": {"type": "boolean"}
       },
       "required": ["pattern"]
+    },
+    "toolset": "search"
+  },
+  {
+    "name": "list_files",
+    "description": "List files in a project directory (depth=2, hidden files excluded).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "directory": {"type": "string", "description": "Relative path. Default: project root."}
+      },
+      "required": []
     },
     "toolset": "search"
   },

@@ -1077,6 +1077,20 @@ Use <code>/skill &lt;name&gt;</code> to bind a skill." "$thread_id" "HTML"
                     get_children "$_pid"
                     kill -TERM $_pids 2>/dev/null || true
                 }
+                # Wipe orphan per-session state files. These accumulate forever otherwise:
+                # passive/active_skill/interrupt/prefetch/steer/stopbtn have no other cleanup path.
+                # Sticky preferences (model_<sid>) are deliberately preserved.
+                _stop_cleanup_state() {
+                    local _sf="$1"
+                    rm -f "${DIR}/brain/state/queue_${_sf}" \
+                          "${DIR}/brain/state/passive_${_sf}.jsonl" \
+                          "${DIR}/brain/state/active_skill_${_sf}" \
+                          "${DIR}/brain/state/interrupt_input_${_sf}" \
+                          "${DIR}/brain/state/interrupt_run_${_sf}" \
+                          "${DIR}/brain/state/prefetch_${_sf}" \
+                          "${DIR}/brain/state/steer_${_sf}" \
+                          "${DIR}/brain/state/stopbtn_${_sf}" 2>/dev/null || true
+                }
                 local _stop_args=$(echo "$args" | awk '{print $1}')
                 if [[ "$_stop_args" == "all" ]]; then
                     # /stop all — kill every running session + flag all queued ones
@@ -1088,21 +1102,21 @@ Use <code>/skill &lt;name&gt;</code> to bind a skill." "$thread_id" "HTML"
                         _sf="${_sf##*/run_}"
                         # Set stop flag so any queued process for this session exits too
                         touch "${DIR}/brain/state/stop_${_sf}" 2>/dev/null || true
-                        rm -f "${DIR}/brain/state/queue_${_sf}" 2>/dev/null || true
-                        local _pf_data; _pf_data=$(cat "$_pf" 2>/dev/null) || continue
-                        local _ppid _pmsg _pchat _pthread
-                        IFS='|' read -r _ppid _pmsg _pchat _pthread <<< "$_pf_data"
-                        if kill -0 "$_ppid" 2>/dev/null; then
-                            kill_tree "$_ppid"
-                            if [[ -n "$_pmsg" && "$_pmsg" != "pending" && -n "$_pchat" ]]; then
-                                tg_edit "$_pchat" "$_pmsg" "🛑 <i>Stopped.</i>" "HTML" > /dev/null 2>&1 || true
+                        local _pf_data; _pf_data=$(cat "$_pf" 2>/dev/null)
+                        if [[ -n "$_pf_data" ]]; then
+                            local _ppid _pmsg _pchat _pthread
+                            IFS='|' read -r _ppid _pmsg _pchat _pthread <<< "$_pf_data"
+                            if [[ -n "$_ppid" ]] && kill -0 "$_ppid" 2>/dev/null; then
+                                kill_tree "$_ppid"
+                                if [[ -n "$_pmsg" && "$_pmsg" != "pending" && -n "$_pchat" ]]; then
+                                    tg_edit "$_pchat" "$_pmsg" "🛑 <i>Stopped.</i>" "HTML" > /dev/null 2>&1 || true
+                                fi
+                                _stopped=$((_stopped + 1))
                             fi
-                            _stopped=$((_stopped + 1))
                         fi
                         rm -f "$_pf"
+                        _stop_cleanup_state "$_sf"
                     done
-                    # Also clear any orphaned queues
-                    rm -f "${DIR}/brain/state"/queue_* 2>/dev/null || true
                     if [[ "$_stopped" -gt 0 ]]; then
                         tg_send "$chat_id" "🛑 Stopped $_stopped running task(s)." "$thread_id"
                     else
@@ -1115,32 +1129,32 @@ Use <code>/skill &lt;name&gt;</code> to bind a skill." "$thread_id" "HTML"
                     # Always set stop flag first — catches queued processes that get the
                     # lock AFTER we kill the running one (they check the flag and exit)
                     touch "$stop_flag"
-                    rm -f "${DIR}/brain/state/queue_${session_id}" 2>/dev/null || true
-                    if [[ -f "$pid_file" ]]; then
-                        local _pid_data; _pid_data=$(cat "$pid_file" 2>/dev/null)
+                    # Inline-read the pid file so a TOCTOU disappearance falls into the
+                    # 'queued' branch cleanly instead of silently killing nothing.
+                    local _pid_data=""; _pid_data=$(cat "$pid_file" 2>/dev/null || true)
+                    if [[ -n "$_pid_data" ]]; then
                         local run_pid _msg_id _orig_chat _orig_thread _uid2 _worker_pid2
                         IFS='|' read -r run_pid _msg_id _orig_chat _orig_thread _uid2 _worker_pid2 <<< "$_pid_data"
-                        echo "AMA: Stopping session $session_id (PID $run_pid worker ${_worker_pid2:-?})"
+                        echo "AMA: Stopping session $session_id (PID ${run_pid:-?} worker ${_worker_pid2:-?})"
                         # Kill worker subshell directly (holds streaming child), then full tree
                         [[ -n "$_worker_pid2" ]] && kill -TERM "$_worker_pid2" 2>/dev/null || true
                         [[ -n "$_worker_pid2" ]] && pkill -TERM -P "$_worker_pid2" 2>/dev/null || true
-                        kill_tree "$run_pid"
+                        [[ -n "$run_pid" ]] && kill_tree "$run_pid"
                         rm -f "$pid_file"
                         # Edit the dangling "Thinking…" or "Working…" bot message
                         if [[ -n "$_msg_id" && "$_msg_id" != "pending" ]]; then
                             tg_edit "${_orig_chat:-$chat_id}" "$_msg_id" "🛑 <i>Stopped.</i>" "HTML" > /dev/null 2>&1 || true
                         fi
-                        tg_send "$chat_id" "🛑 Task stopped." "$thread_id"
                         # Remove Stop button if still visible
                         local _stopbtn_id; _stopbtn_id=$(cat "${DIR}/brain/state/stopbtn_${session_id}" 2>/dev/null)
                         [[ -n "$_stopbtn_id" ]] && tg_delete "$chat_id" "$_stopbtn_id" > /dev/null 2>&1 || true
-                        rm -f "${DIR}/brain/state/stopbtn_${session_id}"
+                        tg_send "$chat_id" "🛑 Task stopped." "$thread_id"
                     else
                         # No running process — but we set the stop flag above, which will
                         # catch any queued process when it tries to acquire the lock
                         tg_send "$chat_id" "🛑 Stopped (was queued)." "$thread_id"
-                        rm -f "${DIR}/brain/state/interrupt_input_${session_id}"
                     fi
+                    _stop_cleanup_state "$session_id"
                 fi
                 ;;
             /google_login)
