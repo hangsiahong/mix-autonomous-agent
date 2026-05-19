@@ -1,6 +1,6 @@
 # AMA — Autonomous Mix Agent
 
-> A self-evolving Telegram-native AI agent. ~10k lines of Bash + Python. Reads, writes, schedules, learns from itself, runs cheap models without losing quality.
+> A self-evolving Telegram-native AI agent. ~10k lines of Bash + Python. Reads, writes, schedules, learns from itself, runs cheap models without losing quality..
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 ![Bash](https://img.shields.io/badge/bash-black?logo=gnubash)
