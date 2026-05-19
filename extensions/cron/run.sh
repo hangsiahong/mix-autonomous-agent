@@ -221,11 +221,22 @@ if [[ -n "$_SCHED_FIRES" ]]; then
         _sid="tg_${_chat_id}"
         [[ -n "$_thread_id" ]] && _sid="tg_${_chat_id}_${_thread_id}"
 
-        # Mark task done first (optimistic). If queueing fails we'll mark_failed.
-        # The "did it actually produce useful output" question is the user's
-        # business — we just confirm we put it in motion.
         _queue_file="${DIR}/brain/state/queue_${_sid}"
         mkdir -p "$(dirname "$_queue_file")"
+
+        # Don't pile up duplicates. If there's already an unconsumed
+        # [SCHEDULED #N] entry for THIS task in the queue, skip — the user is
+        # idle, the previous fire is still waiting to be processed. Otherwise
+        # a 2m task left idle for 30m floods the user with 15 reminders the
+        # moment they next type. (Caught live 2026-05-19.)
+        if [[ -f "$_queue_file" ]] && grep -qF "[SCHEDULED #${_id}] " "$_queue_file"; then
+            # Still bump next_run so the task doesn't fire again on the very
+            # next tick — let mark_done update the timestamp.
+            TOOL_action=mark_done TOOL_id="$_id" bash "${DIR}/tools/scheduler.sh" >/dev/null 2>&1
+            echo "[$(date)] Scheduler: task #${_id} already queued for ${_sid} — skipping duplicate fire"
+            continue
+        fi
+
         # Tag the message so the agent and the user can see this came from
         # the scheduler, not a real Telegram message.
         printf '%s\n' "[SCHEDULED #${_id}] ${_prompt}" >> "$_queue_file" \

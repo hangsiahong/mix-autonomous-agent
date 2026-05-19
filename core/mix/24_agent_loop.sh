@@ -303,7 +303,11 @@ except: print(); print(); print()" "$_override_file" 2>/dev/null)
                 fi
                 [[ -n "$_ov_skill" ]] && skill="$_ov_skill"
                 echo "[$(date '+%H:%M:%S')] sched-applied #${_sched_id} → MODEL=${MODEL} PROVIDER=${PROVIDER} BASE_URL=${BASE_URL:-?}" >> "$_sched_log"
-                rm -f "$_override_file"
+                # DO NOT delete the sidecar — the override is the same every
+                # fire (per task definition). Deleting it meant the 2nd, 3rd,
+                # … fires of the same task lost their override and silently
+                # fell back to the default model. Scheduler `remove` cleans
+                # up the sidecar when the task itself is removed.
             else
                 echo "[$(date '+%H:%M:%S')] sched-detect #${_sched_id} NO sidecar file — override skipped" >> "$_sched_log"
             fi

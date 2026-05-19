@@ -196,6 +196,12 @@ tasks = [t for t in tasks if t.get('id') != tid]
 open(path, 'w').write(json.dumps(tasks, indent=2))
 print(f"Removed task #{tid}" if len(tasks) < before else f"No task with id {tid}")
 PYEOF
+    # Also clean up any orphan sidecar files for this task across all sessions.
+    # We don't know which session(s) had pending overrides, so glob and remove
+    # any matching `sched_override_*_<id>.json`. Sidecar persistence is fine
+    # while the task is active (24_agent_loop no longer single-shot deletes it),
+    # but once the task is gone the sidecar shouldn't linger.
+    rm -f "${_ROOT_DIR}/brain/state/"sched_override_*_${id}.json 2>/dev/null
     ;;
 
 pause|resume)
