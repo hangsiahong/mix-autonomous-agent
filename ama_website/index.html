@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AMA — Autonomous Mix Agent</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/ScrollTrigger.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap');
+        
+        :root {
+            --bg: #000000;
+            --fg: #ffffff;
+            --accent: #00ff41;
+        }
+
+        body {
+            background-color: var(--bg);
+            color: var(--fg);
+            font-family: 'Space Grotesk', sans-serif;
+            overflow-x: hidden;
+        }
+
+        .serif { font-family: 'Instrument Serif', serif; }
+        
+        .type-giant {
+            font-size: clamp(4rem, 18vw, 15rem);
+            line-height: 0.8;
+            letter-spacing: -0.06em;
+        }
+
+        .glass-nav {
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(30px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .marquee-content {
+            display: flex;
+            animation: marquee 30s linear infinite;
+        }
+
+        @keyframes marquee {
+            0% { transform: translateX(0); }
+            100% { transform: translateX(-50%); }
+        }
+
+        .noise-bg {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none;
+            opacity: 0.05;
+            z-index: 100;
+            background: url('https://grainy-gradients.vercel.app/noise.svg');
+        }
+
+        .scanline {
+            width: 100%;
+            height: 100px;
+            z-index: 99;
+            background: linear-gradient(0deg, rgba(0, 255, 65, 0) 0%, rgba(0, 255, 65, 0.05) 50%, rgba(0, 255, 65, 0) 100%);
+            opacity: 0.1;
+            position: absolute;
+            bottom: 100%;
+            animation: scanline 8s linear infinite;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(12, 1fr);
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .stat-box {
+            grid-column: span 3;
+            padding: 40px;
+            border-right: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        @media (max-width: 768px) {
+            .stat-box { grid-column: span 6; }
+        }
+    </style>
+</head>
+<body class="antialiased selection:bg-white selection:text-black">
+    <div class="noise-bg"></div>
+
+    <header class="fixed top-0 w-full z-[100] glass-nav">
+        <nav class="flex justify-between items-center py-6 px-6 md:px-12">
+            <div class="text-xl font-bold tracking-tighter uppercase flex items-center gap-2">
+                <span class="w-2 h-2 bg-[#00ff41] rounded-full animate-pulse"></span>
+                AMA [v4.2.0]
+            </div>
+            <div class="hidden md:flex gap-12 text-[10px] font-bold uppercase tracking-[0.2em] opacity-40">
+                <a href="#logic" class="hover:opacity-100 transition-opacity">Neural Logic</a>
+                <a href="#harness" class="hover:opacity-100 transition-opacity">Harness</a>
+                <a href="#memory" class="hover:opacity-100 transition-opacity">Memory</a>
+            </div>
+            <div class="text-[10px] font-bold uppercase border border-white/20 px-4 py-2 rounded-full hover:bg-white hover:text-black transition-all cursor-pointer">
+                Access Terminal
+            </div>
+        </nav>
+    </header>
+
+    <main>
+        <!-- Hero Section -->
+        <section class="min-h-screen pt-48 flex flex-col justify-between px-6 md:px-12 pb-12 relative">
+            <div class="scanline"></div>
+            <div class="relative z-10">
+                <h1 class="type-giant font-bold" id="ama-hero">
+                    AGENTIC<br><span class="serif italic font-light text-neutral-500">AUTONOMY.</span>
+                </h1>
+                
+                <div class="mt-16 grid grid-cols-1 md:grid-cols-12 gap-12">
+                    <div class="md:col-start-1 md:col-span-4">
+                        <p class="text-xs font-bold uppercase tracking-widest text-neutral-500 mb-6">[ SYSTEM STATUS: OPERATIONAL ]</p>
+                        <p class="text-2xl font-light leading-snug">
+                            AMA (Autonomous Mix Agent) is not just a bot. It is a self-evolving harness running in a raw bash environment. It thinks, codes, and executes in the real world.
+                        </p>
+                    </div>
+                    <div class="md:col-start-8 md:col-span-5 relative">
+                        <div class="aspect-square bg-neutral-900 rounded-2xl overflow-hidden border border-white/5">
+                            <img src="https://image.pollinations.ai/prompt/Cinematic%20macro%20shot%20of%20a%20glowing%20CPU%20core%20under%20heavy%20load%2C%20intricate%20circuits%2C%20cyan%20and%20magenta%20subsurface%20scattering%2C%20dark%20industrial%20setting%2C%208k?width=800&height=800&nologo=true" 
+                                 class="w-full h-full object-cover opacity-60 mix-blend-screen" alt="AMA Core">
+                        </div>
+                        <div class="absolute -bottom-6 -left-6 bg-black p-6 border border-white/10 rounded-xl max-w-xs">
+                            <p class="text-[10px] font-mono text-[#00ff41] mb-2">$ tail -f /brain/logs/neural.log</p>
+                            <p class="text-[9px] font-mono opacity-40">>> Initializing toolsets: [core, search, memory, meta]... Success.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Marquee -->
+        <div class="marquee border-y border-white/10 py-12 my-32 overflow-hidden">
+            <div class="marquee-content">
+                <span class="text-6xl font-bold uppercase mx-16">Bash-First Workflow &middot;</span>
+                <span class="text-6xl font-bold uppercase mx-16 serif italic font-light">Self-Correcting Code &middot;</span>
+                <span class="text-6xl font-bold uppercase mx-16">Persistent LanceDB Memory &middot;</span>
+                <span class="text-6xl font-bold uppercase mx-16 serif italic font-light">Multimodal Vision &middot;</span>
+            </div>
+        </div>
+
+        <!-- Section: The Harness -->
+        <section id="harness" class="py-40 px-6 md:px-12 bg-white text-black rounded-t-[4rem]">
+            <div class="max-w-7xl mx-auto">
+                <div class="grid grid-cols-1 md:grid-cols-12 gap-12 mb-32 items-end">
+                    <div class="md:col-span-8">
+                        <h2 class="text-7xl md:text-9xl font-bold tracking-tighter leading-[0.8]">The Harness<br><span class="serif italic font-light opacity-40 text-8xl">Architecture.</span></h2>
+                    </div>
+                    <div class="md:col-span-4 pb-4">
+                        <p class="text-sm font-bold uppercase tracking-widest opacity-60">
+                            A custom-built Linux runtime designed for true agentic freedom.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-px bg-neutral-200 border border-neutral-200">
+                    <div class="bg-white p-12 group hover:bg-black hover:text-white transition-colors duration-500">
+                        <span class="text-sm font-mono mb-8 block opacity-40">/tools/custom/</span>
+                        <h3 class="text-4xl font-bold mb-6">DYNAMIC TOOLING</h3>
+                        <p class="text-xl font-light opacity-60">AMA builds its own tools. If a capability doesn't exist, it writes the bash script, registers the JSON schema, and deploys it in real-time.</p>
+                    </div>
+                    <div class="bg-white p-12 group hover:bg-black hover:text-white transition-colors duration-500">
+                        <span class="text-sm font-mono mb-8 block opacity-40">/brain/memory/</span>
+                        <h3 class="text-4xl font-bold mb-6">LONG-TERM RECALL</h3>
+                        <p class="text-xl font-light opacity-60">Powered by LanceDB, AMA remembers every decision, every snippet, and every user preference across months of history.</p>
+                    </div>
+                    <div class="bg-white p-12 group hover:bg-black hover:text-white transition-colors duration-500">
+                        <span class="text-sm font-mono mb-8 block opacity-40">/core/mix/</span>
+                        <h3 class="text-4xl font-bold mb-6">MULTI-MODAL CORE</h3>
+                        <p class="text-xl font-light opacity-60">Swapping models like magazines. GPT-4o for vision, Claude 3.5 for logic, Gemini 1.5 for context—all in one seamless turn.</p>
+                    </div>
+                    <div class="bg-white p-12 group hover:bg-black hover:text-white transition-colors duration-500">
+                        <span class="text-sm font-mono mb-8 block opacity-40">/project/registry/</span>
+                        <h3 class="text-4xl font-bold mb-6">PROJECT STEWARDSHIP</h3>
+                        <p class="text-xl font-light opacity-60">Full control over project structures. AMA manages files, runs tests, and deploys code without human intervention.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Technical Stats -->
+        <section class="stats-grid bg-black">
+            <div class="stat-box">
+                <span class="text-[10px] font-bold uppercase tracking-widest text-neutral-600 block mb-4">Uptime</span>
+                <span class="text-5xl font-bold">99.9<span class="text-[#00ff41]">%</span></span>
+            </div>
+            <div class="stat-box">
+                <span class="text-[10px] font-bold uppercase tracking-widest text-neutral-600 block mb-4">Latency</span>
+                <span class="text-5xl font-bold">~1.2<span class="text-[#00ff41]">s</span></span>
+            </div>
+            <div class="stat-box">
+                <span class="text-[10px] font-bold uppercase tracking-widest text-neutral-600 block mb-4">Context</span>
+                <span class="text-5xl font-bold">1<span class="text-[#00ff41]">M+</span></span>
+            </div>
+            <div class="stat-box border-r-0">
+                <span class="text-[10px] font-bold uppercase tracking-widest text-neutral-600 block mb-4">Autonomy</span>
+                <span class="text-5xl font-bold">MAX</span>
+            </div>
+        </section>
+
+        <!-- Final CTA -->
+        <section class="py-60 px-6 md:px-12 text-center">
+            <div class="max-w-4xl mx-auto">
+                <h2 class="text-6xl md:text-8xl font-bold tracking-tighter mb-12">UNLEASH THE<br><span class="serif italic font-light opacity-30">AUTONOMY.</span></h2>
+                <div class="flex flex-col md:flex-row justify-center gap-6">
+                    <a href="#" class="px-12 py-6 bg-white text-black text-xl font-bold rounded-full hover:scale-105 transition-all">Start a Project</a>
+                    <a href="#" class="px-12 py-6 border border-white/20 text-xl font-bold rounded-full hover:bg-white/10 transition-all">View Docs</a>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="py-20 px-6 md:px-12 border-t border-white/10">
+        <div class="flex flex-col md:flex-row justify-between items-start gap-12">
+            <div class="max-w-sm">
+                <div class="text-2xl font-bold tracking-tighter uppercase mb-6">AMA&reg;</div>
+                <p class="text-xs font-medium uppercase tracking-widest opacity-40 leading-loose">
+                    The autonomous agent for the modern developer. Built on a linux foundation. Controlled via Telegram. Powered by the world's best LLMs.
+                </p>
+            </div>
+            <div class="grid grid-cols-2 md:grid-cols-3 gap-12 text-[10px] font-bold uppercase tracking-widest">
+                <div class="flex flex-col gap-4">
+                    <span class="text-neutral-600">Modules</span>
+                    <a href="#" class="hover:text-[#00ff41]">Skill Manager</a>
+                    <a href="#" class="hover:text-[#00ff41]">Scheduler</a>
+                    <a href="#" class="hover:text-[#00ff41]">Memory Hub</a>
+                </div>
+                <div class="flex flex-col gap-4">
+                    <span class="text-neutral-600">Connect</span>
+                    <a href="#" class="hover:text-[#00ff41]">Telegram</a>
+                    <a href="#" class="hover:text-[#00ff41]">GitHub</a>
+                    <a href="#" class="hover:text-[#00ff41]">X.com</a>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        gsap.registerPlugin(ScrollTrigger);
+
+        // Hero Reveal
+        gsap.from("#ama-hero", {
+            y: 150,
+            opacity: 0,
+            duration: 1.8,
+            ease: "expo.out"
+        });
+
+        // Section animations
+        gsap.utils.toArray("section").forEach(section => {
+            gsap.from(section, {
+                opacity: 0,
+                y: 80,
+                duration: 1.2,
+                scrollTrigger: {
+                    trigger: section,
+                    start: "top 85%",
+                }
+            });
+        });
+    </script>
+</body>
+</html>
