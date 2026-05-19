@@ -393,6 +393,7 @@ open(sys.argv[1],'w').write(json.dumps(d, separators=(',',':')))" "$_gfile" 2>/d
 /queue &lt;text&gt; — queue a message for after current run
 /btw &lt;question&gt; — ephemeral side question, doesn't interrupt or persist
 /goal &lt;prose&gt; — autonomous goal loop (judge decides done each turn); /goal status|stop|pause|resume|max
+/schedule add every=12h "..." [model=X] — recurring task; /schedule list|remove|pause|resume
 
 <b>Config</b>
 /model &lt;name&gt; — switch model this session
@@ -703,6 +704,80 @@ print(f'Session: {total_calls} API calls\n{total_in:,} input + {total_out:,} out
                 # doesn't write to history, no tools, no thinking. Runs in a
                 # detached subshell so it doesn't block other commands.
                 ( ( btw_command "$chat_id" "$thread_id" "$session_id" "$args" "${message_id:-0}" ) & )
+                ;;
+
+            /schedule|/sched)
+                # Thin wrapper around tools/scheduler.sh — same path as the
+                # `scheduler` tool the agent uses, so chat-driven and
+                # slash-driven scheduling stay in sync.
+                #
+                # Forms:
+                #   /schedule list
+                #   /schedule remove <id>
+                #   /schedule pause <id>   /schedule resume <id>
+                #   /schedule add every=12h "<prompt>" [model=X] [provider=Y] [skill=Z]
+                #   /schedule every 12h "<prompt>" [model=X]  (shorthand: defaults to add)
+                local _sub="${args%% *}"
+                local _rest="${args#* }"; [[ "$_rest" == "$args" ]] && _rest=""
+                case "$_sub" in
+                    "" )
+                        tg_send "$chat_id" "Usage:
+<code>/schedule list</code>
+<code>/schedule add every=12h \"prompt\" [model=X] [provider=Y]</code>
+<code>/schedule remove &lt;id&gt;</code>
+<code>/schedule pause &lt;id&gt;</code> / <code>/schedule resume &lt;id&gt;</code>
+
+You can also just chat: \"<i>ama, every 12h summarize my transactions with koompi-free</i>\"" "$thread_id" "HTML"
+                        ;;
+                    list)
+                        local _out
+                        _out=$(TOOL_action=list TOOL_chat_id="$chat_id" bash "${DIR}/tools/scheduler.sh" 2>&1)
+                        tg_send "$chat_id" "<pre>${_out}</pre>" "$thread_id" "HTML"
+                        ;;
+                    remove|delete|pause|resume)
+                        local _id="${_rest%% *}"
+                        local _out
+                        _out=$(TOOL_action="$_sub" TOOL_id="$_id" bash "${DIR}/tools/scheduler.sh" 2>&1)
+                        tg_send "$chat_id" "$_out" "$thread_id"
+                        ;;
+                    add|*)
+                        # Parse key=val pairs + the quoted prompt.
+                        # Skip leading "add" if present.
+                        local _arg_str="$args"
+                        [[ "$_sub" == "add" ]] && _arg_str="$_rest"
+                        local _every="" _prompt="" _model="" _provider="" _skill=""
+                        # Extract key=val tokens (no quotes)
+                        for _kv in $(echo "$_arg_str" | grep -oE '[a-z_]+=[^ "]+'); do
+                            local _k="${_kv%%=*}" _v="${_kv#*=}"
+                            case "$_k" in
+                                every)    _every="$_v" ;;
+                                model)    _model="$_v" ;;
+                                provider) _provider="$_v" ;;
+                                skill)    _skill="$_v" ;;
+                            esac
+                        done
+                        # Extract quoted prompt — first "..." in the arg string
+                        _prompt=$(echo "$_arg_str" | python3 -c "
+import sys, re
+s = sys.stdin.read()
+m = re.search(r'\"([^\"]+)\"', s)
+print(m.group(1) if m else '')")
+                        # Fallback: if no quoted prompt, use everything after the kvs
+                        if [[ -z "$_prompt" ]]; then
+                            _prompt=$(echo "$_arg_str" | sed -E 's/[a-z_]+=[^ ]+//g' | xargs)
+                        fi
+                        if [[ -z "$_every" || -z "$_prompt" ]]; then
+                            tg_send "$chat_id" "Need both <code>every=&lt;duration&gt;</code> and a quoted prompt. Example:\n<code>/schedule add every=12h \"summarize today's transactions\" model=koompi-free</code>" "$thread_id" "HTML"
+                        else
+                            local _out
+                            _out=$(TOOL_action=add TOOL_every="$_every" TOOL_prompt="$_prompt" \
+                                   TOOL_model="$_model" TOOL_provider="$_provider" TOOL_skill="$_skill" \
+                                   TOOL_chat_id="$chat_id" TOOL_thread_id="$thread_id" \
+                                   bash "${DIR}/tools/scheduler.sh" 2>&1)
+                            tg_send "$chat_id" "<pre>${_out}</pre>" "$thread_id" "HTML"
+                        fi
+                        ;;
+                esac
                 ;;
 
             /goal)

@@ -414,6 +414,26 @@
     "toolset": "inspect"
   },
   {
+    "name": "scheduler",
+    "description": "Schedule recurring tasks. Actions: add (create), list (show all for this chat), remove (delete by id), pause, resume. For add: requires `prompt` + `every` (e.g. '12h', '30m', '1d'). Optional model/provider/skill override pins the task to a specific (e.g. cheap) backend instead of the default. The scheduled task fires via the existing queue mechanism — result lands in the same Telegram chat as a normal turn, tagged [SCHEDULED #N].",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": {"type": "string", "enum": ["add", "list", "remove", "pause", "resume"]},
+        "every": {"type": "string", "description": "Interval like '12h', '30m', '2h30m', '1d'. Min 60s. Required for add."},
+        "prompt": {"type": "string", "description": "What the agent should do each time. Required for add."},
+        "model": {"type": "string", "description": "Pin to a specific model (e.g. 'koompi-free') — optional, otherwise uses session default."},
+        "provider": {"type": "string", "description": "Pin to a specific provider (e.g. 'kconsole') — optional."},
+        "skill": {"type": "string", "description": "Pin to a specific skill — optional."},
+        "chat_id": {"type": "string", "description": "Telegram chat to deliver results to. Defaults to current chat."},
+        "thread_id": {"type": "string", "description": "Telegram thread/topic. Defaults to current."},
+        "id": {"type": "integer", "description": "Task id. Required for remove/pause/resume."}
+      },
+      "required": ["action"]
+    },
+    "toolset": "meta"
+  },
+  {
     "name": "access_control",
     "description": "Manage whitelist. Actions: whitelist (add), revoke (remove), sethome (set home_chat), log (show last 20 changes). Every mutation auto-logged to brain/state/access_control.log — use action=log to find who was last added/removed instead of grepping session history.",
     "parameters": {

@@ -192,4 +192,71 @@ else:
     echo "$_now" > "$MEMORY_CONSOLIDATE_MARKER"
 fi
 
+
+# 5. Scheduled tasks (user-defined recurring jobs from /schedule + scheduler tool)
+# Runs each tick: asks the scheduler tool which tasks are due, fires them one by
+# one with their pinned model/provider/skill via env override. After each run
+# reports success/failure back so the scheduler can update next_run + handle the
+# retry-once-then-alert policy.
+_SCHED_FIRES=$(TOOL_action=run_due bash "${DIR}/tools/scheduler.sh" 2>/dev/null)
+if [[ -n "$_SCHED_FIRES" ]]; then
+    # Need bot.sh runtime for run_agent — but cron runs separately. So instead
+    # of invoking run_agent directly, we *inject* the prompt into the session's
+    # queue file. The next time the bot polls and the lock frees, run_agent
+    # picks it up. This is the same mechanism /queue uses.
+    #
+    # Trade-off: scheduled task fires on the bot's next idle cycle, not exactly
+    # at the scheduled second. Acceptable — cron tick is 5min anyway.
+
+    while IFS=$'\t' read -r _marker _id _chat_id _thread_id _skill _model _provider _prompt; do
+        [[ "$_marker" != "FIRE" ]] && continue
+        [[ -z "$_id" || -z "$_chat_id" ]] && continue
+
+        # Build a session_id matching router.sh's scheme
+        _sid="tg_${_chat_id}"
+        [[ -n "$_thread_id" ]] && _sid="tg_${_chat_id}_${_thread_id}"
+
+        # Mark task done first (optimistic). If queueing fails we'll mark_failed.
+        # The "did it actually produce useful output" question is the user's
+        # business — we just confirm we put it in motion.
+        _queue_file="${DIR}/brain/state/queue_${_sid}"
+        mkdir -p "$(dirname "$_queue_file")"
+        # Tag the message so the agent and the user can see this came from
+        # the scheduler, not a real Telegram message.
+        printf '%s\n' "[SCHEDULED #${_id}] ${_prompt}" >> "$_queue_file" \
+            && TOOL_action=mark_done TOOL_id="$_id" bash "${DIR}/tools/scheduler.sh" >/dev/null 2>&1 \
+            && echo "[$(date)] Scheduler: fired task #${_id} → queue_${_sid}" \
+            || {
+                _result=$(TOOL_action=mark_failed TOOL_id="$_id" TOOL_reason="queue_write_failed" bash "${DIR}/tools/scheduler.sh" 2>/dev/null)
+                echo "[$(date)] Scheduler: task #${_id} failed: $_result"
+                # Alert TG_ADMIN on PAUSED state (after 2 consecutive failures)
+                if [[ "$_result" == PAUSED* ]]; then
+                    _home_chat=$(python3 -c "import json; print(json.load(open('${DIR}/brain/config.json')).get('home_chat',''))" 2>/dev/null)
+                    if [[ -n "$_home_chat" && -n "${TG_TOKEN:-}" ]]; then
+                        curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+                            -H "Content-Type: application/json" \
+                            -d "{\"chat_id\":\"$_home_chat\",\"text\":\"⏸ <b>Scheduled task #${_id} paused</b> after 2 consecutive failures. Use <code>/schedule resume ${_id}</code> to re-enable.\",\"parse_mode\":\"HTML\"}" \
+                            > /dev/null 2>&1 || true
+                    fi
+                fi
+            }
+
+        # Store the model/provider override so the bot picks it up when run_agent
+        # processes this queued message. We write a sidecar that 24_agent_loop.sh
+        # reads at session-start time (alongside model_${sid}).
+        # NOTE: this overrides the session model for this single turn only —
+        # cleaned up by run_agent after the queued message is consumed.
+        if [[ -n "$_model" || -n "$_provider" || -n "$_skill" ]]; then
+            _override_file="${DIR}/brain/state/sched_override_${_sid}_${_id}.json"
+            python3 -c "
+import json, os, sys
+d = {}
+if os.environ.get('M'): d['model'] = os.environ['M']
+if os.environ.get('P'): d['provider'] = os.environ['P']
+if os.environ.get('S'): d['skill'] = os.environ['S']
+open(sys.argv[1],'w').write(json.dumps(d))" "$_override_file" M="$_model" P="$_provider" S="$_skill"
+        fi
+    done <<< "$_SCHED_FIRES"
+fi
+
 echo "[$(date)] Maintenance complete."

@@ -315,6 +315,7 @@ tg_set_commands() {
         {"command": "queue",    "description": "Queue a message for after current run: /queue <text>"},
         {"command": "btw",      "description": "Ephemeral side question: /btw <text> — uses session as context, does not interrupt or persist"},
         {"command": "goal",     "description": "Autonomous goal loop: /goal <prose> (or status|stop|pause|resume|max <n>)"},
+        {"command": "schedule", "description": "Recurring task: /schedule add every=12h \"prompt\" [model=X]. Also list|remove|pause|resume"},
         {"command": "model",    "description": "Switch model this session: /model <name>"},
         {"command": "history",  "description": "Show recent conversation turns: /history [n]"},
         {"command": "topic",    "description": "Name this thread/topic: /topic <name>"},

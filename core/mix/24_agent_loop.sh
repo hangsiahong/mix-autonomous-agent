@@ -256,6 +256,42 @@ print('enabled' if has_vision else 'disabled (model is text-only)')
             [[ -n "$_session_model" ]] && MODEL="$_session_model"
         fi
 
+        # Per-task override for scheduled jobs: when input starts with
+        # "[SCHEDULED #N]" (set by extensions/cron/run.sh), look for the
+        # sidecar at brain/state/sched_override_<sid>_<N>.json and apply
+        # model/provider/skill for THIS turn only. Sidecar is deleted after
+        # read so subsequent turns return to normal behaviour.
+        if [[ "$input" =~ ^\[SCHEDULED\ \#([0-9]+)\] ]]; then
+            local _sched_id="${BASH_REMATCH[1]}"
+            local _override_file="${DIR}/brain/state/sched_override_${session_id}_${_sched_id}.json"
+            if [[ -f "$_override_file" ]]; then
+                local _ov_model _ov_provider _ov_skill
+                { read _ov_model; read _ov_provider; read _ov_skill; } < <(python3 -c "
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    print(d.get('model',''))
+    print(d.get('provider',''))
+    print(d.get('skill',''))
+except: print(); print(); print()" "$_override_file" 2>/dev/null)
+                [[ -n "$_ov_model" ]] && { echo "AMA: scheduled task #${_sched_id} → model=$_ov_model" >&2; MODEL="$_ov_model"; }
+                if [[ -n "$_ov_provider" && "$_ov_provider" != "$PROVIDER" ]]; then
+                    echo "AMA: scheduled task #${_sched_id} → provider=$_ov_provider" >&2
+                    PROVIDER="$_ov_provider"
+                    # Re-activate the provider so BASE_URL / API_KEY get updated.
+                    # Best-effort: if activate fails the turn falls back to whatever
+                    # state the previous provider left us in (still usable, just not
+                    # the cheap one we wanted).
+                    if type "${PROVIDER}_activate" >/dev/null 2>&1; then
+                        "${PROVIDER}_activate" >/dev/null 2>&1 || \
+                            echo "AMA: warning — ${PROVIDER}_activate failed; continuing with stale env" >&2
+                    fi
+                fi
+                [[ -n "$_ov_skill" ]] && { echo "AMA: scheduled task #${_sched_id} → skill=$_ov_skill" >&2; skill="$_ov_skill"; }
+                rm -f "$_override_file"
+            fi
+        fi
+
         # Ensure session exists in SQLite DB (hermes: create_session is idempotent)
         ( python3 tools/session_db.py create "$session_id" "${user_id:-}" "${MODEL:-}" \
             > /dev/null 2>&1 & )
