@@ -61,6 +61,20 @@ print(json.dumps(d))
     save_config "$new_config"
 }
 
+remove_from_whitelist() {
+    local id="$1"
+    local config=$(load_config)
+    local new_config
+    new_config=$(ID="$id" python3 -c "
+import json, os, sys
+d = json.load(sys.stdin)
+wl = d.get('whitelist', [])
+d['whitelist'] = [x for x in wl if x != os.environ['ID']]
+print(json.dumps(d))
+" <<< "$config")
+    save_config "$new_config"
+}
+
 set_home_chat() {
     local id="$1"
     local config=$(load_config)
