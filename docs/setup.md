@@ -2,6 +2,27 @@
 
 Detailed installation + configuration. For a one-command quickstart see [README.md](../README.md).
 
+## TL;DR — the wizard
+
+```bash
+git clone https://github.com/hangsiahong/mix-autonomous-agent.git ama
+cd ama
+bash scripts/setup.sh
+```
+
+`scripts/setup.sh` is the interactive setup wizard. It:
+
+1. Checks system deps (bash, python3, curl, jq, sqlite3, flock).
+2. Asks how you want to run AMA: **native**, **pm2**, or **Docker**.
+3. Creates `./venv` and installs `requirements.txt` (skipped for Docker — the image builds it).
+4. Installs **pm2** globally via npm if you picked pm2 mode and it isn't present.
+5. Prompts for your **Telegram bot token** + **admin user ID** (validates the format).
+6. Walks you through one of: **Google Vertex AI** (offers to run `gcloud auth application-default login`), **Google AI Studio**, **GitHub Copilot** (OAuth happens later via `/copilot_login` in Telegram), **KConsole**, **Anthropic**, **Ollama**, or any **OpenAI-compatible** provider.
+7. Writes `.env` (mode 0600) and `brain/config.json` with your admin ID whitelisted. Existing files are backed up to `.env.backup-<timestamp>` first.
+8. Optionally copies `SOUL.md.example → SOUL.md` for a custom persona.
+
+Re-run the wizard any time — it never silently overwrites your config. The sections below describe what the wizard does behind the scenes if you'd rather configure by hand.
+
 ## Prerequisites
 
 | Tool | Why | How to check |

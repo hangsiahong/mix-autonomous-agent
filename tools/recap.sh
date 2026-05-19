@@ -4,25 +4,33 @@
 
 session_id="${TOOL_session_id}"
 last_n="${TOOL_last_n:-20}"
-
-# If no session_id provided, try to find the current active one from environment or state
-if [[ -z "$session_id" ]]; then
-    # Look for the most recently modified history file that has content
-    session_id=$(find brain/state/ brain/state/sessions/ -name "history_*.json" -size +10c -printf "%T@ %p\n" 2>/dev/null | sort -n | tail -n 1 | awk '{print $2}' | sed 's/.*history_//;s/\.json//')
-fi
+history_file=""
 
 if [[ -z "$session_id" ]]; then
-    echo "Error: No session_id provided and could not detect active session."
-    exit 1
+    # "Recap my last session" with no argument: prefer the most-recently
+    # ARCHIVED history (brain/state/sessions/) over the active one. After
+    # /new the active history is fresh/empty, so picking it gives garbage.
+    history_file=$(find brain/state/sessions/ -name "history_*.json" -size +10c \
+                   -printf "%T@ %p\n" 2>/dev/null | sort -n | tail -1 | awk '{print $2}')
+    if [[ -z "$history_file" ]]; then
+        # No archives yet — fall back to the active session.
+        history_file=$(find brain/state/ -maxdepth 1 -name "history_*.json" -size +10c \
+                       -printf "%T@ %p\n" 2>/dev/null | sort -n | tail -1 | awk '{print $2}')
+    fi
+    if [[ -z "$history_file" ]]; then
+        echo "Error: No session history found yet."
+        exit 1
+    fi
+else
+    history_file="brain/state/history_${session_id}.json"
+    if [[ ! -f "$history_file" ]]; then
+        # Maybe an archived sid like tg_123_1779201488 — look in sessions/.
+        history_file="brain/state/sessions/history_${session_id}.json"
+    fi
 fi
 
-history_file="brain/state/history_${session_id}.json"
 if [[ ! -f "$history_file" ]]; then
-    history_file="brain/state/sessions/history_${session_id}.json"
-fi
-
-if [[ ! -f "$history_file" ]]; then
-    echo "Error: Session history file for '$session_id' not found."
+    echo "Error: Session history file for '${session_id:-(auto)}' not found."
     exit 1
 fi
 

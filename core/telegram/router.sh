@@ -432,11 +432,15 @@ open(sys.argv[1],'w').write(json.dumps(d, separators=(',',':')))" "$_gfile" 2>/d
                 ;;
             /reset|/new)
                 local _hist_file="${DIR}/brain/state/history_${session_id}.json"
+                local _archive_path=""
+                local _archive_sid=""
                 if [[ -f "$_hist_file" ]]; then
                     local _archive_dir="${DIR}/brain/state/sessions"
                     mkdir -p "$_archive_dir"
                     local _ts; _ts=$(date +%s)
-                    cp "$_hist_file" "${_archive_dir}/history_${session_id}_${_ts}.json"
+                    _archive_path="${_archive_dir}/history_${session_id}_${_ts}.json"
+                    _archive_sid="${session_id}_${_ts}"
+                    cp "$_hist_file" "$_archive_path"
                     rm -f "$_hist_file"
                 fi
                 # End session in SQLite DB (hermes: end_reason="reset")
@@ -448,6 +452,13 @@ open(sys.argv[1],'w').write(json.dumps(d, separators=(',',':')))" "$_gfile" 2>/d
                       "${DIR}/brain/state/active_skill_${session_id}" \
                       "${DIR}/brain/state/prefetch_${session_id}" \
                       "${DIR}/brain/state/goal_${session_id}.json" 2>/dev/null || true
+                # Generate the session recap in the background against the
+                # just-archived history file (uses `( cmd & )` detach idiom so
+                # the work survives the dispatcher's EXIT trap).
+                if [[ -n "$_archive_path" && -n "$_archive_sid" ]]; then
+                    ( ( save_session_recap "$_archive_sid" "$_archive_path" \
+                          2>&1 | sed 's/^/[recap] /' >> "${DIR}/logs/recap.log" ) & )
+                fi
                 tg_send "$chat_id" "🆕 New session started. Past conversations are archived and searchable with \`session_search\`." "$thread_id"
                 ;;
 
