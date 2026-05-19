@@ -261,9 +261,17 @@ print('enabled' if has_vision else 'disabled (model is text-only)')
         # sidecar at brain/state/sched_override_<sid>_<N>.json and apply
         # model/provider/skill for THIS turn only. Sidecar is deleted after
         # read so subsequent turns return to normal behaviour.
+        #
+        # Logging to logs/scheduler_debug.log because stderr goes to the
+        # terminal where the bot was started — invisible if launched by pm2
+        # or detached. This file is the single source of truth for
+        # "did the override fire and with what values".
+        local _sched_log="${DIR}/logs/scheduler_debug.log"
+        mkdir -p "$(dirname "$_sched_log")"
         if [[ "$input" =~ ^\[SCHEDULED\ \#([0-9]+)\] ]]; then
             local _sched_id="${BASH_REMATCH[1]}"
             local _override_file="${DIR}/brain/state/sched_override_${session_id}_${_sched_id}.json"
+            echo "[$(date '+%H:%M:%S')] sched-detect #${_sched_id} sid=${session_id} override=${_override_file}" >> "$_sched_log"
             if [[ -f "$_override_file" ]]; then
                 local _ov_model _ov_provider _ov_skill
                 { read _ov_model; read _ov_provider; read _ov_skill; } < <(python3 -c "
@@ -274,21 +282,30 @@ try:
     print(d.get('provider',''))
     print(d.get('skill',''))
 except: print(); print(); print()" "$_override_file" 2>/dev/null)
-                [[ -n "$_ov_model" ]] && { echo "AMA: scheduled task #${_sched_id} → model=$_ov_model" >&2; MODEL="$_ov_model"; }
+                echo "[$(date '+%H:%M:%S')] sched-override #${_sched_id} model=${_ov_model} provider=${_ov_provider} skill=${_ov_skill}  (was MODEL=${MODEL} PROVIDER=${PROVIDER})" >> "$_sched_log"
+                [[ -n "$_ov_model" ]] && { MODEL="$_ov_model"; }
                 if [[ -n "$_ov_provider" && "$_ov_provider" != "$PROVIDER" ]]; then
-                    echo "AMA: scheduled task #${_sched_id} → provider=$_ov_provider" >&2
                     PROVIDER="$_ov_provider"
-                    # Re-activate the provider so BASE_URL / API_KEY get updated.
-                    # Best-effort: if activate fails the turn falls back to whatever
-                    # state the previous provider left us in (still usable, just not
-                    # the cheap one we wanted).
                     if type "${PROVIDER}_activate" >/dev/null 2>&1; then
-                        "${PROVIDER}_activate" >/dev/null 2>&1 || \
-                            echo "AMA: warning — ${PROVIDER}_activate failed; continuing with stale env" >&2
+                        "${PROVIDER}_activate" >/dev/null 2>&1 \
+                            && echo "[$(date '+%H:%M:%S')] sched-activate #${_sched_id} ${PROVIDER}_activate OK  BASE_URL=${BASE_URL}" >> "$_sched_log" \
+                            || echo "[$(date '+%H:%M:%S')] sched-activate #${_sched_id} ${PROVIDER}_activate FAILED" >> "$_sched_log"
+                    else
+                        echo "[$(date '+%H:%M:%S')] sched-activate #${_sched_id} no ${PROVIDER}_activate function exists" >> "$_sched_log"
                     fi
                 fi
-                [[ -n "$_ov_skill" ]] && { echo "AMA: scheduled task #${_sched_id} → skill=$_ov_skill" >&2; skill="$_ov_skill"; }
+                # Clear stale provider-specific env that might mangle the new request.
+                # _GOOGLE_VERTEX_MODEL_PREFIX gets set by google_activate to "google/"
+                # and prefixes the model name in the payload — bad when we just switched
+                # to kconsole (would send model="google/koompi-free" to KConsole).
+                if [[ "$PROVIDER" != "google" ]]; then
+                    unset _GOOGLE_VERTEX_MODEL_PREFIX
+                fi
+                [[ -n "$_ov_skill" ]] && skill="$_ov_skill"
+                echo "[$(date '+%H:%M:%S')] sched-applied #${_sched_id} → MODEL=${MODEL} PROVIDER=${PROVIDER} BASE_URL=${BASE_URL:-?}" >> "$_sched_log"
                 rm -f "$_override_file"
+            else
+                echo "[$(date '+%H:%M:%S')] sched-detect #${_sched_id} NO sidecar file — override skipped" >> "$_sched_log"
             fi
         fi
 
