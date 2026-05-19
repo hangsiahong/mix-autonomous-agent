@@ -60,7 +60,12 @@ for root, src in roots:
             has_prompt = os.path.exists(os.path.join(path, 'prompt.txt'))
             has_tools  = os.path.exists(os.path.join(path, 'tools.json'))
             rows.append(f'  {name} [{src}]' + (' +tools' if has_tools and open(os.path.join(path,'tools.json')).read().strip() not in ('[]','') else ''))
-print('\n'.join(rows) if rows else '  (no skills found)')
+n = len(rows)
+if n == 0:
+    print('0 skills installed.')
+else:
+    print(f'{n} skill{\"s\" if n!=1 else \"\"} installed:')
+    print('\n'.join(rows))
 "
 
 elif [[ "$action" == "create" ]]; then

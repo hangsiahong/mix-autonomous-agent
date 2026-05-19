@@ -203,6 +203,31 @@ line = (
 print(line)
 " 2>/dev/null)
         [[ -n "$_budget_line" ]] && context_prompt+="${_budget_line}\n"
+
+        # Status-query circuit breaker. When the user asks a count/list/status
+        # question, the right answer is "one authoritative tool call, then
+        # reply" — not an investigation. Today's 96-second scheduler-list
+        # incident showed the agent will rationalise a 5-tool deep dive even
+        # with the prompt rule. Two-layer enforcement:
+        #   1. Inject a hard "MAX 2 tool calls" bullet at the most recent
+        #      (highest-attention) position in context.
+        #   2. Locally clamp MAX_TURNS=2 so the loop forces a final answer
+        #      after at most 2 tool batches even if the model keeps trying.
+        # The patterns are intentionally simple — false positives just mean
+        # the agent has to answer in 2 turns instead of MAX_TURNS, which is
+        # fine for genuinely simple queries that happen to use these words.
+        local _status_query=0
+        if [[ "$input" =~ ^[Hh]ow\ (many|much)\  ]] || \
+           [[ "$input" =~ ^[Ll]ist\  ]] || \
+           [[ "$input" =~ ^[Ss]how\ (me\ )? ]] || \
+           [[ "$input" =~ ^[Ww]hat.{0,3}s\ (my|your|the|our|on)\  ]] || \
+           [[ "$input" =~ ^[Dd]o\ I\ have\  ]] || \
+           [[ "$input" =~ ^[Ii]s\ .+\ (running|active|enabled|on|set)[\.\?\!\ ]*$ ]] || \
+           [[ "$input" =~ ^[Cc]ount\  ]]; then
+            _status_query=1
+            MAX_TURNS=2
+            context_prompt+="- **STATUS QUERY** (detected from input pattern): answer in **1 tool call** and reply. Do NOT verify with bash/ls/cat after the authoritative tool returns. Trust the result. MAX_TURNS clamped to 2 — second turn must produce final answer.\n"
+        fi
         
         if [[ -z "$skill" ]]; then
             local topic_config=$(get_topic_config "$chat_id" "$thread_id")

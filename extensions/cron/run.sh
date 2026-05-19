@@ -81,10 +81,14 @@ find "${DIR}/brain/state" -maxdepth 1 -name "passive_*.jsonl" -mmin +1440 -delet
 for logfile in "${DIR}/brain/state/trajectories.jsonl" \
                "${DIR}/brain/state/tool_usage.jsonl" \
                "${DIR}/brain/state/usage_log.jsonl" \
-               "${DIR}/brain/state/error_log.jsonl"; do
+               "${DIR}/brain/state/error_log.jsonl" \
+               "${DIR}/logs/curator.log" \
+               "${DIR}/logs/scheduler_debug.log" \
+               "${DIR}/logs/bot.log"; do
     if [[ -f "$logfile" ]]; then
         local_keep=500
         [[ "$logfile" == *tool_usage* || "$logfile" == *error_log* ]] && local_keep=200
+        [[ "$logfile" == *.log ]] && local_keep=300
         line_count=$(wc -l < "$logfile")
         if [[ $line_count -gt $((local_keep + 100)) ]]; then
             tail -n "$local_keep" "$logfile" > "${logfile}.tmp" && mv "${logfile}.tmp" "$logfile"
@@ -92,6 +96,113 @@ for logfile in "${DIR}/brain/state/trajectories.jsonl" \
         fi
     fi
 done
+
+# 2c. Operational debt — closes today's friction points (zombie bots, stale
+# pids, orphan queues, dead locks). All deterministic, all cheap. Each block
+# is idempotent: if there's nothing to clean, no-op.
+
+# Zombie bot.sh: any `bash bot.sh` process not matching brain/state/bot.pid.
+# bot.sh's startup guard already does this on launch — this cron pass catches
+# the case where the user spawns a duplicate manually and forgets.
+if [[ -f "${DIR}/brain/state/bot.pid" ]]; then
+    _canonical_pid=$(cat "${DIR}/brain/state/bot.pid" 2>/dev/null)
+    _zombies=$(pgrep -f "bash ${DIR}/bot.sh\|bash bot.sh" 2>/dev/null | grep -v "^${_canonical_pid}$" || true)
+    # Also filter out the cron loop's bash subshell (child of canonical bot) — pstree style
+    if [[ -n "$_zombies" && -n "$_canonical_pid" ]]; then
+        # Get bot's direct children so we don't kill our own cron-loop sibling
+        _bot_kids=$(ps --ppid "$_canonical_pid" -o pid= 2>/dev/null | tr -s ' \n' ' ')
+        _grandkids=""
+        for _k in $_bot_kids; do
+            _grandkids+="$(ps --ppid "$_k" -o pid= 2>/dev/null | tr -s ' \n' ' ')"
+        done
+        _safe_kids=" $_bot_kids $_grandkids "
+        for _zpid in $_zombies; do
+            if [[ "$_safe_kids" == *" $_zpid "* ]]; then continue; fi
+            kill -TERM "$_zpid" 2>/dev/null && \
+                echo "[$(date)] Killed zombie bot.sh process $_zpid (not bot.pid=$_canonical_pid)"
+        done
+    fi
+fi
+
+# Stale run_<sid>.pid: agent worker pid files whose process is dead. Left
+# behind when a worker dies mid-turn or gets SIGKILL'd. Causes router's
+# /stop and /status commands to think there's an active agent when there
+# isn't.
+for _pf in "${DIR}/brain/state/"run_*.pid; do
+    [[ -f "$_pf" ]] || continue
+    _pid_data=$(cat "$_pf" 2>/dev/null)
+    _agent_pid=$(echo "$_pid_data" | cut -d'|' -f1)
+    if [[ -n "$_agent_pid" ]] && ! kill -0 "$_agent_pid" 2>/dev/null; then
+        rm -f "$_pf"
+        echo "[$(date)] Cleaned stale run pid: $(basename "$_pf") (pid $_agent_pid dead)"
+    fi
+done
+
+# Orphan queue files: a queue_<sid> file with no recent activity (>2h old)
+# and no matching live history. Means session abandoned mid-queue. Drain it.
+find "${DIR}/brain/state" -maxdepth 1 -name "queue_*" -type f -mmin +120 2>/dev/null | while read -r _qf; do
+    rm -f "$_qf" && echo "[$(date)] Drained orphan queue: $(basename "$_qf") (idle >2h)"
+done
+
+# Orphan sched_override sidecars: scheduler.sh `remove` already cleans them,
+# but if the user manually edits scheduled_tasks.json, sidecars linger.
+if [[ -f "${DIR}/brain/state/scheduled_tasks.json" ]]; then
+    _active_ids=$(python3 -c "
+import json
+try:
+    print(' '.join(str(t.get('id','')) for t in json.load(open('${DIR}/brain/state/scheduled_tasks.json'))))
+except: pass" 2>/dev/null)
+    for _sf in "${DIR}/brain/state/"sched_override_*.json; do
+        [[ -f "$_sf" ]] || continue
+        # extract id (last _N.json before extension)
+        _sf_id=$(basename "$_sf" .json | grep -oE '_[0-9]+$' | tr -d '_')
+        [[ -z "$_sf_id" ]] && continue
+        if ! echo " $_active_ids " | grep -q " $_sf_id "; then
+            rm -f "$_sf" && echo "[$(date)] Cleaned orphan sidecar: $(basename "$_sf") (no matching task id)"
+        fi
+    done
+fi
+
+# Stale session locks: brain/state/locks/<sid>.lock files. flock releases on
+# process exit but the FILE persists. If the locked-fd holder is dead, the
+# lock is already released — we just remove the now-empty file.
+for _lf in "${DIR}/brain/state/locks/"*.lock; do
+    [[ -f "$_lf" ]] || continue
+    # If no process has the file open (lsof empty) AND it's been touched
+    # >1h ago, safe to remove.
+    if ! lsof "$_lf" >/dev/null 2>&1; then
+        if [[ $(find "$_lf" -mmin +60 2>/dev/null) ]]; then
+            rm -f "$_lf" && echo "[$(date)] Removed unheld session lock: $(basename "$_lf")"
+        fi
+    fi
+done
+
+# Stale .cron.lock: ours specifically. If our exec 9>$LOCK at the top of
+# this script took the lock and we're still running, no other process holds
+# it. If a prior cron crashed mid-tick, the lock file persists but isn't
+# held — flock would have re-acquired it for us. So this file is fine as-is;
+# only clean it if it's a stale pre-fix-era leftover (older than 1 day).
+if [[ -f "${DIR}/brain/state/.cron.lock" ]]; then
+    if [[ $(find "${DIR}/brain/state/.cron.lock" -mtime +1 2>/dev/null) ]]; then
+        # Won't actually free anything we're using — we hold the lock as fd 9
+        # within this script's process, and removing a held file leaves the
+        # lock active. But it cleans the file timestamp.
+        :  # no-op, kept here as documentation
+    fi
+fi
+
+# Orphan prefetch caches: brain/state/prefetch_<sid> files older than 24h
+find "${DIR}/brain/state" -maxdepth 1 -name "prefetch_*" -mmin +1440 -delete 2>/dev/null
+
+# Old archived session histories: brain/state/sessions/history_*_*.json
+# accumulate forever. Keep last 30 days.
+if [[ -d "${DIR}/brain/state/sessions" ]]; then
+    _old=$(find "${DIR}/brain/state/sessions" -maxdepth 1 -name "history_*.json" -mtime +30 2>/dev/null | wc -l)
+    if [[ "$_old" -gt 0 ]]; then
+        find "${DIR}/brain/state/sessions" -maxdepth 1 -name "history_*.json" -mtime +30 -delete 2>/dev/null
+        echo "[$(date)] Archived sessions cleanup: removed $_old history file(s) older than 30 days"
+    fi
+fi
 
 # 3. Monthly memory pruning — remove memories unused for 30+ days
 MEMORY_PRUNE_MARKER="${DIR}/brain/state/.memory_last_pruned"
