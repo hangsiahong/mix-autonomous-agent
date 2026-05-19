@@ -39,9 +39,9 @@ copilot_login() {
   }
 
   local device_code user_code verification_uri
-  device_code=$(printf '%s' "$resp" | python3 -c 'import json,sys;print(json.load(sys.stdin)["device_code"])' 2>/dev/null)
-  user_code=$(printf '%s' "$resp" | python3 -c 'import json,sys;print(json.load(sys.stdin)["user_code"])' 2>/dev/null)
-  verification_uri=$(printf '%s' "$resp" | python3 -c 'import json,sys;print(json.load(sys.stdin)["verification_uri"])' 2>/dev/null)
+  device_code=$(python3 -c 'import json,sys;print(json.loads(open(sys.argv[1]).read())["device_code"])' <(printf '%s' "$resp") 2>/dev/null)
+  user_code=$(python3 -c 'import json,sys;print(json.loads(open(sys.argv[1]).read())["user_code"])' <(printf '%s' "$resp") 2>/dev/null)
+  verification_uri=$(python3 -c 'import json,sys;print(json.loads(open(sys.argv[1]).read())["verification_uri"])' <(printf '%s' "$resp") 2>/dev/null)
 
   if [ -z "$device_code" ] || [ -z "$user_code" ]; then
     ui_msg "  Failed to get device code from GitHub.\nResponse: $resp"
@@ -80,7 +80,7 @@ copilot_login() {
       -d "client_id=${_COPILOT_CLIENT_ID}&device_code=${device_code}&grant_type=urn:ietf:params:oauth:grant-type:device_code" 2>/dev/null) || true
 
     local error
-    error=$(printf '%s' "$poll_resp" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("error",""))' 2>/dev/null)
+    error=$(python3 -c 'import json,sys;print(json.loads(open(sys.argv[1]).read()).get("error",""))' <(printf '%s' "$poll_resp") 2>/dev/null)
 
     if [ "$error" = "authorization_pending" ]; then
       continue
@@ -91,7 +91,7 @@ copilot_login() {
       ui_msg "  Device code expired."
       return 1
     elif [ -z "$error" ]; then
-      gh_token=$(printf '%s' "$poll_resp" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("access_token",""))' 2>/dev/null)
+      gh_token=$(python3 -c 'import json,sys;print(json.loads(open(sys.argv[1]).read()).get("access_token",""))' <(printf '%s' "$poll_resp") 2>/dev/null)
       if [ -n "$gh_token" ]; then
         break
       fi
@@ -145,12 +145,12 @@ copilot_get_api_token() {
   }
 
   local api_token api_endpoint
-  api_token=$(printf '%s' "$resp" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("token",""))' 2>/dev/null)
-  api_endpoint=$(printf '%s' "$resp" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("endpoints",{}).get("api",""))' 2>/dev/null)
+  api_token=$(python3 -c 'import json,sys;print(json.loads(open(sys.argv[1]).read()).get("token",""))' <(printf '%s' "$resp") 2>/dev/null)
+  api_endpoint=$(python3 -c 'import json,sys;d=json.loads(open(sys.argv[1]).read());print(d.get("endpoints",{}).get("api",""))' <(printf '%s' "$resp") 2>/dev/null)
 
   if [ -z "$api_token" ]; then
     local err
-    err=$(printf '%s' "$resp" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("message","unknown"))' 2>/dev/null)
+    err=$(python3 -c 'import json,sys;d=json.loads(open(sys.argv[1]).read());print(d.get("message","unknown"))' <(printf '%s' "$resp") 2>/dev/null)
     echo -e "  \033[1;31mCopilot token error: $err\033[0m" >&2
     echo -e "  \033[0;90m(Try: /provider copilot login)\033[0m" >&2
     return 1

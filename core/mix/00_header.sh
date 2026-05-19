@@ -1,3 +1,7 @@
+
+# Fix for "grep: character code point value in \x{} or \o{} is too large"
+# This happens in UTF-8 locales when grep processes binary data or large JSON history files.
+export LC_ALL=C
 # AMA - Autonomous Minimalist Agent
 # Based on Mix Coding Agent
 
@@ -26,3 +30,4 @@ _mix_date_nano() {
     date +%s%N
   fi
 }
+

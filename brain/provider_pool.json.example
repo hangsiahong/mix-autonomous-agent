@@ -1,0 +1,68 @@
+{
+  "_comment": "Copy this to provider_pool.json and replace REPLACE_ME_* values with your real keys. The file is gitignored so your keys never get committed. Remove _comment lines if you want a tidy file.",
+  "strategy": "fallback",
+  "_strategy_options": "fallback (ordered priority) | round-robin (distribute load)",
+  "_tier_note": "Optional 'tier' field: 'fast' (cheap/quick) | 'standard' (default) | 'power' (best quality). Set TASK_TIER=fast env var to prefer fast-tier entries for simple Q&A.",
+  "_thinking_note": "Set THINKING_BUDGET env var per-session: none|low|medium|high. Controls Gemini thinking depth. 'none' is fastest/cheapest.",
+  "pool": [
+    {
+      "label": "Google-1",
+      "provider": "google",
+      "key": "REPLACE_ME_GOOGLE_API_KEY_1",
+      "model": "gemini-3-flash-preview",
+      "tier": "standard"
+    },
+    {
+      "label": "Google-2",
+      "provider": "google",
+      "key": "REPLACE_ME_GOOGLE_API_KEY_2",
+      "model": "gemini-3-flash-preview",
+      "tier": "standard"
+    },
+    {
+      "label": "Anthropic-Claude",
+      "provider": "anthropic",
+      "key": "REPLACE_ME_ANTHROPIC_API_KEY",
+      "model": "claude-sonnet-4-6",
+      "tier": "power",
+      "_note": "Prompt caching enabled automatically — 90% cost reduction on repeated system prompts"
+    },
+    {
+      "label": "Groq-fast",
+      "provider": "groq",
+      "key": "REPLACE_ME_GROQ_API_KEY",
+      "model": "llama-3.3-70b-versatile",
+      "tier": "fast",
+      "_note": "Use for simple Q&A (set TASK_TIER=fast). Very cheap and fast."
+    },
+    {
+      "label": "Z.AI",
+      "provider": "zai",
+      "key": "REPLACE_ME_ZAI_API_KEY",
+      "model": "glm-4-plus",
+      "tier": "standard"
+    },
+    {
+      "label": "DeepSeek",
+      "provider": "deepseek",
+      "key": "REPLACE_ME_DEEPSEEK_API_KEY",
+      "model": "deepseek-chat",
+      "tier": "standard"
+    },
+    {
+      "label": "Copilot",
+      "provider": "copilot",
+      "key": "",
+      "tier": "fast",
+      "_note": "Leave key empty — copilot uses OAuth token from ~/.mix/copilot_github_token"
+    },
+    {
+      "label": "Google-OAuth",
+      "provider": "google_cloudcode",
+      "key": "",
+      "model": "gemini-2.5-flash",
+      "tier": "fast",
+      "_note": "No key needed — uses OAuth token from ~/.mix/google_oauth.json. Run /google_login to authenticate."
+    }
+  ]
+}

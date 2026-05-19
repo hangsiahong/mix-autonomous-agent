@@ -1,4 +1,15 @@
-# Config
+#!/bin/bash
+# core/mix/01_config.sh — provider/model resolution at bot start.
+#
+# Reads PROVIDER, MODEL, BASE_URL, API_KEY, MAX_TURNS etc. from .env, then
+# delegates to `${PROVIDER}_activate` (in core/mix/providers/<name>.sh)
+# to set provider-specific defaults (BASE_URL, auth method, model prefix).
+#
+# Env vars set explicitly BEFORE this file is sourced take precedence over
+# .env values. That's how scheduled-task per-fire overrides work:
+# `MODEL=koompi-free PROVIDER=kconsole bash bot.sh` keeps those values
+# even when .env says otherwise.
+
 WORKDIR="$(pwd)"
 # Save values explicitly passed in the environment (before .env can override them)
 _env_PROVIDER="${PROVIDER:-}"
@@ -26,6 +37,7 @@ MAX_TURNS=30
 MAX_HIST_MSGS=40
 STREAM="${STREAM:-true}"
 GIT_ENABLED=false
+DEFAULT_SKILL="${DEFAULT_SKILL:-ama}"  # loaded when no /skill is active for a session
 
 # Telegram Config
 TG_TOKEN="${TG_TOKEN}"

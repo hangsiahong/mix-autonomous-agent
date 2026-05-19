@@ -11,14 +11,14 @@ check_rate_limit() {
     
     local key="${provider}_${model}"
     local backoff_until
-    backoff_until=$(KEY="$key" python3 -c "
-import json, os
+    backoff_until=$(python3 -c "
+import json, sys
 try:
     d = json.load(open('$RL_STATE_FILE'))
-    print(d.get(os.environ['KEY'], 0) or 0)
+    print(d.get(sys.argv[1], 0) or 0)
 except:
     print(0)
-" 2>/dev/null)
+" "$key" 2>/dev/null)
     backoff_until=$(( ${backoff_until:-0} + 0 ))  # coerce to int
     local now=$(date +%s)
     
@@ -31,22 +31,26 @@ except:
 }
 
 mark_rate_limited() {
+    # _AMA_NO_RATE_MARK=1: background tasks (reflection, recap) set this so their
+    # 429s don't poison the rate limit state for the main agent turn.
+    [[ "${_AMA_NO_RATE_MARK:-0}" == "1" ]] && return 0
+
     local provider="$1"
     local model="$2"
     local delay="${3:-60}"
-    
+
     mkdir -p "brain/state"
     [ ! -f "$RL_STATE_FILE" ] && echo "{}" > "$RL_STATE_FILE"
-    
+
     local key="${provider}_${model}"
     local backoff_until=$(( $(date +%s) + delay ))
     
-    KEY="$key" BU="$backoff_until" python3 -c "
-import json, os
+    python3 -c "
+import json, sys
 f = '$RL_STATE_FILE'
 try: d = json.load(open(f))
 except: d = {}
-d[os.environ['KEY']] = int(os.environ['BU'])
+d[sys.argv[1]] = int(sys.argv[2])
 open(f, 'w').write(json.dumps(d))
-"
+" "$key" "$backoff_until"
 }

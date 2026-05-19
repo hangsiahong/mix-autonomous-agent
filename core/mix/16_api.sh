@@ -1,3 +1,27 @@
+#!/bin/bash
+# core/mix/16_api.sh — payload building + non-streaming API call.
+#
+# `_api_build_payload` is the single source of truth for what gets sent to
+# the LLM each turn. It assembles:
+#   - System prompt (brain/system_prompt.md), with SOUL.md persona, todo
+#     plan, MEMORY.md/USER.md snapshots, skill index, recent recaps, and
+#     active skill prompt all stitched in
+#   - Tools schema (brain/tools.json filtered by active toolsets + skill
+#     extras, deduped by name)
+#   - History (filtered through `${PROVIDER}_filter_history` for
+#     provider-specific shape)
+#   - Memory-prefetch context injected into the most recent user message
+#   - Anthropic prompt caching (`cache_control: ephemeral`) when provider=anthropic
+#
+# `call_api` is the non-streaming caller — used by reflection, curator,
+# title generation, compression, /btw, /goal judge. For streaming see
+# 18_streaming_api_call.sh.
+#
+# Error handling: every non-200 response is classified by
+# 34_error_classifier.sh; the dispatched action (rotate_pool / switch_model /
+# disable_thinking / compress / fail_user / fail / retry_after_delay) is
+# applied before the next attempt. See that file for the full taxonomy.
+
 # Prompt injection scanner — blocks obvious attacks in context files before injection
 _scan_for_injection() {
     local content="$1"
@@ -46,8 +70,20 @@ _api_build_payload() {
   if [[ -n "$sys_prompt_override" ]]; then
     system_prompt="$sys_prompt_override"
   else
-    system_prompt=$(cat brain/system_prompt.txt)
-    _scan_for_injection "$system_prompt" "brain/system_prompt.txt" || system_prompt="[System prompt blocked due to injection pattern detected]"
+    system_prompt=$(cat brain/system_prompt.md)
+    _scan_for_injection "$system_prompt" "brain/system_prompt.md" || system_prompt="[System prompt blocked due to injection pattern detected]"
+
+    # NOTE on caching: anything injected into `system_prompt` becomes part of
+    # the Vertex `cachedContents` prefix (see tools/google_cache.py). The cache
+    # key is sha256(systemInstruction + tools + model). If any part of the
+    # systemInstruction text changes per turn, the cache effectively dies.
+    #
+    # Things that USED to be injected here but moved to per-turn user context
+    # (so the cache stays warm across turns):
+    #   - Current date/time (was: `Current date and time: ...`)
+    #   - Current working directory (was: `Current directory: ...`)
+    # 24_agent_loop.sh now puts both into the [SYSTEM: Context Updated] block
+    # appended to the user's latest message.
 
     # Inject SOUL.md persona (user-editable, loaded fresh each session — hermes pattern)
     if [[ -f "SOUL.md" && -s "SOUL.md" ]]; then
@@ -60,21 +96,109 @@ _api_build_payload() {
         fi
     fi
 
-    # Inject curated memory snapshot (frozen at session start — stable prefix cache)
+    # Inject active todo/plan list (state awareness: LLM sees its own checklist every turn)
+  # Prevents the "forgot I tried this 3 turns ago" failure mode
+  local _todo_block=""
+  for _todo_file in "brain/state/todo_default.json" "brain/state/todo_${session_id:-unknown}.json"; do
+    if [[ -f "$_todo_file" && -s "$_todo_file" ]]; then
+      local _pending
+      _pending=$(python3 -c "
+import json, sys
+try:
+    tasks = json.load(open(sys.argv[1]))
+    pending = [t for t in tasks if not t.get('done', False)]
+    if pending:
+        lines = ['[ ] ' + t.get('text','') for t in pending[:10]]
+        print('\n'.join(lines))
+except: pass
+" "$_todo_file" 2>/dev/null)
+      if [[ -n "$_pending" ]]; then
+        _todo_block="## Active Plan (your checklist — update with the todo tool)\n${_pending}\n\n"
+        break
+      fi
+    fi
+  done
+  [[ -n "$_todo_block" ]] && system_prompt="${_todo_block}${system_prompt}"
+
+  # Inject curated memory snapshot (hermes pattern: treat as authoritative background reference)
     local _mem_block=""
-    local _ENTRY_DELIM=$'\n§\n'
     if [[ -f "brain/state/MEMORY.md" && -s "brain/state/MEMORY.md" ]]; then
         local _mem_raw
         _mem_raw=$(cat "brain/state/MEMORY.md")
-        _mem_block="${_mem_block}## My Notes (MEMORY.md)\n${_mem_raw}\n"
+        _mem_block="${_mem_block}## My Notes\n${_mem_raw}\n"
     fi
     if [[ -f "brain/state/USER.md" && -s "brain/state/USER.md" ]]; then
         local _user_raw
         _user_raw=$(cat "brain/state/USER.md")
-        _mem_block="${_mem_block}## About the User (USER.md)\n${_user_raw}\n"
+        _mem_block="${_mem_block}## About the User\n${_user_raw}\n"
+    fi
+
+    # Inject skill index — but ONLY when no skill is bound. Once the router or user
+    # has picked a skill, listing all other skills is dead weight to the LLM (~500
+    # tokens for 8 skills). Hermes shows the index every turn because the LLM picks;
+    # AMA pre-routes deterministically so the index is leftover. When bound, inject
+    # a one-line note instead — the active skill prompt itself carries the details.
+    local _skill_index
+    if [[ -z "$skill" ]]; then
+        local _skill_cache="${DIR:-$(pwd)}/brain/state/skill_cache_${session_id:-default}.txt"
+        local _skill_mtime_file="${DIR:-$(pwd)}/brain/state/skill_mtime_${session_id:-default}"
+        local _cur_mtime; _cur_mtime=$(stat -c '%Y' core/skills brain/skills 2>/dev/null | md5sum | cut -c1-8)
+        local _cached_mtime; _cached_mtime=$(cat "$_skill_mtime_file" 2>/dev/null || echo "")
+        if [[ -f "$_skill_cache" && "$_cur_mtime" == "$_cached_mtime" ]]; then
+            _skill_index=$(cat "$_skill_cache")
+        else
+            _skill_index=$(python3 tools/skill_router.py index 2>/dev/null)
+            printf '%s' "$_skill_index" > "$_skill_cache"
+            printf '%s' "$_cur_mtime" > "$_skill_mtime_file"
+        fi
+    else
+        _skill_index=$(python3 tools/skill_router.py active "$skill" 2>/dev/null)
+    fi
+    [[ -n "$_skill_index" ]] && _mem_block="${_mem_block}${_skill_index}\n"
+    # Inject recent session recaps prominently — these answer "what did we do last session?"
+    # Placed FIRST so the agent sees them immediately before any other memory.
+    # Cache keyed by mtime of session_recaps.jsonl — only rebuild when file changes.
+    if [[ -f "brain/state/session_recaps.jsonl" ]]; then
+        local _recaps_raw=""
+        local _recaps_cache="${DIR:-$(pwd)}/brain/state/recaps_cache_${session_id:-default}.txt"
+        local _recaps_mtime_file="${DIR:-$(pwd)}/brain/state/recaps_mtime_${session_id:-default}"
+        local _cur_recaps_mtime; _cur_recaps_mtime=$(stat -c '%Y' "brain/state/session_recaps.jsonl" 2>/dev/null || echo "0")
+        local _cached_recaps_mtime; _cached_recaps_mtime=$(cat "$_recaps_mtime_file" 2>/dev/null || echo "")
+        if [[ -f "$_recaps_cache" && "$_cur_recaps_mtime" == "$_cached_recaps_mtime" ]]; then
+            _recaps_raw=$(cat "$_recaps_cache" 2>/dev/null || true)
+        else
+            _recaps_raw=$(python3 -c "
+import json, sys
+lines = open('brain/state/session_recaps.jsonl').readlines()
+recent = []
+for line in lines[-3:]:
+    try:
+        e = json.loads(line)
+        ts = e.get('ts','')[:10]
+        sid = e.get('session_id','?')
+        recap = e.get('recap','').strip()
+        if recap:
+            recent.append(f'[{ts} | {sid}]\n{recap}')
+    except: pass
+if recent:
+    print('\n\n---\n'.join(recent))
+" 2>/dev/null || true)
+            if [[ -n "$_recaps_raw" ]]; then
+                printf '%s' "$_recaps_raw" > "$_recaps_cache"
+                printf '%s' "$_cur_recaps_mtime" > "$_recaps_mtime_file"
+            fi
+        fi
+        if [[ -n "$_recaps_raw" ]]; then
+            system_prompt="## Recent Session Recaps — READ THIS FIRST for questions about past sessions
+${_recaps_raw}
+
+---
+
+${system_prompt}"
+        fi
     fi
     if [[ -n "$_mem_block" ]]; then
-        system_prompt="[System note: The following is your persistent memory — NOT new user input. Treat as authoritative reference. Do not re-execute tasks described here; they were completed in prior sessions.]\n\n${_mem_block}\n---\n\n${system_prompt}"
+        system_prompt="[PERSISTENT MEMORY — REFERENCE ONLY]\n\n${_mem_block}\n---\n\n${system_prompt}"
     fi
   fi
 
@@ -83,82 +207,138 @@ _api_build_payload() {
   # A skill can expand by listing extra toolsets in its tools.json as:
   #   {"_enabled_toolsets": ["inspect", "media"]}
   # TOOL_EXTRA_TOOLSETS env var also accepted (space-separated) for ad-hoc expansion.
-  local _all_tools
-  _all_tools=$(cat brain/tools.json)
-  local _default_ts
-  _default_ts=$(python3 -c "
-import json, sys
+  #
+  # brain/tools_extra.json (gitignored) holds agent-added custom tools.
+  # It is merged at runtime so upstream brain/tools.json never conflicts.
+  # AMA_TOOLS_OVERRIDE: reflection/recap use this to pass their own tool subset
+  # without touching the shared brain/tools.json (prevents race condition corruption).
+  # When not overriding, merge tools + read config in a single Python subprocess.
+  local _all_tools _default_ts
+  if [[ -n "${AMA_TOOLS_OVERRIDE:-}" ]]; then
+    _all_tools="$AMA_TOOLS_OVERRIDE"
+    _default_ts=$(python3 -c "
+import json
 try:
-    cfg = json.load(open('brain/config.json'))
-    ts = cfg.get('default_toolsets', ['core','search','memory','meta'])
+    ts = json.load(open('brain/config.json')).get('default_toolsets',['core','search','memory','meta'])
     print(' '.join(ts))
+except: print('core search memory meta')
+" 2>/dev/null || echo "core search memory meta")
+  else
+    local _combined
+    _combined=$(python3 -c "
+import json, sys
+# Merge tools.json + tools_extra.json
+try:
+    base = json.load(open('brain/tools.json'))
+    try:
+        extra = json.load(open('brain/tools_extra.json'))
+        base_names = {t.get('name') for t in base}
+        base += [t for t in extra if t.get('name') not in base_names]
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        sys.stderr.write(f'tools_extra merge warning: {e}\n')
+    tools_json = json.dumps(base)
+except Exception as e:
+    sys.stderr.write(f'tools load error: {e}\n')
+    tools_json = open('brain/tools.json').read()
+# Read default_toolsets from config
+try:
+    ts = json.load(open('brain/config.json')).get('default_toolsets',['core','search','memory','meta'])
+    ts_str = ' '.join(ts)
 except:
-    print('core search memory meta')
+    ts_str = 'core search memory meta'
+print(ts_str)
+print(tools_json)
 " 2>/dev/null)
+    _default_ts=$(printf '%s' "$_combined" | head -1)
+    _all_tools=$(printf '%s' "$_combined" | tail -n +2)
+    [[ -z "$_default_ts" ]] && _default_ts="core search memory meta"
+    [[ -z "$_all_tools" ]] && _all_tools=$(cat brain/tools.json 2>/dev/null || echo '[]')
+  fi
   local _active_ts="${TOOL_EXTRA_TOOLSETS:-} $_default_ts"
   local tools
-  tools=$(TS="$_active_ts" python3 -c "
-import json, os, sys
-raw = sys.stdin.read()
+  tools=$(python3 -c "
+import json, sys
+raw = open(sys.argv[1]).read()
 try:
     all_tools = json.loads(raw)
 except:
     print(raw); sys.exit(0)
-active = set(os.environ.get('TS','').split())
+active = set(sys.argv[2].split())
 # Always include tools with no toolset field (legacy/custom tools)
 filtered = [t for t in all_tools if t.get('toolset','core') in active or 'toolset' not in t]
 # Strip internal 'toolset' field before sending to API
 for t in filtered:
     t.pop('toolset', None)
 print(json.dumps(filtered, separators=(',',':')))
-" <<< "$_all_tools" 2>/dev/null)
+" <(printf '%s' "$_all_tools") "$_active_ts" 2>/dev/null)
   # Fallback: if filter fails, send all tools (minus toolset field)
   if [[ -z "$tools" || "$tools" == "null" ]]; then
     tools=$(python3 -c "
 import json,sys
-t=json.load(sys.stdin)
+t=json.loads(open(sys.argv[1]).read())
 for x in t: x.pop('toolset',None)
 print(json.dumps(t,separators=(',',':')))
-" < brain/tools.json 2>/dev/null || cat brain/tools.json)
+" <(cat brain/tools.json) 2>/dev/null || cat brain/tools.json)
   fi
 
-  # Skill-specific prompt injection
+  # Skill-specific prompt injection.
+  # Resolution order:
+  #   1. Validate the skill exists (brain/skills/X/prompt.md OR core/skills/X/prompt.md).
+  #      If neither exists, log a warning and continue WITHOUT a skill — better than
+  #      silently running with a stale/empty prompt on a typo.
+  #   2. Pick THE skill body via tools/skill_router.py body — brain overrides core.
+  #      Frontmatter (description, triggers) is stripped — that's routing metadata,
+  #      not LLM instructions. ~100 tokens/turn saved on skills with rich triggers.
+  #   3. Optional custom extension: brain/skills/X/custom/prompt.md appended with
+  #      a header so the agent treats it as user-additive.
+  #   4. tools.json — brain/X/tools.json wins; core only used if brain has none.
+  if [[ -n "$skill" ]]; then
+    if ! python3 tools/skill_router.py exists "$skill" 2>/dev/null; then
+        echo "AMA: warning — unknown skill '$skill' (no prompt.md in brain/skills/ or core/skills/). Running without skill prompt." >&2
+        skill=""
+    fi
+  fi
+
   if [[ -n "$skill" ]]; then
     local skill_prompt=""
     local skill_tools="[]"
 
-    # 1. Load from core (system skills)
-    if [[ -f "core/skills/${skill}/prompt.txt" ]]; then
-        # Use a temporary python snippet to expand environment variables safely
-        skill_prompt=$(CAT_FILE="core/skills/${skill}/prompt.txt" PWD_VAL="$(pwd)" python3 -c '
-import os
-content = open(os.environ["CAT_FILE"]).read()
-print(content.replace("$(pwd)", os.environ["PWD_VAL"]))
-')
-    fi
-    if [[ -f "core/skills/${skill}/tools.json" ]]; then
-        skill_tools=$(cat "core/skills/${skill}/tools.json")
-    fi
+    # 1+2. Body, frontmatter stripped, $(pwd) substituted
+    skill_prompt=$(python3 tools/skill_router.py body "$skill" 2>/dev/null)
 
-    # 2. Load from brain (user overrides/new skills) - Prepend/Append based on preference
-    # We treat brain as higher priority or extension
-    if [[ -f "brain/skills/${skill}/prompt.txt" ]]; then
-        local user_prompt=$(cat "brain/skills/${skill}/prompt.txt")
-        skill_prompt="${skill_prompt}\n\n${user_prompt}"
+    # 3. Custom extension layer (additive — distinct concern from override)
+    local _custom_prompt_file=""
+    if [[ -f "brain/skills/${skill}/custom/prompt.md" ]]; then
+        _custom_prompt_file="brain/skills/${skill}/custom/prompt.md"
+    elif [[ -f "brain/skills/${skill}/custom/prompt.txt" ]]; then
+        _custom_prompt_file="brain/skills/${skill}/custom/prompt.txt"
     fi
-    if [[ -f "brain/skills/${skill}/tools.json" ]]; then
-        local user_tools=$(cat "brain/skills/${skill}/tools.json")
-        skill_tools=$(UT="$user_tools" python3 -c "import json,os,sys; a=json.load(sys.stdin); b=json.loads(os.environ['UT']); print(json.dumps(a+b,separators=(',',':')))" <<< "$skill_tools")
-    fi
-
-    # 3. Load from custom folder within brain skill (extra layer for cleanliness)
-    if [[ -f "brain/skills/${skill}/custom/prompt.txt" ]]; then
-        local custom_prompt=$(cat "brain/skills/${skill}/custom/prompt.txt")
+    if [[ -n "$_custom_prompt_file" ]]; then
+        local custom_prompt
+        # Also strip frontmatter from custom prompts for consistency
+        custom_prompt=$(python3 -c "
+import sys, re
+text = open(sys.argv[1]).read()
+m = re.match(r'^---\s*\n.*?\n---\s*\n?', text, re.DOTALL)
+print(text[m.end():] if m else text, end='')" "$_custom_prompt_file")
         skill_prompt="${skill_prompt}\n\n### CUSTOM EXTENSION\n${custom_prompt}"
     fi
+
+    # 4. Tools — brain overrides core; custom layer adds to whichever was picked.
+    if [[ -f "brain/skills/${skill}/tools.json" ]]; then
+        skill_tools=$(cat "brain/skills/${skill}/tools.json")
+    elif [[ -f "core/skills/${skill}/tools.json" ]]; then
+        skill_tools=$(cat "core/skills/${skill}/tools.json")
+    fi
     if [[ -f "brain/skills/${skill}/custom/tools.json" ]]; then
-        local custom_tools=$(cat "brain/skills/${skill}/custom/tools.json")
-        skill_tools=$(CT="$custom_tools" python3 -c "import json,os,sys; a=json.load(sys.stdin); b=json.loads(os.environ['CT']); print(json.dumps(a+b,separators=(',',':')))" <<< "$skill_tools")
+        local custom_tools; custom_tools=$(cat "brain/skills/${skill}/custom/tools.json")
+        skill_tools=$(python3 -c "
+import json, sys
+a = json.loads(open(sys.argv[1]).read())
+b = json.loads(open(sys.argv[2]).read())
+print(json.dumps(a + b, separators=(',', ':')))" <(printf '%s' "$skill_tools") <(printf '%s' "$custom_tools"))
     fi
 
     if [[ -n "$skill_prompt" ]]; then
@@ -168,68 +348,136 @@ print(content.replace("$(pwd)", os.environ["PWD_VAL"]))
     if [[ "$skill_tools" != "[]" ]]; then
         local _extra_ts
         _extra_ts=$(python3 -c "
-import json,os,sys
+import json,sys
 try:
-    st=json.loads(sys.stdin.read())
+    st=json.loads(open(sys.argv[1]).read())
     extra=[x for x in st if isinstance(x,dict) and '_enabled_toolsets' in x]
     if extra:
         ts=extra[0]['_enabled_toolsets']
         print(' '.join(ts) if isinstance(ts,list) else str(ts))
 except:
     pass
-" <<< "$skill_tools" 2>/dev/null)
+" <(printf '%s' "$skill_tools") 2>/dev/null)
         if [[ -n "$_extra_ts" ]]; then
             # Re-filter all_tools with expanded toolset list
             local _expanded_ts="$_active_ts $_extra_ts"
             local _extra_tool_defs
-            _extra_tool_defs=$(TS="$_expanded_ts" python3 -c "
-import json,os,sys
-all_tools=json.load(sys.stdin)
-already=set(t.get('name') for t in json.loads(os.environ.get('CURRENT_TOOLS','[]')))
-active=set(os.environ.get('TS','').split())
+            _extra_tool_defs=$(python3 -c "
+import json,sys
+all_tools=json.loads(open(sys.argv[3]).read())
+already=set(t.get('name') for t in json.loads(open(sys.argv[1]).read()))
+active=set(sys.argv[2].split())
 extra=[t for t in all_tools if t.get('toolset','core') in active and t.get('name') not in already]
 for t in extra: t.pop('toolset',None)
 print(json.dumps(extra,separators=(',',':')))
-" < brain/tools.json 2>/dev/null || echo "[]")
-            tools=$(AT="$_extra_tool_defs" python3 -c "
-import json,os,sys
-base=json.load(sys.stdin)
-extra=json.loads(os.environ.get('AT','[]'))
+" <(printf '%s' "${tools:-[]}") "$_expanded_ts" <(cat brain/tools.json) 2>/dev/null || echo "[]")
+            tools=$(python3 -c "
+import json,sys
+base=json.loads(open(sys.argv[2]).read())
+extra=json.loads(open(sys.argv[1]).read())
 print(json.dumps(base+extra,separators=(',',':')))
-" <<< "$tools" 2>/dev/null || echo "$tools")
+" <(printf '%s' "$_extra_tool_defs") <(printf '%s' "$tools") 2>/dev/null || echo "$tools")
             # Remove the meta _enabled_toolsets entry from skill_tools before merge
             skill_tools=$(python3 -c "
 import json,sys
-st=json.load(sys.stdin)
+st=json.loads(open(sys.argv[1]).read())
 print(json.dumps([x for x in st if not (isinstance(x,dict) and '_enabled_toolsets' in x)],separators=(',',':')))
-" <<< "$skill_tools" 2>/dev/null || echo "$skill_tools")
+" <(printf '%s' "$skill_tools") 2>/dev/null || echo "$skill_tools")
         fi
-        tools=$(ST="$skill_tools" python3 -c "import json,os,sys; a=json.load(sys.stdin); b=json.loads(os.environ['ST']); print(json.dumps(a+b,separators=(',',':')))" <<< "$tools")
+        tools=$(python3 -c "import json,sys; print(json.dumps(json.loads(open(sys.argv[1]).read())+json.loads(open(sys.argv[2]).read()),separators=(',',':')))" <(printf '%s' "$tools") <(printf '%s' "$skill_tools"))
     fi
   fi
-  
+
+  # Dedupe tools by name. When a skill defines a tool with the same name as the
+  # base set, the skill version wins (it appears later in the merged list). Some
+  # providers (Gemini native function_declarations) hard-reject duplicates with
+  # INVALID_ARGUMENT.
+  tools=$(python3 -c "
+import json, sys
+try:
+    raw = json.loads(open(sys.argv[1]).read())
+except Exception:
+    print(open(sys.argv[1]).read()); sys.exit(0)
+seen = {}
+order = []
+for t in raw:
+    n = t.get('name') if 'name' in t else t.get('function', {}).get('name', '')
+    if not n:
+        # Untyped entries (no name) — keep them but they can't dedupe
+        order.append(('@anon@' + str(len(order)), t))
+        continue
+    if n not in seen:
+        order.append((n, t))
+    seen[n] = t
+out = [seen.get(k, v) for k, v in order]
+# Collapse duplicates: keep last occurrence per name
+final = []
+final_names = set()
+for n, t in reversed(order):
+    if n.startswith('@anon@'):
+        final.append(t); continue
+    if n in final_names: continue
+    final_names.add(n)
+    final.append(seen[n])
+final.reverse()
+print(json.dumps(final, separators=(',', ':')))
+" <(printf '%s' "$tools") 2>/dev/null || printf '%s' "$tools")
+
   local _hist_for_api
   _hist_for_api=$(_apply_provider_history_filter "$HISTORY") || _hist_for_api="$HISTORY"
-  
+
   local _extra_payload="{}"
   if [ "$PROVIDER" != "default" ] && type "${PROVIDER}_extra_payload_json" >/dev/null 2>&1; then
     _extra_payload=$(${PROVIDER}_extra_payload_json 2>/dev/null) || _extra_payload="{}"
   fi
 
+  # Memory auto-prefetch (hermes queue_prefetch_all pattern):
+  # Results are pre-warmed by the PREVIOUS turn into a cache file — zero latency hot path.
+  # If cache is cold (first turn), fall back to a quick inline search (1.5s timeout).
+  local _mem_prefetch=""
+  if [[ "${MEMORY_PREFETCH:-1}" != "0" ]]; then
+    local _prefetch_cache="${DIR:-$(pwd)}/brain/state/prefetch_${session_id:-default}"
+    if [[ -f "$_prefetch_cache" ]]; then
+        # Hot path: use pre-warmed result from previous turn
+        _mem_prefetch=$(cat "$_prefetch_cache" 2>/dev/null || true)
+        rm -f "$_prefetch_cache"  # consume it
+    else
+        # Cold path: inline search with short timeout (first turn or cache miss)
+        local _prefetch_query
+        _prefetch_query=$(python3 -c "
+import json, sys, re
+h = json.loads(open(sys.argv[1]).read())
+for msg in reversed(h):
+    if msg.get('role') == 'user':
+        c = msg.get('content','')
+        if isinstance(c, list): c = ' '.join(p.get('text','') for p in c if isinstance(p,dict))
+        c = re.sub(r'\[SYSTEM: Context Updated\].*?\n\n', '', str(c), flags=re.DOTALL).strip()
+        print(c[:300])
+        break
+" <(printf '%s' "$_hist_for_api") 2>/dev/null || true)
+        if [[ ${#_prefetch_query} -gt 20 ]]; then
+            _mem_prefetch=$(timeout 2 python3 tools/memory_helper.py search "$_prefetch_query" 3 2>/dev/null || true)
+        fi
+    fi
+  fi
+
   # Write large blobs to tempfiles to avoid ARG_MAX / env-size limits.
-  # HISTORY_JSON can be megabytes when it contains embedded base64 images.
-  local _hist_file _sys_file
+  local _hist_file _sys_file _mem_file
   _hist_file=$(mktemp)
   _sys_file=$(mktemp)
+  _mem_file=$(mktemp)
   printf '%s' "$_hist_for_api" > "$_hist_file"
   printf '%s' "$system_prompt" > "$_sys_file"
+  printf '%s' "$_mem_prefetch" > "$_mem_file"
 
   TOOLS="$tools" \
   HIST_FILE="$_hist_file" \
   SYS_FILE="$_sys_file" \
+  MEM_FILE="$_mem_file" \
   MODEL_NAME="$_model" \
   EXTRA_PAYLOAD="$_extra_payload" \
   STREAM_MODE="$stream" \
+  PROVIDER_NAME="$PROVIDER" \
   python3 -c '
 import json, os, sys
 s = open(os.environ["SYS_FILE"]).read()
@@ -249,8 +497,53 @@ except:
     ex = {}
 stream = os.environ.get("STREAM_MODE", "false").lower() == "true"
 
-msg = [{"role": "system", "content": s}] + h
-body = {"model": m, "messages": msg}
+# Memory auto-prefetch injection (hermes build_memory_context_block pattern):
+# inject into last user message only — preserves system prompt prefix cache
+mem_raw = ""
+try:
+    mem_file = os.environ.get("MEM_FILE", "")
+    if mem_file:
+        mem_raw = open(mem_file).read().strip()
+except Exception:
+    pass
+if mem_raw and "No memories found" not in mem_raw:
+    fence = (
+        "<memory-context>\n"
+        "[System note: The following is recalled memory context, "
+        "NOT new user input. Treat as authoritative reference — "
+        "this is the agent persistent memory.]\n\n"
+        f"{mem_raw}\n"
+        "</memory-context>"
+    )
+    for i in range(len(h)-1, -1, -1):
+        if h[i].get("role") == "user":
+            c = h[i].get("content", "") or ""
+            if isinstance(c, str):
+                h[i] = dict(h[i], content=c + "\n\n" + fence)
+            elif isinstance(c, list):
+                h[i] = dict(h[i], content=list(c) + [{"type": "text", "text": "\n\n" + fence}])
+            break
+
+# Guard: Vertex/Gemini rejects payloads with no user messages ("Model input cannot be empty")
+# If history has no user/assistant messages, bail early with a clear error
+has_user = any(msg.get("role") in ("user", "assistant") for msg in h)
+if not h or not has_user:
+    sys.stderr.write("GUARD: empty history — no user messages, skipping API call\n")
+    sys.exit(2)
+
+provider = os.environ.get("PROVIDER_NAME", "")
+is_anthropic = provider == "anthropic"
+
+if is_anthropic:
+    # Anthropic native format: system as array + cache_control for 90% cost reduction
+    # System prompt is stable across turns → qualifies for 5-min ephemeral cache
+    system_msg = [{"type": "text", "text": s, "cache_control": {"type": "ephemeral"}}]
+    msg = h  # no system role in messages for Anthropic native
+    body = {"model": m, "system": system_msg, "messages": msg}
+else:
+    msg = [{"role": "system", "content": s}] + h
+    body = {"model": m, "messages": msg}
+
 if t:
     wrapped_tools = []
     for tool in t:
@@ -262,68 +555,95 @@ if t:
     body["tool_choice"] = "auto"
 if stream:
     body["stream"] = True
-    body["stream_options"] = {"include_usage": True}
+    if not is_anthropic:
+        body["stream_options"] = {"include_usage": True}
 body.update(ex)
 print(json.dumps(body))
 '
   local _py_status=$?
-  rm -f "$_hist_file" "$_sys_file"
+  rm -f "$_hist_file" "$_sys_file" "$_mem_file"
   return $_py_status
 }
 
 call_api() {
   local sys_prompt_override="$1"
 
-  if [ "$PROVIDER" != "default" ] && type "${PROVIDER}_call_api" >/dev/null 2>&1; then
-    "${PROVIDER}_call_api" "$sys_prompt_override"
-    return $?
-  fi
+  local attempt=1
+  local max_attempts=5
+  while [ "$attempt" -le "$max_attempts" ]; do
+      # Pool: pick best available provider/key for this attempt
+      pool_apply "$attempt"
 
-  local payload
-  payload=$(_api_build_payload "false" "$sys_prompt_override") || { echo "FAIL:payload"; return 1; }
+      # Provider-specific call_api override (e.g. ollama native API)
+      if [ "$PROVIDER" != "default" ] && type "${PROVIDER}_call_api" >/dev/null 2>&1; then
+          "${PROVIDER}_call_api" "$sys_prompt_override"
+          local _ret=$?
+          if [[ $_ret -eq 0 ]]; then return 0; fi
+          # Failed — if pool can try another entry, rotate
+          if [[ "$(pool_is_enabled)" == "true" && "$attempt" -lt "$max_attempts" ]]; then
+              pool_mark_limited "${_POOL_IDX:-}" 60
+              local _jdelay; _jdelay=$(python3 -c "import random; a=$attempt; d=min(5.0*(2**(a-1)),60.0); print(f'{d+random.uniform(0,0.5*d):.1f}')" 2>/dev/null || echo $((5 * attempt)))
+              attempt=$((attempt + 1)); sleep "$_jdelay"; continue
+          fi
+          return $_ret
+      fi
 
-  local _api_key="$API_KEY"
-  if [ "$PROVIDER" != "default" ] && type "${PROVIDER}_get_api_key" >/dev/null 2>&1; then
-    local _pkey; _pkey=$(${PROVIDER}_get_api_key 2>/dev/null) || true
-    [ -n "$_pkey" ] && _api_key="$_pkey"
-  fi
+      if ! check_rate_limit "$PROVIDER" "$MODEL"; then
+          if [[ "$(pool_is_enabled)" == "true" ]]; then
+              sleep 3  # pool will rotate to next entry
+          else
+              # No pool — wait the actual remaining backoff time instead of making a
+              # doomed API call that just re-extends the 60s rate limit timer.
+              local _rl_remaining
+              _rl_remaining=$(python3 -c "
+import json, time
+try:
+    d = json.load(open('brain/state/rate_limits.json'))
+    until = float(d.get('${PROVIDER}_${MODEL}', 0))
+    print(max(5, int(until - time.time()) + 3))
+except: print(10)
+" 2>/dev/null || echo 10)
+              echo "AMA: Rate-limited, waiting ${_rl_remaining}s for quota reset..." >&2
+              sleep "$_rl_remaining"
+          fi
+      fi
 
-  local _suppress_auth=false
-  local _extra_pairs=""
-  if [ "$PROVIDER" != "default" ] && type "${PROVIDER}_extra_headers_json" >/dev/null 2>&1; then
-    local _pheaders; _pheaders=$(${PROVIDER}_extra_headers_json 2>/dev/null) || true
-    if [ -n "$_pheaders" ]; then
-      _extra_pairs=$(printf '%s' "$_pheaders" | python3 -c '
+      # Build payload and request args fresh for this attempt (provider/model may differ)
+      local payload
+      payload=$(_api_build_payload "false" "$sys_prompt_override") || { echo "FAIL:payload"; return 1; }
+
+      local _api_key="$API_KEY"
+      if [ "$PROVIDER" != "default" ] && type "${PROVIDER}_get_api_key" >/dev/null 2>&1; then
+        local _pkey; _pkey=$(${PROVIDER}_get_api_key 2>/dev/null) || true
+        [ -n "$_pkey" ] && _api_key="$_pkey"
+      fi
+
+      local _suppress_auth=false
+      local _extra_pairs=""
+      if [ "$PROVIDER" != "default" ] && type "${PROVIDER}_extra_headers_json" >/dev/null 2>&1; then
+        local _pheaders; _pheaders=$(${PROVIDER}_extra_headers_json 2>/dev/null) || true
+        if [ -n "$_pheaders" ]; then
+          _extra_pairs=$(python3 -c '
 import json,sys
-for k,v in json.load(sys.stdin).items():
+for k,v in json.loads(open(sys.argv[1]).read()).items():
     if v is None:
         if k.lower()=="authorization": print("SUPPRESS_AUTH")
     else:
         print(f"{k}\t{v}")
-' 2>/dev/null) || true
-      echo "$_extra_pairs" | grep -q '^SUPPRESS_AUTH' && _suppress_auth=true
-    fi
-  fi
+' <(printf '%s' "$_pheaders") 2>/dev/null) || true
+          echo "$_extra_pairs" | grep -q '^SUPPRESS_AUTH' && _suppress_auth=true
+        fi
+      fi
 
-  local _curl_args=(-s -w "%{http_code}" --max-time 1800
-    "${BASE_URL}/chat/completions"
-    -H "Content-Type: application/json")
-  [ "$_suppress_auth" = "false" ] && _curl_args+=(-H "Authorization: Bearer $_api_key")
-
-  if [ -n "$_extra_pairs" ]; then
-    while IFS=$'\t' read -r _hk _hv; do
-      [ "$_hk" = "SUPPRESS_AUTH" ] && continue
-      [ -n "$_hk" ] && [ -n "$_hv" ] && _curl_args+=(-H "$_hk: $_hv")
-    done <<< "$_extra_pairs"
-  fi
-
-  local attempt=1
-  local max_attempts=3
-  while [ "$attempt" -le "$max_attempts" ]; do
-      if ! check_rate_limit "$PROVIDER" "$MODEL"; then
-          # If rate limited, we might want to fail fast or try a fallback model
-          # For now, just wait if it's the first attempt, or fail if we've waited enough
-          sleep 5
+      local _curl_args=(-s -w "%{http_code}" --max-time 1800
+        "${BASE_URL}/chat/completions"
+        -H "Content-Type: application/json")
+      [ "$_suppress_auth" = "false" ] && _curl_args+=(-H "Authorization: Bearer $_api_key")
+      if [ -n "$_extra_pairs" ]; then
+        while IFS=$'\t' read -r _hk _hv; do
+          [ "$_hk" = "SUPPRESS_AUTH" ] && continue
+          [ -n "$_hk" ] && [ -n "$_hv" ] && _curl_args+=(-H "$_hk: $_hv")
+        done <<< "$_extra_pairs"
       fi
 
       local tmp; tmp=$(mktemp)
@@ -331,7 +651,7 @@ for k,v in json.load(sys.stdin).items():
       local curl_err=0
       code=$(curl "${_curl_args[@]}" -o "$tmp" -d "$payload" 2>/dev/null) || curl_err=$?
       local body; body=$(cat "$tmp" 2>/dev/null || true); rm -f "$tmp"
-      
+
       if [ "$curl_err" -ne 0 ]; then
         echo "FAIL:curl_error_$curl_err"
         return 1
@@ -345,38 +665,125 @@ for k,v in json.load(sys.stdin).items():
       # Classify Error
       local classification=$(classify_error "$code" "$body")
       local _cls_parsed
-      _cls_parsed=$(echo "$classification" | python3 -c "
+      _cls_parsed=$(python3 -c "
 import json, sys
-d = json.load(sys.stdin)
+d = json.loads(open(sys.argv[1]).read())
 print(d.get('reason','unknown'))
 print(d.get('retryable','false'))
 print(d.get('should_compress','false'))
-" 2>/dev/null)
-      local reason retryable should_compress
-      IFS=$'\n' read -r reason retryable should_compress <<< "$_cls_parsed"
+print(d.get('action','retry_after_delay'))
+" <(printf '%s' "$classification") 2>/dev/null)
+      local reason retryable should_compress action
+      IFS=$'\n' read -r reason retryable should_compress action <<< "$_cls_parsed"
 
-      if [[ "$reason" == "rate_limit" ]]; then
-          mark_rate_limited "$PROVIDER" "$MODEL" 60
-      fi
+      # Dispatch on the classified action — see core/mix/34_error_classifier.sh
+      # header comment for the full matrix.
+      case "$action" in
+          rotate_pool)
+              # Mark current pool entry limited so pool_apply picks a different one
+              # next iteration. Also record provider/model rate-limit so we don't
+              # keep hammering it across separate run_agent invocations.
+              pool_mark_limited "${_POOL_IDX:-}" 120
+              mark_rate_limited "$PROVIDER" "$MODEL" 60
+              ;;
+          retry_after_delay)
+              # rate_limit / server_error / timeout
+              if [[ "$reason" == "rate_limit" ]]; then
+                  mark_rate_limited "$PROVIDER" "$MODEL" 60
+                  pool_mark_limited "${_POOL_IDX:-}" 60
+              fi
+              ;;
+          switch_model)
+              # 404 model-not-found or 503 overloaded — switch to FALLBACK_MODEL
+              # this attempt onwards. Pool may rotate anyway; this handles the
+              # static fallback case.
+              if [[ -n "${FALLBACK_MODEL:-}" && "$MODEL" != "$FALLBACK_MODEL" ]]; then
+                  echo "AMA: action=switch_model — $MODEL → $FALLBACK_MODEL" >&2
+                  MODEL="$FALLBACK_MODEL"
+              fi
+              ;;
+          disable_thinking)
+              # thoughtSignature mismatch — drop thinking for the next attempt.
+              # Doesn't persist across run_agent calls (env scope only).
+              echo "AMA: action=disable_thinking — clearing THINKING_BUDGET for retry" >&2
+              export THINKING_BUDGET=none
+              ;;
+          reinline_cache)
+              # cachedContent expired or revoked — purge local cache state so the
+              # next request rebuilds inline. google_stream.py also handles this
+              # in-flight; the purge here covers the non-streaming path.
+              echo "AMA: action=reinline_cache — purging gemini_cache.json" >&2
+              python3 -c "
+import sys, os
+sys.path.insert(0, os.path.join(os.getcwd(), 'tools'))
+try:
+    import google_cache
+    google_cache._write_state({})
+except Exception: pass" 2>/dev/null || true
+              ;;
+          compress)
+              # context_overflow / payload_too_large — caller (compact_history)
+              # uses should_compress flag; nothing to do here.
+              :
+              ;;
+          fail_user)
+              # Provider policy / safety block — don't retry. Surface a friendly
+              # error so the user understands why it failed.
+              echo "AMA: action=fail_user (provider_policy/safety) — not retrying" >&2
+              echo "FAIL:$code:provider_policy:$(echo "$body" | head -c 400)"
+              return 1
+              ;;
+          fail)
+              # Permanent bad_request — retry won't fix it.
+              echo "AMA: action=fail ($reason) — not retrying" >&2
+              ;;
+      esac
 
       # Log error for reflection
       local err_entry
-      err_entry=$(TS="$(date -u +"%Y-%m-%dT%H:%M:%SZ")" PROV="$PROVIDER" MOD="$MODEL" CODE="$code" RSN="$reason" BODY="$body" python3 -c "
-import json, os
-print(json.dumps({'ts':os.environ['TS'],'provider':os.environ['PROV'],'model':os.environ['MOD'],'code':os.environ['CODE'],'reason':os.environ['RSN'],'body':os.environ['BODY']}))
-")
+      err_entry=$(python3 -c "
+import json, sys
+ts, prov, mod, code, rsn = sys.argv[1:6]
+body = open(sys.argv[6]).read()
+print(json.dumps({'ts': ts, 'provider': prov, 'model': mod, 'code': code, 'reason': rsn, 'body': body}))
+" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$PROVIDER" "$MODEL" "$code" "$reason" <(printf '%s' "$body"))
       echo "$err_entry" >> "brain/state/error_log.jsonl"
 
       if [[ "$retryable" == "true" && "$attempt" -lt "$max_attempts" ]]; then
-          local delay=$((2 ** attempt + RANDOM % 5))
-          echo "AMA: API Error $code, retrying in $delay s... ($attempt/$max_attempts)" >&2
-          
-          # If it's a rate limit or server error and we have a fallback, switch for next attempt
-          if [[ ("$reason" == "rate_limit" || "$reason" == "server_error") && -n "$FALLBACK_MODEL" && "$MODEL" != "$FALLBACK_MODEL" ]]; then
-              echo "AMA: Switching to fallback model $FALLBACK_MODEL" >&2
-              MODEL="$FALLBACK_MODEL"
-              # Re-build payload with new model
-              payload=$(_api_build_payload "false" "$sys_prompt_override")
+          local delay
+          if [[ "$reason" == "rate_limit" ]]; then
+              # Wait until the actual rate limit expires — short waits just re-extend it.
+              delay=$(python3 -c "
+import json, time
+try:
+    d = json.load(open('brain/state/rate_limits.json'))
+    until = float(d.get('${PROVIDER}_${MODEL}', 0))
+    print(max(15, int(until - time.time()) + 5))
+except: print(60)
+" 2>/dev/null || echo 60)
+          else
+              delay=$(python3 -c "import random; a=$attempt; d=min(5.0*(2**(a-1)),60.0); print(int(d+random.uniform(0,0.5*d)))" 2>/dev/null || echo $((5 * attempt)))
+          fi
+          echo "AMA: API Error $code ($reason), retrying in ${delay}s ($attempt/$max_attempts)" >&2
+
+          # Pool handles rotation; static FALLBACK_PROVIDER only applies when pool is off
+          if [[ "$(pool_is_enabled)" != "true" ]]; then
+              if [[ "$attempt" -ge 2 && -n "${FALLBACK_PROVIDER:-}" ]]; then
+                  local _fb_provider _fb_model
+                  _fb_provider=$(echo "$FALLBACK_PROVIDER" | cut -d: -f1)
+                  _fb_model=$(echo "$FALLBACK_PROVIDER" | cut -d: -f2-)
+                  if [[ -n "$_fb_provider" && "$PROVIDER" != "$_fb_provider" ]]; then
+                      echo "AMA: Activating fallback provider $_fb_provider:${_fb_model}" >&2
+                      PROVIDER="$_fb_provider"
+                      [[ -n "$_fb_model" ]] && MODEL="$_fb_model"
+                      if type "${PROVIDER}_activate" >/dev/null 2>&1; then
+                          ${PROVIDER}_activate 2>/dev/null || true
+                      fi
+                  fi
+              elif [[ ("$reason" == "rate_limit" || "$reason" == "server_error") && -n "${FALLBACK_MODEL:-}" && "$MODEL" != "$FALLBACK_MODEL" ]]; then
+                  echo "AMA: Switching to fallback model $FALLBACK_MODEL" >&2
+                  MODEL="$FALLBACK_MODEL"
+              fi
           fi
 
           sleep "$delay"

@@ -1,71 +1,216 @@
-# History Management
+#!/bin/bash
+# core/mix/11_history.sh — conversation history persistence + smart trimming.
+#
+# Every message exchanged in a session lives in $HISTORY (a JSON array of
+# OpenAI-format `{role, content, ...}` messages). This file owns:
+#
+#   append_text()        — append a user/assistant text message
+#   append_tool_call()   — append an assistant message with tool_calls
+#   append_tool_result() — append a tool-role result, with smart fold to
+#                          80-line head+tail + summary line for long outputs
+#   save_history()       — atomic write to brain/state/history_<sid>.json
+#                          (refuses to write empty HISTORY — see live incident
+#                          2026-05-19 where a 0-byte file then broke every
+#                          subsequent turn)
+#   load_history()       — read from disk; handle missing, empty, and corrupt
+#                          files by returning HISTORY="[]"; also auto-reset
+#                          on idle (SESSION_IDLE_HOURS) and trim incomplete
+#                          tool-call exchanges Gemini would reject
+#   compact_history()    — cheap decay pass + LLM-based compression at
+#                          context threshold
+#   decay_history()      — progressive decay: collapse tool results older
+#                          than DECAY_KEEP turns, redact verbose write args
+#   _apply_provider_history_filter() — delegate to ${PROVIDER}_filter_history
+#                          for provider-specific shape (e.g. Google's
+#                          thoughtSignature preservation)
 
 append_text() {
     local role="$1"
     local content="$2"
     local media_json="$3" # Optional JSON array for multi-modal [{type: "image_url", ...}]
-    
+
     if [[ -n "$media_json" && "$media_json" != "null" && "$media_json" != "[]" ]]; then
-        # Multi-modal: use Python + tempfiles to avoid ARG_MAX with large base64 data.
-        # jq --argjson passes content as a command-line arg, hitting the kernel 2MB limit.
-        local _h_file _m_file
-        _h_file=$(mktemp)
-        _m_file=$(mktemp)
-        printf '%s' "$HISTORY" > "$_h_file"
-        printf '%s' "$media_json" > "$_m_file"
-        HISTORY=$(ROLE="$role" TEXT="$content" H_FILE="$_h_file" M_FILE="$_m_file" python3 -c '
-import json, os
-h = json.load(open(os.environ["H_FILE"]))
-media = json.load(open(os.environ["M_FILE"]))
-text = os.environ["TEXT"]
-role = os.environ["ROLE"]
+        # Multi-modal: use Python + process substitution to avoid ARG_MAX
+        HISTORY=$(python3 -c '
+import json, sys
+h = json.loads(open(sys.argv[1]).read())
+media = json.loads(open(sys.argv[2]).read())
+text = open(sys.argv[3]).read()
+role = sys.argv[4]
 parts = [{"type": "text", "text": text}] + media
 h.append({"role": role, "content": parts})
 print(json.dumps(h, separators=(",", ":")))
-')
-        rm -f "$_h_file" "$_m_file"
+' <(printf '%s' "$HISTORY") <(printf '%s' "$media_json") <(printf '%s' "$content") "$role")
     else
-        HISTORY=$(ROLE="$role" CONTENT="$content" python3 -c "
-import json, os, sys
-h = json.load(sys.stdin)
-h.append({'role': os.environ['ROLE'], 'content': os.environ['CONTENT']})
+        HISTORY=$(python3 -c "
+import json, sys
+h = json.loads(open(sys.argv[1]).read())
+role = sys.argv[2]
+content = open(sys.argv[3]).read()
+h.append({'role': role, 'content': content})
 print(json.dumps(h, separators=(',', ':')))
-" <<< "$HISTORY")
+" <(printf '%s' "$HISTORY") "$role" <(printf '%s' "$content"))
     fi
 }
 
 append_tool_call() {
     local tool_calls="$1"
-    HISTORY=$(TC="$tool_calls" python3 -c "
-import json, os, sys
-h = json.load(sys.stdin)
-tc = json.loads(os.environ['TC'])
+    HISTORY=$(python3 -c "
+import json, sys
+h = json.loads(open(sys.argv[1]).read())
+tc = json.loads(open(sys.argv[2]).read())
 h.append({'role': 'assistant', 'content': None, 'tool_calls': tc})
 print(json.dumps(h, separators=(',', ':')))
-" <<< "$HISTORY")
+" <(printf '%s' "$HISTORY") <(printf '%s' "$tool_calls"))
 }
 
 append_tool_result() {
     local id="$1"
     local name="$2"
     local output="$3"
-    HISTORY=$(TID="$id" TNAME="$name" TOUT="$output" python3 -c "
-import json, os, sys
-h = json.load(sys.stdin)
-h.append({'role': 'tool', 'tool_call_id': os.environ['TID'], 'name': os.environ['TNAME'], 'content': os.environ['TOUT']})
+    # Smart folding: keep signal-dense head+tail, summarize discarded middle
+    # (AMA Level-4 improvement: reduce cognitive load by removing noise, not just chars)
+    local _MAX_LINES=80
+    local _HEAD_LINES=30
+    local _TAIL_LINES=20
+    HISTORY=$(python3 -c "
+import json, sys, re
+
+h = json.loads(open(sys.argv[1]).read())
+out = open(sys.argv[2]).read()
+max_lines = int(sys.argv[5])
+head_n   = int(sys.argv[6])
+tail_n   = int(sys.argv[7])
+
+lines = out.splitlines()
+
+if len(lines) > max_lines:
+    head = lines[:head_n]
+    tail = lines[-tail_n:]
+    middle = lines[head_n:-tail_n]
+    mid_text = '\n'.join(middle)
+
+    # Analyze what was in the middle
+    errors   = sum(1 for l in middle if re.search(r'\b(error|exception|traceback|fatal|failed)\b', l, re.I))
+    warnings = sum(1 for l in middle if re.search(r'\bwarning\b', l, re.I))
+
+    parts = [f'{len(middle)} lines folded']
+    if errors:   parts.append(f'{errors} error(s)')
+    if warnings: parts.append(f'{warnings} warning(s)')
+
+    # Git diff: add stat summary
+    if '@@' in mid_text or 'diff --git' in mid_text:
+        adds = sum(1 for l in middle if l.startswith('+') and not l.startswith('+++'))
+        dels = sum(1 for l in middle if l.startswith('-') and not l.startswith('---'))
+        parts.append(f'git: +{adds}/-{dels} lines')
+
+    # Pip install: surface what was installed
+    for l in reversed(middle):
+        if 'Successfully installed' in l:
+            parts.append(l.strip()[:80])
+            break
+
+    fold_line = '--- [' + ' | '.join(parts) + '] ---'
+    out = '\n'.join(head) + '\n' + fold_line + '\n' + '\n'.join(tail)
+elif len(out) > 8000:
+    # Char-level cap if line count is low but output is huge (e.g. minified JS)
+    out = out[:5000] + f'\n\n[...{len(out)-6000} chars truncated...]\n\n' + out[-1000:]
+
+h.append({'role': 'tool', 'tool_call_id': sys.argv[3], 'name': sys.argv[4], 'content': out})
 print(json.dumps(h, separators=(',', ':')))
-" <<< "$HISTORY")
+" <(printf '%s' "$HISTORY") <(printf '%s' "$output") "$id" "$name" \
+    "$_MAX_LINES" "$_HEAD_LINES" "$_TAIL_LINES")
 }
 
 save_history() {
     local session_id="$1"
-    echo "$HISTORY" > "brain/state/history_${session_id}.json"
+    local _hfile="brain/state/history_${session_id}.json"
+    # Refuse to write empty/null HISTORY. Live incident 2026-05-19: a turn
+    # that crashed before HISTORY was populated wrote a 0-byte file that
+    # then crashed every subsequent turn with JSONDecodeError on load. If
+    # the value isn't a valid non-empty JSON, leave the existing file alone
+    # (better stale than corrupt).
+    if [[ -z "${HISTORY:-}" || "$HISTORY" == "null" ]]; then
+        echo "AMA: save_history refusing empty HISTORY for ${session_id}" >&2
+        return 1
+    fi
+    local _tmp; _tmp=$(mktemp "${_hfile}.XXXXXX")
+    printf '%s' "$HISTORY" > "$_tmp" && mv "$_tmp" "$_hfile" || { rm -f "$_tmp"; return 1; }
+    # Mirror to SQLite session DB in background (hermes durability pattern)
+    ( python3 tools/session_db.py sync "$session_id" "$_hfile" > /dev/null 2>&1 & )
 }
 
 load_history() {
     local session_id="$1"
-    if [[ -f "brain/state/history_${session_id}.json" ]]; then
-        HISTORY=$(cat "brain/state/history_${session_id}.json")
+    local _hfile="brain/state/history_${session_id}.json"
+    # Handle the empty-file case: a 0-byte file is NOT valid JSON. Treat it
+    # the same as a missing file → start fresh with []. Was crashing the
+    # downstream payload builder (Vertex 400 "contents required") because
+    # `cat "" | json.loads()` raises JSONDecodeError. Same handling if the
+    # file has content but isn't parseable.
+    if [[ -f "$_hfile" && ! -s "$_hfile" ]]; then
+        echo "AMA: load_history found empty file at $_hfile — treating as []" >&2
+        rm -f "$_hfile"  # clean up so save_history can write fresh later
+    fi
+    if [[ -f "$_hfile" ]]; then
+        # Session idle auto-reset (hermes pattern): if file is older than SESSION_IDLE_HOURS,
+        # treat session as expired and start fresh — avoids resuming week-old conversations
+        local _idle_hours="${SESSION_IDLE_HOURS:-0}"  # 0 = disabled
+        if [[ "$_idle_hours" -gt 0 ]]; then
+            local _file_age_hours=$(( ( $(date +%s) - $(stat -c %Y "brain/state/history_${session_id}.json" 2>/dev/null || echo 0) ) / 3600 ))
+            if [[ "$_file_age_hours" -ge "$_idle_hours" ]]; then
+                echo "AMA: Session $session_id idle $_file_age_hours h (limit ${_idle_hours}h) — auto-reset." >&2
+                local _archive_dir="brain/state/sessions"
+                mkdir -p "$_archive_dir"
+                mv "brain/state/history_${session_id}.json" "${_archive_dir}/history_${session_id}_$(date +%s).json" 2>/dev/null || \
+                    rm -f "brain/state/history_${session_id}.json"
+                HISTORY="[]"
+                return
+            fi
+        fi
+
+        HISTORY=$(cat "$_hfile")
+        # Sanity check: if history ends with consecutive user messages (no assistant reply),
+        # the conversation is in an invalid state — trim the orphaned user messages.
+        # On any parse failure (corrupt JSON), fall back to [] instead of cascading.
+        local _sanitized
+        _sanitized=$(python3 -c "
+import json, sys
+try:
+    h = json.loads(open(sys.argv[1]).read())
+    if not isinstance(h, list):
+        print('[]'); sys.exit(0)
+    # 1. Trim trailing orphaned user messages (no assistant reply yet)
+    while h and h[-1].get('role') == 'user':
+        h.pop()
+    # 2. Trim incomplete tool-call exchanges — Gemini 400s if N function_calls
+    #    in a model turn don't have exactly N function_responses in the next turn.
+    fixed = []
+    i = 0
+    while i < len(h):
+        msg = h[i]
+        if msg.get('role') == 'assistant' and msg.get('tool_calls'):
+            n_calls = len(msg['tool_calls'])
+            j = i + 1
+            while j < len(h) and h[j].get('role') == 'tool':
+                j += 1
+            if (j - i - 1) < n_calls:
+                break  # incomplete exchange — drop it and everything after
+        fixed.append(msg)
+        i += 1
+    print(json.dumps(fixed, separators=(',', ':')))
+except Exception as e:
+    sys.stderr.write(f'AMA: load_history parse failed: {e} — resetting to []\n')
+    print('[]')
+" <(printf '%s' "$HISTORY") 2>/dev/null)
+        # If the python script produced something usable, take it.
+        # Otherwise fall back to [] (don't leave HISTORY as raw corrupt text).
+        if [[ -n "$_sanitized" ]]; then
+            HISTORY="$_sanitized"
+        else
+            echo "AMA: load_history could not parse $_hfile — resetting to []" >&2
+            HISTORY="[]"
+        fi
     else
         HISTORY="[]"
     fi
@@ -76,25 +221,29 @@ compact_history() {
     local chat_id="${2:-}"
     local thread_id="${3:-}"
     local msg_id="${4:-}"
-    
-    # First, try smart compression if history is long
+
+    # Cheap pass first — collapse stale tool results + redact verbose write args
+    # so they don't bloat token count before we even consider summarization.
+    decay_history
+
+    # Then smart compression if still over threshold
     compress_history "$session_id" "$chat_id" "$thread_id" "$msg_id"
-    
+
     # Fallback to hard truncation if still over max limit
-    local count; count=$(echo "$HISTORY" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null); count=${count:-0}
+    local count; count=$(python3 -c "import json,sys; print(len(json.loads(open(sys.argv[1]).read())))" <(printf '%s' "$HISTORY") 2>/dev/null); count=${count:-0}
     if [ "$count" -gt "$MAX_HIST_MSGS" ]; then
         local remove_count=$((count - MAX_HIST_MSGS))
         local removed
-        removed=$(python3 -c "import json,sys; h=json.load(sys.stdin); print(json.dumps(h[:${remove_count}],separators=(',',':')))" <<< "$HISTORY")
+        removed=$(python3 -c "import json,sys; h=json.loads(open(sys.argv[1]).read()); print(json.dumps(h[:${remove_count}],separators=(',',':')))" <(printf '%s' "$HISTORY"))
 
         local _hist_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
         local _root_dir="$(cd "$_hist_dir/../.." && pwd)"
-        local _loop_py
-        _loop_py='
-import json, os, subprocess
-removed = json.loads(os.environ["REMOVED"])
-root = os.environ["ROOT"]
-sid = os.environ["SID"]
+    local _loop_py
+    _loop_py='
+import json, sys, subprocess
+removed = json.loads(open(sys.argv[1]).read())
+root = sys.argv[2]
+sid = sys.argv[3]
 for msg in removed:
     role = msg.get("role", "")
     c = msg.get("content") or ""
@@ -109,9 +258,9 @@ for msg in removed:
             capture_output=True
         )
 '
-        REMOVED="$removed" ROOT="$_root_dir" SID="$session_id" python3 -c "$_loop_py" 2>/dev/null
+        python3 -c "$_loop_py" <(printf '%s' "$removed") "$_root_dir" "$session_id" 2>/dev/null
 
-        HISTORY=$(python3 -c "import json,sys; h=json.load(sys.stdin); print(json.dumps(h[-${MAX_HIST_MSGS}:],separators=(',',':')))" <<< "$HISTORY")
+        HISTORY=$(python3 -c "import json,sys; h=json.loads(open(sys.argv[1]).read()); print(json.dumps(h[-${MAX_HIST_MSGS}:],separators=(',',':')))" <(printf '%s' "$HISTORY"))
     fi
 }
 
@@ -122,4 +271,78 @@ _apply_provider_history_filter() {
     [ -z "$hist" ] && hist="$1"
   fi
   printf '%s' "$hist"
+}
+
+# Progressive decay: tool results older than DECAY_KEEP turns get collapsed to a
+# 1-line marker, and write_file/patch/edit_code arguments get their `content`/
+# `code`/`patch_text`/`new_string` redacted. Cheap (no LLM call) and bounded —
+# keeps mid-session history ~3-5× lighter without waiting for full compression.
+# Only the freshest DECAY_KEEP tool exchanges keep their full content.
+decay_history() {
+    local _keep="${DECAY_KEEP:-4}"
+    local _arg_cap="${DECAY_ARG_CAP:-2000}"
+    HISTORY=$(DECAY_KEEP="$_keep" DECAY_ARG_CAP="$_arg_cap" python3 -c '
+import json, os, sys
+h = json.loads(open(sys.argv[1]).read())
+keep = int(os.environ.get("DECAY_KEEP", "4"))
+arg_cap = int(os.environ.get("DECAY_ARG_CAP", "2000"))
+
+# Index of tool_call → tool_result groups, in order.
+# A "group" = assistant(tool_calls) + its trailing tool messages.
+groups = []
+i = 0
+while i < len(h):
+    msg = h[i]
+    if msg.get("role") == "assistant" and msg.get("tool_calls"):
+        j = i + 1
+        while j < len(h) and h[j].get("role") == "tool":
+            j += 1
+        groups.append((i, j))  # [start, end)
+        i = j
+    else:
+        i += 1
+
+# Decay every group except the last `keep`
+to_decay = groups[:-keep] if len(groups) > keep else []
+_VERBOSE_ARGS = ("content", "code", "patch_text", "new_string", "new_body", "text", "body")
+
+for (start, end) in to_decay:
+    # 1. Redact verbose argument fields in assistant tool_calls
+    a = h[start]
+    for tc in (a.get("tool_calls") or []):
+        try:
+            args = tc.get("function", {}).get("arguments", "{}")
+            if isinstance(args, str):
+                parsed = json.loads(args)
+            else:
+                parsed = dict(args)
+            changed = False
+            for k in _VERBOSE_ARGS:
+                v = parsed.get(k)
+                if isinstance(v, str) and len(v) > arg_cap:
+                    parsed[k] = f"[elided {len(v)} chars]"
+                    changed = True
+            if changed:
+                tc["function"]["arguments"] = json.dumps(parsed, separators=(",", ":"))
+        except Exception:
+            pass
+
+    # 2. Collapse tool results to 1-line summary
+    for k in range(start + 1, end):
+        msg = h[k]
+        if msg.get("role") != "tool":
+            continue
+        c = msg.get("content", "")
+        if not isinstance(c, str):
+            c = str(c)
+        if len(c) < 200:
+            continue  # already small
+        # Keep first non-empty line; mark size
+        first = next((line.strip() for line in c.splitlines() if line.strip()), "").replace("\n", " ")
+        if len(first) > 140:
+            first = first[:140]
+        msg["content"] = f"[decayed | {len(c)} chars] {first}"
+
+print(json.dumps(h, separators=(",", ":")))
+' <(printf '%s' "$HISTORY") 2>/dev/null || printf '%s' "$HISTORY")
 }

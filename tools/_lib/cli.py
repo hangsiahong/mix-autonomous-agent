@@ -33,6 +33,12 @@ from tools._lib.patch_parser import apply, parse_v4a_patch, validate  # noqa: E4
 PROJECT_ROOT = _ROOT
 MAX_READ_CHARS = 200_000  # ~50k tokens, safety cap
 
+# WORKSPACE_DIR: second allowed root for write_file / edit_code / patch.
+# Set in .env so agents can edit real project directories outside the harness.
+# Must be an absolute path; ignored if empty or relative.
+_workspace = os.environ.get("WORKSPACE_DIR", "").strip()
+_EXTRA_ROOTS = [_workspace] if _workspace and os.path.isabs(_workspace) else []
+
 
 def _err(msg: str) -> int:
     print(f"Error: {msg}", file=sys.stdout)
@@ -57,7 +63,7 @@ def cmd_edit(args: Dict[str, Any]) -> int:
     if not old:
         return _err("'old_string' is required (use write_file to create new files)")
 
-    backend = make_file_ops(PROJECT_ROOT)
+    backend = make_file_ops(PROJECT_ROOT, _EXTRA_ROOTS)
     perr = backend.validate_path(path)
     if perr:
         return _err(perr)
@@ -111,7 +117,7 @@ def cmd_patch(args: Dict[str, Any]) -> int:
     if not operations:
         return _err("No operations found in patch")
 
-    backend = make_file_ops(PROJECT_ROOT)
+    backend = make_file_ops(PROJECT_ROOT, _EXTRA_ROOTS)
 
     verrs = validate(operations, backend)
     if verrs:
@@ -146,7 +152,7 @@ def cmd_write(args: Dict[str, Any]) -> int:
     if not path:
         return _err("'path' is required")
 
-    backend = make_file_ops(PROJECT_ROOT)
+    backend = make_file_ops(PROJECT_ROOT, _EXTRA_ROOTS)
     perr = backend.validate_path(path)
     if perr:
         return _err(perr)
@@ -184,7 +190,7 @@ def cmd_read(args: Dict[str, Any]) -> int:
     offset = max(1, offset)
     limit = max(1, min(limit, 2000))
 
-    backend = make_file_ops(PROJECT_ROOT)
+    backend = make_file_ops(PROJECT_ROOT, _EXTRA_ROOTS)
     perr = backend.validate_path(path)
     if perr:
         return _err(perr)

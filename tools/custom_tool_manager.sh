@@ -26,7 +26,11 @@ description="${TOOL_description:-}"
 code="${TOOL_code:-}"
 parameters_json="${TOOL_parameters_json:-}"
 
-TOOLS_FILE="${_ROOT_DIR}/brain/tools.json"
+# Write to brain/tools_extra.json (gitignored) — keeps the base brain/tools.json
+# clean for upstream updates. Both are merged at runtime in _api_build_payload.
+TOOLS_FILE="${_ROOT_DIR}/brain/tools_extra.json"
+# Ensure the extra tools file exists as a valid JSON array
+[[ ! -f "$TOOLS_FILE" ]] && echo "[]" > "$TOOLS_FILE"
 CUSTOM_DIR="${_ROOT_DIR}/tools/custom"
 BUILTIN_DIR="${_ROOT_DIR}/tools"
 

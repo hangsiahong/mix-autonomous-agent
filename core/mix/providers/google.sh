@@ -298,14 +298,21 @@ google_extra_payload_json() {
   # Remove provider prefix if present
   model_lower="${model_lower#google/}"
 
-  # Default thinking config for Gemini 3+
-  if [[ "$model_lower" =~ gemini-3 ]]; then
-      local level="${_GOOGLE_THINKING_LEVEL:-medium}"
+  # Default thinking config for Gemini 3+ (and 2.5 thinking variants)
+  if [[ "$model_lower" =~ gemini-3 || "$model_lower" =~ gemini-2\.5 ]]; then
+      # THINKING_BUDGET env var overrides level: "none"|"low"|"medium"|"high"|"max"
+      # Set THINKING_BUDGET=none to disable thinking (faster + cheaper for simple tasks)
+      # Set THINKING_BUDGET=high for hard reasoning (math, complex code, debugging)
+      local level="${THINKING_BUDGET:-${_GOOGLE_THINKING_LEVEL:-medium}}"
       # Gemini 3 Pro only supports low/high
       if [[ "$model_lower" =~ pro ]]; then
-          [[ "$level" != "high" ]] && level="low"
+          [[ "$level" != "high" && "$level" != "none" ]] && level="low"
       fi
-
+      # Disable thinking entirely
+      if [[ "$level" == "none" ]]; then
+          printf '{"include_thoughts": false}'
+          return 0
+      fi
       # OpenAI-compatible field names for Gemini Thinking
       printf '{"include_thoughts": true, "thinking_level": "%s"}' "$level"
       return 0
@@ -413,15 +420,12 @@ google_call_api() {
   if [[ -n "$sys_prompt_override" ]]; then
     system_prompt="$sys_prompt_override"
   else
-    system_prompt=$(cat brain/system_prompt.txt)
+    system_prompt=$(cat brain/system_prompt.md)
   fi
 
   local tools_json=$(cat brain/tools.json)
 
   local _extra_payload="{}"
-  if type google_extra_payload_json >/dev/null 2>&1; then
-      _extra_payload=$(google_extra_payload_json)
-  fi
 
   # Conversion script for History (OpenAI -> Gemini Native)
   # This script handles multi-modal array content and tool calls.
@@ -433,17 +437,13 @@ google_call_api() {
   printf '%s' "$system_prompt" > "$_g_sys_file"
 
   local payload
-  payload=$(HIST_FILE="$_g_hist_file" \
-            SYS_FILE="$_g_sys_file" \
-            TOOLS_JSON="${tools_json:-[]}" \
-            EXTRA_PAYLOAD="$_extra_payload" \
-            python3 -c '
-import json, os, sys
-s = open(os.environ["SYS_FILE"]).read()
-try: h = json.load(open(os.environ["HIST_FILE"]))
+  payload=$(python3 -c '
+import json, sys
+s = open(sys.argv[1]).read()
+try: h = json.load(open(sys.argv[2]))
 except Exception as e:
     sys.stderr.write(f"Bad HISTORY JSON: {e}\n"); h = []
-try: t = json.loads(os.environ.get("TOOLS_JSON") or "[]")
+try: t = json.loads(open(sys.argv[3]).read())
 except: t = []
 
 contents = []
@@ -469,10 +469,17 @@ for msg in h:
     if msg.get("tool_calls"):
         # For Gemini native, tool calls are parts of the content
         for tc in msg["tool_calls"]:
-            parts.append({"function_call": {
+            part = {"function_call": {
                 "name": tc["function"]["name"],
                 "args": json.loads(tc["function"]["arguments"])
-            }})
+            }}
+            # Restore thoughtSignature for thinking models
+            sig = tc.get("thought_signature") or ""
+            if not sig:
+                sig = (tc.get("extra_content") or {}).get("google", {}).get("thought_signature", "")
+            if sig and sig != "skip_thought_signature_validator":
+                part["thoughtSignature"] = sig
+            parts.append(part)
 
     if msg.get("role") == "tool":
         role = "user" # Gemini expects tool results in a "user" role content (functionResponse)
@@ -484,36 +491,61 @@ for msg in h:
     if parts:
         contents.append({"role": role, "parts": parts})
 
-    # Gemini native payload
-    body = {
-        "contents": contents,
-        "system_instruction": {"parts": [{"text": s}]},
-    }
-    if t:
-        decls = []
-        for tool in t:
-            if "function" in tool:
-                # OpenAI format: {"type": "function", "function": {...}}
-                f = tool["function"]
-            else:
-                # Raw format: {"name": "...", "description": "...", "parameters": {...}}
-                f = tool
-            decls.append({
-                "name": f.get("name"),
-                "description": f.get("description", ""),
-                "parameters": f.get("parameters", {"type": "object", "properties": {}})
-            })
-        body["tools"] = [{"function_declarations": decls}]
+# Gemini requires all functionResponse parts for a model turn to be in ONE user turn.
+# Our history stores each tool result as a separate "tool" role message, which the loop
+# above emits as separate user turns. Merge consecutive function_response user turns.
+_merged = []
+for _e in contents:
+    _is_fn_resp = (_e["role"] == "user" and _e["parts"] and
+                   all("function_response" in _p for _p in _e["parts"]))
+    _prev_is_fn_resp = (_merged and _merged[-1]["role"] == "user" and
+                        _merged[-1]["parts"] and
+                        all("function_response" in _p for _p in _merged[-1]["parts"]))
+    if _is_fn_resp and _prev_is_fn_resp:
+        _merged[-1]["parts"].extend(_e["parts"])
+    else:
+        _merged.append(_e)
+contents = _merged
 
-    try:
-        ex = json.loads(os.environ.get("EXTRA_PAYLOAD", "{}"))
-        if ex:
-            if "thinking_level" not in ex:
-                body.update(ex)
-    except: pass
+# Gemini native payload (built once, after the loop)
+body = {
+    "contents": contents,
+    "system_instruction": {"parts": [{"text": s}]},
+}
+if t:
+    decls = []
+    for tool in t:
+        if "function" in tool:
+            # OpenAI format: {"type": "function", "function": {...}}
+            f = tool["function"]
+        else:
+            # Raw format: {"name": "...", "description": "...", "parameters": {...}}
+            f = tool
+        decls.append({
+            "name": f.get("name"),
+            "description": f.get("description", ""),
+            "parameters": f.get("parameters", {"type": "object", "properties": {}})
+        })
+    body["tools"] = [{"function_declarations": decls}]
 
-    print(json.dumps(body))
-')
+try:
+    ex = json.loads(open(sys.argv[4]).read())
+    if ex:
+        if "thinking_level" in ex:
+            # Map OpenAI-compat thinking fields to native Gemini generationConfig
+            _budgets = {"none": 0, "low": 1024, "medium": 8192, "high": 24576, "max": -1}
+            _level = ex.get("thinking_level", "low")
+            _include = ex.get("include_thoughts", True)
+            body.setdefault("generationConfig", {})["thinkingConfig"] = {
+                "includeThoughts": _include,
+                "thinkingBudget": _budgets.get(_level, 1024)
+            }
+        else:
+            body.update(ex)
+except: pass
+
+print(json.dumps(body))
+' "$_g_sys_file" "$_g_hist_file" <(printf '%s' "${tools_json:-[]}") <(printf '%s' "${_extra_payload:-{}}"))
   rm -f "$_g_hist_file" "$_g_sys_file"
 
   local _curl_args=(-s -X POST "$url" -H "Content-Type: application/json")
@@ -529,14 +561,68 @@ for msg in h:
     return 1
   fi
 
-  if echo "$resp" | python3 -c "import json,sys; exit(0 if 'error' in json.load(sys.stdin) else 1)" 2>/dev/null; then
+  if python3 -c "import json,sys; exit(0 if 'error' in json.loads(open(sys.argv[1]).read()) else 1)" <(printf '%s' "$resp") 2>/dev/null; then
     local _err
-    _err=$(echo "$resp" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin).get('error',{}),separators=(',',':')))" 2>/dev/null)
+    _err=$(python3 -c "import json,sys; print(json.dumps(json.loads(open(sys.argv[1]).read()).get('error',{}),separators=(',',':')))" <(printf '%s' "$resp") 2>/dev/null)
     echo "FAIL:google_error:$_err"
     return 1
   fi
 
-  echo "$resp"
+  # Normalize Gemini response to OpenAI format so all consumers speak one language
+  python3 -c "
+import json, sys, time
+
+r = json.loads(open(sys.argv[1]).read())
+candidate = (r.get('candidates') or [{}])[0]
+parts = candidate.get('content', {}).get('parts', [])
+finish = candidate.get('finishReason', 'STOP')
+
+# Map Gemini finishReason → OpenAI finish_reason
+finish_map = {'STOP': 'stop', 'MAX_TOKENS': 'length', 'SAFETY': 'stop', 'TOOL_CODE_EXECUTION': 'tool_calls'}
+oai_finish = finish_map.get(finish, 'stop')
+
+text_parts = [p['text'] for p in parts if 'text' in p]
+text = '\n'.join(text_parts)
+
+fc_parts = [p for p in parts if 'functionCall' in p]
+tool_calls = None
+if fc_parts:
+    oai_finish = 'tool_calls'
+    tool_calls = []
+    for i, p in enumerate(fc_parts):
+        fc = p['functionCall']
+        tc = {
+            'id': 'call_' + str(int(time.time() * 1000) % 10**9 + i),
+            'type': 'function',
+            'function': {
+                'name': fc.get('name', ''),
+                'arguments': json.dumps(fc.get('args', {}))
+            }
+        }
+        sig = p.get('thoughtSignature', '')
+        if sig:
+            tc['thought_signature'] = sig
+        tool_calls.append(tc)
+
+usage = r.get('usageMetadata', {})
+out = {
+    'choices': [{
+        'index': 0,
+        'finish_reason': oai_finish,
+        'message': {
+            'role': 'assistant',
+            'content': text if text else None,
+            'tool_calls': tool_calls
+        }
+    }],
+    'usage': {
+        'prompt_tokens': usage.get('promptTokenCount', 0),
+        'completion_tokens': usage.get('candidatesTokenCount', 0),
+        'total_tokens': usage.get('totalTokenCount', 0)
+    }
+}
+print(json.dumps(out))
+" <(printf '%s' "$resp")
 }
 
 google_call_api_stream() {
@@ -545,8 +631,11 @@ google_call_api_stream() {
   local skill="$3"
   local sys_prompt_override="$4"
 
-  # If using OpenAI-compatible endpoint, fallback to standard call_api_stream
-  if [[ "$BASE_URL" == */openapi ]]; then
+  # Non-Google proxies using OpenAI-compat — fall back to generic streaming.
+  # Vertex and Studio use native GenerateContent (google_stream.py) which exposes
+  # thought:true text parts. OpenAI-compat never exposes thinking text.
+  local _gmode="${GOOGLE_MODE:-$(grep '^mode=' "$_GOOGLE_CONFIG_FILE" 2>/dev/null | cut -d= -f2-)}"
+  if [[ "$BASE_URL" == */openapi && "$_gmode" != "vertex" && "$_gmode" != "studio" ]]; then
     (
       unset -f google_call_api_stream
       call_api_stream "$chat_id" "$message_id" "$skill" "$sys_prompt_override"
@@ -576,7 +665,7 @@ google_call_api_stream() {
   if [[ -n "$sys_prompt_override" ]]; then
     system_prompt="$sys_prompt_override"
   else
-    system_prompt=$(cat brain/system_prompt.txt)
+    system_prompt=$(cat brain/system_prompt.md)
   fi
   local tools_json=$(cat brain/tools.json)
 
@@ -589,22 +678,20 @@ google_call_api_stream() {
   # I will extract it to a shared function or just duplicate for now (caveman style).
 
   local payload
-  local _gs_hist_file _gs_sys_file
+  local _gs_hist_file _gs_sys_file _gs_extra_file
   _gs_hist_file=$(mktemp)
   _gs_sys_file=$(mktemp)
+  _gs_extra_file=$(mktemp)
+  printf '%s' "${_extra_payload:-{}}" > "$_gs_extra_file"
   printf '%s' "${HISTORY:-[]}" > "$_gs_hist_file"
   printf '%s' "$system_prompt" > "$_gs_sys_file"
-  payload=$(HIST_FILE="$_gs_hist_file" \
-            SYS_FILE="$_gs_sys_file" \
-            TOOLS_JSON="${tools_json:-[]}" \
-            EXTRA_PAYLOAD="$_extra_payload" \
-            python3 -c '
-import sys, json, os
-s = open(os.environ["SYS_FILE"]).read()
-try: h = json.load(open(os.environ["HIST_FILE"]))
+  payload=$(python3 -c '
+import sys, json
+s = open(sys.argv[1]).read()
+try: h = json.load(open(sys.argv[2]))
 except Exception as e:
     sys.stderr.write(f"Bad HISTORY JSON: {e}\n"); h = []
-try: t = json.loads(os.environ.get("TOOLS_JSON") or "[]")
+try: t = json.loads(open(sys.argv[3]).read())
 except: t = []
 contents = []
 for msg in h:
@@ -624,11 +711,30 @@ for msg in h:
                     parts.append({"file_data": p["file_data"]})
     if msg.get("tool_calls"):
         for tc in msg["tool_calls"]:
-            parts.append({"function_call": {"name": tc["function"]["name"], "args": json.loads(tc["function"]["arguments"])}})
+            part = {"function_call": {"name": tc["function"]["name"], "args": json.loads(tc["function"]["arguments"])}}
+            sig = tc.get("thought_signature") or ""
+            if not sig:
+                sig = (tc.get("extra_content") or {}).get("google", {}).get("thought_signature", "")
+            if sig and sig != "skip_thought_signature_validator":
+                part["thoughtSignature"] = sig
+            parts.append(part)
     if msg.get("role") == "tool":
         role = "user"
         parts = [{"function_response": {"name": msg["name"], "response": {"content": msg["content"]}}}]
     if parts: contents.append({"role": role, "parts": parts})
+# Merge consecutive function_response user turns into one (Gemini requirement)
+_merged = []
+for _e in contents:
+    _is_fn_resp = (_e["role"] == "user" and _e["parts"] and
+                   all("function_response" in _p for _p in _e["parts"]))
+    _prev_is_fn_resp = (_merged and _merged[-1]["role"] == "user" and
+                        _merged[-1]["parts"] and
+                        all("function_response" in _p for _p in _merged[-1]["parts"]))
+    if _is_fn_resp and _prev_is_fn_resp:
+        _merged[-1]["parts"].extend(_e["parts"])
+    else:
+        _merged.append(_e)
+contents = _merged
 body = {"contents": contents, "system_instruction": {"parts": [{"text": s}]}}
 if t:
     decls = []
@@ -645,18 +751,24 @@ if t:
     body["tools"] = [{"function_declarations": decls}]
 
 try:
-    ex = json.loads(os.environ.get("EXTRA_PAYLOAD", "{}"))
+    ex = json.loads(open(sys.argv[4]).read())
     if ex:
-        if "generationConfig" not in body:
-            body["generationConfig"] = {}
-        if "thinking_level" not in ex:
+        if "thinking_level" in ex:
+            _budgets = {"none": 0, "low": 1024, "medium": 8192, "high": 24576, "max": -1}
+            _level = ex.get("thinking_level", "low")
+            _include = ex.get("include_thoughts", True)
+            body.setdefault("generationConfig", {})["thinkingConfig"] = {
+                "includeThoughts": _include,
+                "thinkingBudget": _budgets.get(_level, 1024)
+            }
+        else:
             body.update(ex)
 except: pass
 
 import sys
 print(json.dumps(body))
-')
-  rm -f "$_gs_hist_file" "$_gs_sys_file"
+' "$_gs_sys_file" "$_gs_hist_file" <(printf '%s' "${tools_json:-[]}") "$_gs_extra_file")
+  rm -f "$_gs_hist_file" "$_gs_sys_file" "$_gs_extra_file"
 
   TG_TOKEN="$TG_TOKEN" \
   CHAT_ID="$chat_id" \
@@ -736,6 +848,176 @@ for msg in history:
                 tc["function"] = {"name": tc.pop("name"), "arguments": args_val}
                 tc.pop("args", None)
 
+# Last-line-of-defense: remove any incomplete tool-call exchange before sending
+# to Gemini. Gemini INVALID_ARGUMENT 400 if N functionCalls != N functionResponses.
+sanitized = []
+i = 0
+while i < len(history):
+    msg = history[i]
+    if msg.get("role") == "assistant" and msg.get("tool_calls"):
+        n_calls = len(msg["tool_calls"])
+        j = i + 1
+        while j < len(history) and history[j].get("role") == "tool":
+            j += 1
+        if (j - i - 1) < n_calls:
+            import sys
+            sys.stderr.write(f"google_filter_history: dropping incomplete tool exchange at index {i} ({j-i-1}/{n_calls} responses)\n")
+            break  # drop this exchange and everything after
+    sanitized.append(msg)
+    i += 1
+history = sanitized
+
 print(json.dumps(history))
+'
+}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Provider: google_cloudcode — Google Code Assist OAuth (gemini-cli free tier)
+#
+# Auth: OAuth PKCE flow via tools/google_oauth.py (no API key required)
+# API:  cloudcode-pa.googleapis.com/v1internal (free tier via personal Google account)
+#
+# Setup flow:
+#   1. /google_login  → bot sends auth URL, user opens in browser
+#   2. /google_login_callback <redirect_url>  → bot completes login
+#   3. account is added to pool automatically
+#
+# Config (.env or brain/provider_pool.json):
+#   PROVIDER=google_cloudcode
+#   MODEL=gemini-3-flash-preview
+#
+# Pool entry (no key needed — uses stored OAuth token):
+#   {"label": "Google-Free", "provider": "google_cloudcode", "model": "gemini-3-flash-preview"}
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_GOOGLE_OAUTH_TOOL="${AMA_DIR:-$(pwd)}/tools/google_oauth.py"
+
+google_cloudcode_activate() {
+  # Use a valid but unused BASE_URL — all calls are overridden by
+  # google_cloudcode_call_api and google_cloudcode_call_api_stream.
+  # Without this, call_api() would try BASE_URL+/chat/completions → 404.
+  BASE_URL="https://cloudcode-pa.googleapis.com"
+  API_KEY="google-oauth"  # dummy — actual auth is the OAuth Bearer token
+  # Use the best model for this account (stored during /google_login)
+  # Standard/paid tier gets gemini-2.5-pro; free tier gets gemini-2.5-flash
+  local _stored_model
+  _stored_model=$(python3 "${_GOOGLE_OAUTH_TOOL}" model 2>/dev/null)
+  [[ -n "$_stored_model" ]] && MODEL="$_stored_model"
+  # Fallback: free tier default
+  [[ -z "${MODEL:-}" ]] && MODEL="gemini-2.5-flash"
+}
+
+google_cloudcode_get_api_key() {
+  python3 "$_GOOGLE_OAUTH_TOOL" token 2>/dev/null
+}
+
+# Non-streaming call used by reflection/recap — hits :generateContent endpoint directly.
+google_cloudcode_call_api() {
+  local sys_prompt_override="$1"
+
+  local payload
+  payload=$(_api_build_payload "false" "$sys_prompt_override") || { echo "FAIL:payload"; return 1; }
+
+  local _token
+  _token=$(python3 "$_GOOGLE_OAUTH_TOOL" token 2>/dev/null)
+  [[ -z "$_token" ]] && { echo "FAIL:google_cloudcode_not_logged_in" >&2; return 1; }
+
+  local _project
+  _project=$(python3 "$_GOOGLE_OAUTH_TOOL" project 2>/dev/null)
+
+  local _model="${MODEL:-gemini-2.5-flash}"
+
+  local _result
+  _result=$(CODE_ASSIST_TOKEN="$_token" \
+    CODE_ASSIST_PROJECT="${_project:-}" \
+    CODE_ASSIST_MODEL="$_model" \
+    python3 -u "$(dirname "${BASH_SOURCE[0]}")/google_cloudcode_stream.py" <<< "$payload" 2>/dev/null)
+
+  if [[ -z "$_result" || "$_result" != *"TC:"* ]]; then
+    echo "FAIL:google_cloudcode_call_api_no_result"
+    return 1
+  fi
+
+  # Convert TC:/TEXT:/USAGE: format → OpenAI-compat JSON for call_api callers
+  python3 -c "
+import json, sys, re
+result = open(sys.argv[1]).read()
+text = ''
+tc_list = []
+m = re.search(r'(?m)^TEXT:(.*)', result, re.DOTALL)
+if m: text = m.group(1).split('\nUSAGE:')[0].split('\nTC:')[0]
+m2 = re.search(r'^TC:(.*)', result, re.MULTILINE)
+if m2:
+    try: tc_list = json.loads(m2.group(1))
+    except: pass
+msg = {'role': 'assistant', 'content': text}
+if tc_list: msg['tool_calls'] = tc_list
+print(json.dumps({'choices': [{'message': msg}]}))
+" <(printf '%s' "$_result") 2>/dev/null
+}
+
+google_cloudcode_call_api_stream() {
+  local chat_id="$1"
+  local message_id="$2"
+  local skill="$3"
+  local sys_prompt_override="$4"
+
+  local payload
+  payload=$(_api_build_payload "true" "$sys_prompt_override" "$skill") || {
+    echo "FAIL:payload"; return 1
+  }
+
+  local _token
+  _token=$(python3 "$_GOOGLE_OAUTH_TOOL" token 2>/dev/null)
+  if [[ -z "$_token" ]]; then
+    echo "FAIL:google_cloudcode_not_logged_in" >&2
+    return 1
+  fi
+
+  local _project
+  _project=$(python3 "$_GOOGLE_OAUTH_TOOL" project 2>/dev/null)
+
+  local tmp_out; tmp_out=$(mktemp)
+  local tmp_err; tmp_err=$(mktemp)
+
+  TG_TOKEN="$TG_TOKEN" \
+  CHAT_ID="$chat_id" \
+  MESSAGE_ID="$message_id" \
+  CODE_ASSIST_TOKEN="$_token" \
+  CODE_ASSIST_PROJECT="${_project:-}" \
+  CODE_ASSIST_MODEL="${MODEL:-$(python3 "$_GOOGLE_OAUTH_TOOL" model 2>/dev/null || echo 'gemini-2.5-flash')}" \
+  python3 -u "$(dirname "${BASH_SOURCE[0]}")/google_cloudcode_stream.py" \
+    > "$tmp_out" 2> "$tmp_err" <<< "$payload"
+
+  local status=$?
+  local result; result=$(cat "$tmp_out")
+  local err_out; err_out=$(cat "$tmp_err")
+  rm -f "$tmp_out" "$tmp_err"
+  [[ -n "$err_out" ]] && echo "DBG_ERR: $err_out" >&2
+
+  if [[ $status -ne 0 || "$result" != *"TC:"* ]]; then
+    echo "AMA: google_cloudcode stream error (status $status)" >&2
+    return 1
+  fi
+
+  echo "$result"
+  return 0
+}
+
+# History filter: strip thought_signature sentinel before sending back to Code Assist
+# (the adapter re-adds it on outgoing requests)
+google_cloudcode_filter_history() {
+  python3 -c '
+import sys, json
+h = json.loads(sys.stdin.read())
+out = []
+for msg in h:
+    if msg.get("role") == "assistant":
+        for tc in (msg.get("tool_calls") or []):
+            # Keep thought_signature — the stream adapter re-uses it
+            pass
+    out.append(msg)
+print(json.dumps(out))
 '
 }

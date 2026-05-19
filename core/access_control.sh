@@ -8,7 +8,7 @@ source "${_CONFIG_DIR:-core}/config.sh"
 SENSITIVE_TOOLS=(
     "bash" "process"
     "write_file" "edit_code" "patch" "delete_file"
-    "custom_tool_manager" "skill_manager"
+    "custom_tool_manager" "skill_manager" "skill_install"
 )
 PERMISSION_STORE="brain/state/permissions.json"
 

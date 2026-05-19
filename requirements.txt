@@ -1,0 +1,18 @@
+# AMA - Autonomous Mix Agent
+# Python dependencies for the harness and tools
+
+# Web fetching
+requests>=2.31.0
+
+# Web search (web_search.sh)
+ddgs>=0.1.0
+
+# Vector memory (memory_helper.py)
+lancedb>=0.6.0
+
+# Browser automation (browser.sh)
+playwright>=1.40.0
+
+# Accurate token counting for context compression (token_counter.py)
+# Falls back to improved char-based estimate if unavailable — install for precision
+tiktoken>=0.7.0

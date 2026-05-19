@@ -1,6 +1,84 @@
-reference
-.agent
-.mix
-.env
+# ── Runtime state (never commit — instance-specific data) ─────────────────────
+brain/state/
 brain/last_offset
-brain/state
+logs/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# ── Secrets and local config ───────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Instance config (gitignore so git pull never conflicts) ───────────────────
+# Provide brain/config.example.json as the template; users copy → config.json
+brain/config.json
+# Provider pool — contains API keys; copy from brain/provider_pool.json.example
+brain/provider_pool.json
+
+# ── Persona (user-editable, should not be overwritten by upstream updates) ────
+SOUL.md
+# If you want to track your persona, copy to SOUL.local.md and commit that
+
+# ── Agent self-modifications (instance-local, not upstream) ───────────────────
+# The agent writes custom tools here — safe to self-learn without conflicts
+tools/custom/*
+!tools/custom/.gitkeep
+# Extra tools the agent discovers/registers (merged at runtime with brain/tools.json)
+brain/tools_extra.json
+# Local system prompt additions the agent appends (merged at runtime)
+brain/system_prompt_local.md
+
+# ── Skills (user/agent installs — instance-specific) ──────────────────────────
+skills/
+brain/skills/
+
+# ── Test and dev scratch files ─────────────────────────────────────────────────
+test_*.sh
+test_*.py
+test_*.txt
+test_*.py
+NOTE
+*.bak
+*.bak.*
+*.tmp
+*.swp
+*.swo
+
+# ── Reference implementations (dev only) ──────────────────────────────────────
+reference/
+
+# ── Local dev tooling ──────────────────────────────────────────────────────────
+.agent/
+.mix/
+node_modules/
+.playwright/
+venv/
+.venv/
+.serena/
+.claude/
+
+# ── Editor / IDE ──────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.iml
+
+# ── Lock + pid files anywhere ─────────────────────────────────────────────────
+*.lock
+*.pid
+
+# ── Agent-generated output ─────────────────────────────────────────────────────
+max_agent_site*.html
+mix_agent.html
+
+*.html
+
+ama-website
+projects
+scrape_assets.py

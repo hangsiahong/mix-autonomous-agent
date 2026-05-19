@@ -44,15 +44,15 @@ ollama_call_api() {
 
   # Strip tools and tool_choice — non-interactive calls don't need them and they slow Ollama down
   # Use native /api/chat format with think:false and stream:false
-  payload=$(echo "$payload" | python3 -c "
+  payload=$(python3 -c "
 import sys, json
-b = json.load(sys.stdin)
+b = json.loads(open(sys.argv[1]).read())
 b.pop('tools', None)
 b.pop('tool_choice', None)
 b['think'] = False
 b['stream'] = False
 print(json.dumps(b))
-" 2>/dev/null) || true
+" <(printf '%s' "$payload") 2>/dev/null) || true
 
   local tmp; tmp=$(mktemp)
   local http_code
@@ -70,19 +70,19 @@ print(json.dumps(b))
   fi
 
   # Convert native Ollama response to OpenAI-compat format so callers don't need to change
-  body=$(echo "$body" | python3 -c "
+  body=$(python3 -c "
 import sys, json
-d = json.load(sys.stdin)
+d = json.loads(open(sys.argv[1]).read())
 msg = d.get('message', {})
 content = msg.get('content') or ''
 p = d.get('prompt_eval_count', 0)
 c = d.get('eval_count', 0)
 out = {
-  'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': content}, 'finish_reason': 'stop'}],
-  'usage': {'prompt_tokens': p, 'completion_tokens': c, 'total_tokens': p + c}
+    'choices': [{'message': msg}],
+    'usage': {'prompt_tokens': p, 'completion_tokens': c, 'total_tokens': p+c}
 }
 print(json.dumps(out))
-" 2>/dev/null) || true
+" <(printf '%s' "$body") 2>/dev/null)
   printf '%s' "$body"
 }
 
@@ -92,7 +92,7 @@ ollama_filter_history() {
   python3 -c '
 import sys, json
 
-history = json.load(sys.stdin)
+history = json.loads(open(sys.argv[1]).read())
 out = []
 for msg in history:
     role = msg.get("role", "")
@@ -133,9 +133,9 @@ ollama_call_api_stream() {
 
   # Strip tools if the last user message is short (simple chat — saves ~800 prompt tokens)
   local _last_msg
-  _last_msg=$(printf '%s' "$payload" | python3 -c "
+  _last_msg=$(python3 -c "
 import sys,json
-b=json.load(sys.stdin)
+b=json.loads(open(sys.argv[1]).read())
 msgs=[m for m in b.get('messages',[]) if m.get('role')=='user']
 if msgs:
     c=msgs[-1].get('content','')
@@ -143,11 +143,11 @@ if msgs:
     print(str(len(c)))
 else:
     print('0')
-" 2>/dev/null) || _last_msg=999
+" <(printf '%s' "$payload") 2>/dev/null) || _last_msg=999
   # Build native /api/chat payload: think:false, stream:false, strip tools if short message
-  payload=$(printf '%s' "$payload" | python3 -c "
+  payload=$(python3 -c "
 import sys,json
-b=json.load(sys.stdin)
+b=json.loads(open(sys.argv[1]).read())
 b['think'] = False
 b['stream'] = False
 import sys as _sys
@@ -156,7 +156,7 @@ if msg_len < 200:
     b.pop('tools',None)
     b.pop('tool_choice',None)
 print(json.dumps(b))
-" "${_last_msg:-999}" 2>/dev/null) || true
+" <(printf '%s' "$payload") "${_last_msg:-999}" 2>/dev/null) || true
 
   local attempt=1
   local max_attempts=3

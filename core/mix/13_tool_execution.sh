@@ -1,4 +1,15 @@
-# Tool execution
+#!/bin/bash
+# core/mix/13_tool_execution.sh — invoke a single tool by name.
+#
+# `run_tool <name> <args_json> <chat_id> <thread_id>` resolves the tool to
+# `tools/<name>.sh` (falling back to `tools/custom/<name>.sh` for agent-
+# created tools), exports each JSON arg as `TOOL_<key>` env var, exports
+# chat/thread context for Telegram-aware tools (clarify, send_file), and
+# runs the script. Returns whatever the script prints on stdout/stderr.
+#
+# Permission gating happens via `check_tool_permission` (core/access_control.sh)
+# before any execution.
+
 run_tool() {
     local name="$1"
     local args_json="$2"
@@ -26,15 +37,15 @@ run_tool() {
     # unwrap it so downstream parsing always sees a JSON object literal.
     local args="$args_json"
     local _args_type
-    _args_type=$(echo "$args" | python3 -c "import json,sys; v=json.load(sys.stdin); print('string' if isinstance(v,str) else 'other')" 2>/dev/null)
+    _args_type=$(python3 -c "import json,sys; v=json.loads(open(sys.argv[1]).read()); print('string' if isinstance(v,str) else 'other')" <(printf '%s' "$args") 2>/dev/null)
     if [[ "$_args_type" == "string" ]]; then
-        args=$(echo "$args" | python3 -c "import json,sys; print(json.load(sys.stdin))")
+        args=$(python3 -c "import json,sys; print(json.loads(open(sys.argv[1]).read()))" <(printf '%s' "$args"))
     fi
 
     # Export args as TOOL_ vars
     eval "$(echo "$args" | python3 -c "
 import json, sys, shlex
-d = json.load(sys.stdin)
+d = json.loads(sys.stdin.read())
 for k, v in d.items():
     v_str = v if isinstance(v, str) else json.dumps(v)
     print(f'export TOOL_{k}={shlex.quote(v_str)}')
@@ -50,7 +61,7 @@ for k, v in d.items():
     # Unset
     eval "$(echo "$args" | python3 -c "
 import json, sys
-for k in json.load(sys.stdin):
+for k in json.loads(sys.stdin.read()):
     print(f'unset TOOL_{k}')
 ")"
     unset TOOL_CHAT_ID TOOL_THREAD_ID

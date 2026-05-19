@@ -29,7 +29,9 @@ state_dir = os.path.join(script_dir, "brain", "state")
 if session_filter:
     files = [os.path.join(state_dir, f"history_{session_filter}.json")]
 else:
-    files = sorted(glob.glob(os.path.join(state_dir, "history_*.json")))
+    # Search both active sessions and archived ones (post-/new)
+    files = sorted(sorted(glob.glob(os.path.join(state_dir, "history_*.json")), key=os.path.getmtime, reverse=True))
+    files += sorted(glob.glob(os.path.join(state_dir, "sessions", "history_*.json")))
 
 if not files:
     print("No session history found.")

@@ -18,14 +18,20 @@ from tools._lib.path_safety import (
 )
 
 
-def _validate_path_factory(root: str):
+def _validate_path_factory(roots: list):
+    """Allow writes within any of the provided roots (harness root + WORKSPACE_DIR)."""
     def _v(p: str) -> Optional[str]:
         if is_blocked_device(p):
             return f"Refusing to touch device file: {p}"
         sens = check_sensitive_path(p)
         if sens:
             return sens
-        _, err = validate_within_root(p, root)
+        for root in roots:
+            _, err = validate_within_root(p, root)
+            if err is None:
+                return None
+        # Report error against primary root for clarity
+        _, err = validate_within_root(p, roots[0])
         return err
     return _v
 
@@ -101,14 +107,19 @@ def _validate_syntax(path: str, content: str) -> Optional[str]:
     return None
 
 
-def make_file_ops(project_root: str) -> FileOps:
-    """Construct a FileOps bound to the project root with safety gates."""
+def make_file_ops(project_root: str, extra_roots: Optional[list] = None) -> FileOps:
+    """Construct a FileOps bound to project_root plus any extra allowed roots.
+
+    extra_roots is typically [WORKSPACE_DIR] so the agent can write to real
+    project directories outside the harness without going through bash only.
+    """
+    all_roots = [project_root] + [r for r in (extra_roots or []) if r]
     return FileOps(
         read=_read,
         write=_write,
         delete=_delete,
         move=_move,
         exists=_exists,
-        validate_path=_validate_path_factory(project_root),
+        validate_path=_validate_path_factory(all_roots),
         validate_syntax=_validate_syntax,
     )

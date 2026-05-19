@@ -1,0 +1,43 @@
+# ── Secrets and instance-specific config (never bake into image) ──────────────
+.env
+.env.*
+brain/config.json
+brain/provider_pool.json
+brain/system_prompt_local.md
+SOUL.md
+
+# ── Runtime state (generated at container start, mount as volumes) ─────────────
+brain/state/
+brain/last_offset
+brain/tools_extra.json
+brain/skills/
+logs/
+skills/
+
+# ── Agent self-modifications (instance-local) ──────────────────────────────────
+tools/custom/
+
+# ── Dev/reference only (large, not needed in image) ───────────────────────────
+reference/
+.agent/
+.mix/
+
+# ── Python/Node artifacts ──────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+node_modules/
+.playwright/
+
+# ── Test and scratch files ─────────────────────────────────────────────────────
+test_*.sh
+test_*.py
+test_*.txt
+NOTE
+*.bak
+*.bak.*
+*.tmp
+*.swp
+*.swo
