@@ -1,61 +1,135 @@
 #!/bin/bash
 # core/mix/26_reflection.sh - Autonomous Self-Reflection + Session Recap
 
-# Save a structured end-of-session recap (hermes pattern: persist key session facts across sessions)
+# Save a structured session recap. Triggered at session boundaries (e.g. /new):
+# we summarise the just-archived history file and append one entry to
+# brain/state/session_recaps.jsonl tagged with a unique session_id.
+#
+# Args:
+#   $1  session_id   — tag for the recap entry (typically "<sid>_<unix_ts>")
+#   $2  history_file — path to the JSON history to summarise (archived file)
 save_session_recap() {
     local session_id="$1"
-    local chat_id="$2"
-    local thread_id="$3"
+    local history_file="$2"
+
+    [[ -z "$history_file" || ! -f "$history_file" ]] && return
 
     # Skip for short sessions (< 8 messages) — not enough substance to recap
     local count
-    count=$(python3 -c "import json,sys; print(len(json.loads(open(sys.argv[1]).read())))" <(printf '%s' "$HISTORY") 2>/dev/null); count=${count:-0}
+    count=$(python3 -c "import json,sys; print(len(json.loads(open(sys.argv[1]).read())))" "$history_file" 2>/dev/null); count=${count:-0}
     [[ "$count" -lt 8 ]] && return
 
     # Skip for offline models — too slow for background recap
     [[ "$PROVIDER" == "ollama" ]] && return
 
-    echo "AMA: Generating session recap for $session_id..."
+    echo "AMA: Generating session recap for $session_id from $(basename "$history_file") ($count msgs)..." >&2
 
-    local recap_prompt="Generate a short session recap in structured format.
+    # Build a compact transcript: keep first 4 + last 30 messages (so we
+    # capture the opening intent and the final outcomes), truncate long
+    # tool args / results so we don't blow the prompt budget.
+    local _transcript
+    _transcript=$(python3 - "$history_file" <<'PYEOF' 2>/dev/null
+import json, sys
+h = json.load(open(sys.argv[1]))
 
-## Session Summary
-[1-2 sentences: what was accomplished overall]
+def fmt(m):
+    role = m.get('role', '?')
+    if role == 'user':
+        c = m.get('content', '')
+        if isinstance(c, list):
+            c = ' '.join(p.get('text','') for p in c if isinstance(p, dict))
+        return f'USER: {str(c)[:1200].strip()}'
+    if role == 'assistant':
+        out = []
+        c = m.get('content') or ''
+        if isinstance(c, list):
+            c = ' '.join(p.get('text','') for p in c if isinstance(p, dict))
+        c = str(c).strip()
+        if c:
+            out.append(f'ASSISTANT: {c[:1200]}')
+        for tc in (m.get('tool_calls') or []):
+            f = tc.get('function', {}) or {}
+            n = f.get('name','?')
+            a = f.get('arguments','{}')
+            out.append(f'  -> {n}({str(a)[:240]})')
+        return '\n'.join(out) if out else ''
+    if role == 'tool':
+        c = m.get('content', '') or ''
+        n = m.get('name','?')
+        return f'  <- {n}: {str(c)[:500].strip()}'
+    return ''
 
-## Key Facts Learned
-[Bullet list: user preferences, environment details, decisions made. Only non-obvious facts worth remembering across sessions.]
+# Sandwich: first 4 + last 30 (dedupe overlap), with a marker in between if we skipped.
+head = h[:4]
+tail = h[-30:] if len(h) > 34 else h[4:]
+parts = []
+for m in head:
+    s = fmt(m)
+    if s: parts.append(s)
+if len(h) > 4 + len(tail):
+    parts.append(f'  ... [omitted {len(h) - 4 - len(tail)} middle messages] ...')
+for m in tail:
+    s = fmt(m)
+    if s: parts.append(s)
+print('\n'.join(parts))
+PYEOF
+)
 
-## Unresolved Items
-[Bullet list: things left incomplete, errors not fixed, questions not answered. Empty list if all resolved.]
+    if [[ -z "$_transcript" ]]; then
+        echo "AMA: recap aborted — empty transcript from $history_file" >&2
+        return
+    fi
 
-## Next Steps
-[What the user likely wants to do next, based on context. 1-3 bullets max. Skip if unclear.]
+    # Compose the recap prompt: the actual session content + the format spec.
+    local _prompt_tmp; _prompt_tmp=$(mktemp)
+    {
+        echo "Below is a session transcript. Generate a recap of THIS session — do not invent content."
+        echo
+        echo "=== TRANSCRIPT START ==="
+        echo "$_transcript"
+        echo "=== TRANSCRIPT END ==="
+        echo
+        echo "Output format (use these exact headers, no preamble):"
+        echo
+        echo "## Session Summary"
+        echo "[1-2 sentences describing what was actually done in the transcript above]"
+        echo
+        echo "## Key Facts Learned"
+        echo "[Bullet list: non-obvious user preferences, environment details, or decisions observed in the transcript. Skip the section's content with 'None.' if nothing qualifies.]"
+        echo
+        echo "## Unresolved Items"
+        echo "[Bullet list: things explicitly left incomplete or errors not fixed. 'None.' if all resolved.]"
+        echo
+        echo "## Next Steps"
+        echo "[1-3 bullets of likely next actions implied by the transcript. Skip with 'None.' if unclear.]"
+        echo
+        echo "Rules: Under 200 words total. Reference only facts present in the transcript. No conversational filler."
+    } > "$_prompt_tmp"
 
-Rules: Be concise. Total under 200 words. No preamble. Respond ONLY with the structured document."
-
-    local saved_history="$HISTORY"
+    local saved_history="${HISTORY:-}"
     # Use AMA_TOOLS_OVERRIDE to pass [] without touching brain/tools.json.
-    # Avoids the race condition where concurrent reflect_turn reads [] as its backup.
     local _saved_override="${AMA_TOOLS_OVERRIDE:-}"
     export AMA_TOOLS_OVERRIDE="[]"
     # Prevent recap's 429s from poisoning the main agent's rate limit state.
-    # Recap runs in background — it should fail silently, not block next user turn.
     local _saved_no_rate_mark="${_AMA_NO_RATE_MARK:-0}"
     export _AMA_NO_RATE_MARK=1
-    trap 'export AMA_TOOLS_OVERRIDE="$_saved_override"; export _AMA_NO_RATE_MARK="$_saved_no_rate_mark"; HISTORY="$saved_history"' EXIT INT TERM
+    trap 'export AMA_TOOLS_OVERRIDE="$_saved_override"; export _AMA_NO_RATE_MARK="$_saved_no_rate_mark"; HISTORY="$saved_history"; rm -f "$_prompt_tmp"' EXIT INT TERM
 
-    local _sp_tmp; _sp_tmp=$(mktemp)
-    printf '%s' "$recap_prompt" > "$_sp_tmp"
     local _recap_hist
-    _recap_hist=$(python3 - "$_sp_tmp" <<'PYEOF' 2>/dev/null
+    _recap_hist=$(python3 - "$_prompt_tmp" <<'PYEOF' 2>/dev/null
 import json, sys
 sp = open(sys.argv[1]).read()
 print(json.dumps([{"role": "user", "content": sp}]))
 PYEOF
 )
-    rm -f "$_sp_tmp"
+    rm -f "$_prompt_tmp"
 
-    HISTORY="${_recap_hist:-$saved_history}"
+    if [[ -z "$_recap_hist" ]]; then
+        echo "AMA: recap aborted — failed to build prompt payload" >&2
+        return
+    fi
+
+    HISTORY="$_recap_hist"
     local recap_response
     recap_response=$(call_api "You are a session summarizer. Be concise and factual.")
 

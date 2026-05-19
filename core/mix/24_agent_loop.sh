@@ -711,14 +711,12 @@ print('\n'.join(out))
         if [[ $total_tool_calls -gt 0 ]]; then
             (
                 (
-                    # Reflection (read-only inspection, saves to LanceDB)
+                    # Reflection (read-only inspection, saves to LanceDB).
+                    # NOTE: session-level recap is intentionally NOT done here —
+                    # it fires from the /new (router.sh) handler against the
+                    # just-archived history file, so each recap covers a full
+                    # session instead of a single turn.
                     reflect_turn "$chat_id" "$thread_id" "$session_id"
-
-                    # Recap saves session_recaps.jsonl entry — only on clean completion
-                    if [[ "$loop_completed" == true ]]; then
-                        sleep 2
-                        save_session_recap "$session_id" "$chat_id" "$thread_id"
-                    fi
 
                     # Curator: edits MEMORY.md / USER.md / skill prompts. Only on
                     # tool-heavy turns where learning is likely.

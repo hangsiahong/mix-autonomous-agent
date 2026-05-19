@@ -79,6 +79,5 @@ mix_agent.html
 
 *.html
 
-ama-website
 projects
 scrape_assets.py

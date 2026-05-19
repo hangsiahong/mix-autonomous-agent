@@ -29,11 +29,11 @@ Inspired by [hermes-agent](https://github.com/anysphere/hermes) (autonomy patter
 ```bash
 git clone https://github.com/hangsiahong/mix-autonomous-agent.git ama
 cd ama
-pip install -r requirements.txt
-cp .env.example .env                       # fill in TG_TOKEN + provider creds
-cp brain/config.example.json brain/config.json   # fill in your Telegram user ID
-bash bot.sh
+bash scripts/setup.sh   # interactive wizard: deps + provider + Telegram + run mode
+bash bot.sh             # or: pm2 start pm2.config.js   |   docker compose up -d --build
 ```
+
+The wizard installs Python deps into `./venv`, prompts for your Telegram bot token + admin ID, walks you through provider setup (Vertex AI / AI Studio / Copilot / KConsole / Anthropic / Ollama / OpenAI-compat), and writes `.env` + `brain/config.json`. Re-runnable any time — old configs are backed up.
 
 Message your bot in Telegram. Send `/help` for commands, `/status` for session info.
 
