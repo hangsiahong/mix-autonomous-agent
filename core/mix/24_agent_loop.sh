@@ -216,6 +216,40 @@ print(line)
         fi
         [[ -n "$skill" ]] && context_prompt+="- **Active Skill**: $skill\n"
 
+        # Per-turn capability hint: tells the agent whether the CURRENT
+        # provider+model actually supports vision, so it doesn't probe to
+        # verify (which is what cost 64s in the 2026-05-19 13:17 incident).
+        local _vision_state
+        _vision_state=$(PROV="${PROVIDER:-}" MDL="${MODEL:-}" python3 -c "
+import os
+prov = os.environ.get('PROV','').lower()
+mdl = os.environ.get('MDL','').lower()
+# Provider paths that route image_url → inline_data / image parts:
+#   google.sh (vertex/studio) — explicit conversion in payload builder
+#   google_cloudcode          — same path (Gemini API)
+#   anthropic                 — passes image_url through (Claude 3+ native)
+#   default/openai-compat     — image_url is OpenAI's native shape; depends on model
+# Models that DON'T see images (text-only):
+#   ollama with non-multimodal model (gemma, mistral text variants, llama text)
+text_only_model_patterns = ('gemma:', 'gemma-', 'gemma2', 'mistral:', 'llama2:', 'llama3:', 'qwen2:', 'qwen3:', 'deepseek-r1:', 'deepseek-coder:')
+multimodal_model_patterns = ('gemini', 'claude', 'gpt-4', 'llava', 'bakllava', 'pixtral', 'qwen-vl', 'qwen2-vl')
+
+has_vision = False
+if prov == 'ollama':
+    has_vision = any(p in mdl for p in multimodal_model_patterns)
+elif prov in ('google', 'google_cloudcode', 'anthropic'):
+    has_vision = True
+elif any(p in mdl for p in multimodal_model_patterns):
+    has_vision = True
+elif any(p in mdl for p in text_only_model_patterns):
+    has_vision = False
+else:
+    # Unknown provider/model — be optimistic; Telegram images will fail if not supported
+    has_vision = True
+print('enabled' if has_vision else 'disabled (model is text-only)')
+" 2>/dev/null)
+        context_prompt+="- **Vision**: ${_vision_state:-enabled}\n"
+
         # Apply per-session model override (/model command — hermes pattern)
         if [[ -f "$model_file" ]]; then
             local _session_model; _session_model=$(cat "$model_file" 2>/dev/null)
