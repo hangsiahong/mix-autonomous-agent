@@ -1,0 +1,43 @@
+name: Deploy ama_website to GitHub Pages
+
+# Runs on every push to master that touches the website folder (or this
+# workflow file), and can be re-triggered manually from the Actions tab.
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'ama_website/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+# Required permissions for the deploy-pages action.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one Pages deploy runs at a time; queued runs wait for the in-flight one
+# to finish (we don't cancel — that can leave Pages in a half-deployed state).
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/configure-pages@v5
+
+      - name: Upload ama_website as Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./ama_website
+
+      - id: deployment
+        name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4
