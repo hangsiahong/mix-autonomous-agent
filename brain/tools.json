@@ -414,6 +414,19 @@
     "toolset": "inspect"
   },
   {
+    "name": "access_control",
+    "description": "Manage whitelist. Actions: whitelist (add), revoke (remove), sethome (set home_chat), log (show last 20 changes). Every mutation auto-logged to brain/state/access_control.log — use action=log to find who was last added/removed instead of grepping session history.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": {"type": "string", "enum": ["whitelist", "revoke", "sethome", "log"]},
+        "target_id": {"type": "string", "description": "User or chat ID. Required for whitelist/revoke/sethome."}
+      },
+      "required": ["action"]
+    },
+    "toolset": "core"
+  },
+  {
     "name": "send_file",
     "description": "Send a file from disk to the Telegram chat. Use when user asks to download/share a file.",
     "parameters": {

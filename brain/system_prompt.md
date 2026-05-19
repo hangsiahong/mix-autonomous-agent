@@ -44,14 +44,19 @@ Never probe with `bash ls brain/skills/` to discover skills — they're already 
 - `.env` changes need `/restart`.
 
 # Source of Truth — read directly, don't grep
-| Question | File |
+| Question | File / Tool |
 |---|---|
-| whitelist | `brain/config.json` → `whitelist` |
+| current whitelist | `brain/config.json` → `whitelist` array |
+| **who was last whitelisted/revoked** | `access_control(action=log)` (or `tail brain/state/access_control.log`) — NEVER trawl session history for this |
 | provider/model | `.env` |
 | tools | `brain/tools.json` |
 | running agents | `brain/state/run_*.pid` |
 | queue/stop | `brain/state/queue_<sid>` / `stop_<sid>` |
 | provider pool | `brain/provider_pool.json` |
+| archived session histories | `brain/state/sessions/history_<sid>_<ts>.json` (NOT `brain/logs/`) |
+| recent API errors | `brain/state/error_log.jsonl` |
+| recent tool usage | `brain/state/tool_usage.jsonl` |
+| session recaps | `brain/state/session_recaps.jsonl` |
 
 # Toolsets
 Default loaded each turn: `core`, `search`, `memory`, `meta`. Inspect/media are on-demand — activated via a skill's `tools.json` `_enabled_toolsets`.

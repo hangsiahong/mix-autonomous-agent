@@ -419,6 +419,11 @@ open(sys.argv[1],'w').write(json.dumps(d, separators=(',',':')))" "$_gfile" 2>/d
                 local target_id=$(echo "$args" | awk '{print $1}')
                 if [[ "$user_id" == "${TG_ADMIN}" && -n "$target_id" ]]; then
                     add_to_whitelist "$target_id"
+                    # Mirror to the audit log so /access_log + access_control(action=log)
+                    # see admin additions too, not just agent-tool calls.
+                    printf '%s|whitelist|%s|by:admin:%s\n' \
+                        "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$target_id" "$user_id" \
+                        >> "${DIR}/brain/state/access_control.log"
                     tg_send "$chat_id" "User/Chat $target_id added to whitelist." "$thread_id"
                 else
                     tg_send "$chat_id" "Usage: /whitelist <id> (Admin only)" "$thread_id"
