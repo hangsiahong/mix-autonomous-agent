@@ -249,9 +249,14 @@ for t in tasks:
     chat_id   = t.get('chat_id','')
     thread_id = t.get('thread_id','')
     prompt    = t.get('prompt','').replace("'", "'\\''")
-    # The actual fire is done by the shell loop (see scheduler_fire_loop in cron/run.sh).
-    # We just emit a record per due task.
-    print(f"FIRE\t{t['id']}\t{chat_id}\t{thread_id}\t{skill}\t{t.get('model','')}\t{t.get('provider','')}\t{prompt}")
+    # Emit one record per due task. ASCII RS (\x1f) as delimiter — using
+    # \t (tab) here would COLLAPSE empty fields, because bash's read treats
+    # whitespace IFS chars as "any-run is one separator". With \x1f bash
+    # treats each one as a discrete field separator and empty fields stay
+    # empty. (Caught live 2026-05-19: an empty thread_id+skill caused model
+    # value to shift into the thread_id slot, breaking the session path.)
+    sep = "\x1f"
+    print(f"FIRE{sep}{t['id']}{sep}{chat_id}{sep}{thread_id}{sep}{skill}{sep}{t.get('model','')}{sep}{t.get('provider','')}{sep}{prompt}")
     dirty = True
 if dirty:
     # Don't update next_run / counters here — the shell loop reports back via

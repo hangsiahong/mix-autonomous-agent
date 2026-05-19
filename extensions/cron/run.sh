@@ -3,13 +3,16 @@
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-# Dedup lock: prevent multiple concurrent cron instances (happens on bot restart)
+# Dedup lock: prevent multiple concurrent cron instances (happens on bot restart).
+# Must `exec 9>` to OPEN the fd before flock can act on it — the previous order
+# (flock-then-exec) made the first flock always fail (no such fd), causing the
+# whole script to exit 0 silently. Scheduled tasks never fired as a result.
 _CRON_LOCK="${DIR}/brain/state/.cron.lock"
-if ! flock -n 9 2>/dev/null; then
-    exit 0  # Another cron is already running, skip silently
-fi
+mkdir -p "$(dirname "$_CRON_LOCK")"
 exec 9>"$_CRON_LOCK"
-flock -n 9 || exit 0
+if ! flock -n 9; then
+    exit 0  # Another cron tick is already running, skip silently
+fi
 
 source "${DIR}/core/mix/00_header.sh"
 source "${DIR}/core/mix/16_api.sh"
@@ -208,7 +211,9 @@ if [[ -n "$_SCHED_FIRES" ]]; then
     # Trade-off: scheduled task fires on the bot's next idle cycle, not exactly
     # at the scheduled second. Acceptable — cron tick is 5min anyway.
 
-    while IFS=$'\t' read -r _marker _id _chat_id _thread_id _skill _model _provider _prompt; do
+    # IFS=$'\x1f' (ASCII RS), matching scheduler.sh's emit. Plain \t would
+    # collapse adjacent empty fields and shift columns.
+    while IFS=$'\x1f' read -r _marker _id _chat_id _thread_id _skill _model _provider _prompt; do
         [[ "$_marker" != "FIRE" ]] && continue
         [[ -z "$_id" || -z "$_chat_id" ]] && continue
 
@@ -248,13 +253,16 @@ if [[ -n "$_SCHED_FIRES" ]]; then
         # cleaned up by run_agent after the queued message is consumed.
         if [[ -n "$_model" || -n "$_provider" || -n "$_skill" ]]; then
             _override_file="${DIR}/brain/state/sched_override_${_sid}_${_id}.json"
-            python3 -c "
+            # Env vars MUST come BEFORE `python3` so they enter the env;
+            # placing them after the command's argv passes them as positional
+            # parameters (which Python ignores) and the sidecar ends up empty.
+            M="$_model" P="$_provider" S="$_skill" python3 -c "
 import json, os, sys
 d = {}
 if os.environ.get('M'): d['model'] = os.environ['M']
 if os.environ.get('P'): d['provider'] = os.environ['P']
 if os.environ.get('S'): d['skill'] = os.environ['S']
-open(sys.argv[1],'w').write(json.dumps(d))" "$_override_file" M="$_model" P="$_provider" S="$_skill"
+open(sys.argv[1],'w').write(json.dumps(d))" "$_override_file"
         fi
     done <<< "$_SCHED_FIRES"
 fi
