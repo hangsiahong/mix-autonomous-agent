@@ -51,9 +51,12 @@
 
         .marquee-content {
             display: flex;
+            width: max-content;          /* don't shrink to parent — without this flex squeezes the spans and the animation barely moves visually */
             animation: marquee 40s linear infinite;
             white-space: nowrap;
+            will-change: transform;
         }
+        .marquee-content > * { flex-shrink: 0; }
         @keyframes marquee {
             from { transform: translateX(0); }
             to   { transform: translateX(-50%); }
