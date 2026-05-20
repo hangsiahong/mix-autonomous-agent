@@ -119,6 +119,68 @@ _ama_handle_callback() {
             rm -f "$_stop_btn_file"
             ;;
 
+        clarify:*)
+            # Format: clarify:<sid>:<qid>:<option_index>
+            #   qid lets a later clarify overwrite state and invalidate old buttons.
+            local _payload="${data#clarify:}"
+            local _sid _qid _idx
+            IFS=':' read -r _sid _qid _idx <<< "$_payload"
+            local _state_file="${DIR}/brain/state/clarify_${_sid}.json"
+
+            if [[ ! -f "$_state_file" || -z "$_idx" ]]; then
+                # Stale button (state cleared by a newer clarify or /new). Just strip buttons.
+                [[ -n "$btn_msg_id" ]] && tg_remove_buttons "$chat_id" "$btn_msg_id" 2>/dev/null || true
+                return
+            fi
+
+            # Resolve index → label, ALSO verify qid matches the current state.
+            # Mismatch ⇒ a newer clarify replaced this question; tap is stale.
+            local _resolved
+            _resolved=$(IDX="$_idx" QID="$_qid" python3 -c '
+import json, os, sys
+try:
+    s = json.load(open(sys.argv[1]))
+    if str(s.get("qid","")) != os.environ["QID"]:
+        sys.exit(0)  # stale
+    opts = s.get("options") or []
+    i = int(os.environ["IDX"])
+    if 0 <= i < len(opts):
+        print(opts[i])
+except Exception:
+    pass
+' "$_state_file" 2>/dev/null)
+
+            if [[ -z "$_resolved" ]]; then
+                [[ -n "$btn_msg_id" ]] && tg_remove_buttons "$chat_id" "$btn_msg_id" 2>/dev/null || true
+                rm -f "$_state_file"
+                return
+            fi
+
+            # Pull stashed thread_id + msg_id + question so we dispatch to the right chat
+            local _orig_q _orig_tid _orig_msg
+            _orig_q=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("question",""))' "$_state_file" 2>/dev/null)
+            _orig_tid=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("thread_id","") or "")' "$_state_file" 2>/dev/null)
+            _orig_msg=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("msg_id","") or "")' "$_state_file" 2>/dev/null)
+
+            # Edit the question message in place: strip buttons, show selection.
+            if [[ -n "$_orig_msg" ]]; then
+                local _edited
+                _edited=$(printf '❓ %s\n\n→ <b>%s</b>' "${_orig_q}" "${_resolved}")
+                tg_edit "$chat_id" "$_orig_msg" "$_edited" "HTML" > /dev/null 2>&1 || \
+                    tg_remove_buttons "$chat_id" "$_orig_msg" 2>/dev/null || true
+            elif [[ -n "$btn_msg_id" ]]; then
+                tg_remove_buttons "$chat_id" "$btn_msg_id" 2>/dev/null || true
+            fi
+
+            # Clear state — next clarify call overwrites anyway, but be tidy
+            rm -f "$_state_file"
+
+            # Dispatch the chosen text as the next user turn. Skill auto-bind reuses
+            # whatever was already bound for the previous turn (env _AMA_SKILL).
+            local _skill="${AMA_DEFAULT_SKILL:-default}"
+            ( set -m; run_agent "$chat_id" "$_resolved" "$user_id" "[]" "$_orig_tid" "$_sid" "" "$username" "$_skill" "0" ) &
+            ;;
+
         interrupt:*)
             local _sid="${data#interrupt:}"
             local _pending_file="${DIR}/brain/state/interrupt_input_${_sid}"
@@ -276,6 +338,13 @@ For code/text: cat \"${_mf_path}\""
             "$thread_id" "$user_id" "$username" "$message_id"
         return
     fi
+
+    # User typed a free-text reply: invalidate any pending clarify buttons.
+    # Without this, the user could type AND then later tap an old button → double dispatch.
+    # The qid check still protects from race conditions, but clearing here is the
+    # canonical "this question is answered" signal.
+    [[ -f "${DIR}/brain/state/clarify_${session_id}.json" ]] && \
+        rm -f "${DIR}/brain/state/clarify_${session_id}.json" 2>/dev/null || true
 
     # Per-group mode gate
     # Mode resolved: per-group setting > REQUIRE_MENTION env fallback > active
@@ -522,7 +591,8 @@ open(sys.argv[1],'w').write(json.dumps(d, separators=(',',':')))" "$_gfile" 2>/d
                       "${DIR}/brain/state/prefetch_${session_id}" \
                       "${DIR}/brain/state/budget_${session_id}.json" \
                       "${DIR}/brain/state/active_tools_${session_id}.json" \
-                      "${DIR}/brain/state/goal_${session_id}.json" 2>/dev/null || true
+                      "${DIR}/brain/state/goal_${session_id}.json" \
+                      "${DIR}/brain/state/clarify_${session_id}.json" 2>/dev/null || true
                 # Generate the session recap in the background against the
                 # just-archived history file (uses `( cmd & )` detach idiom so
                 # the work survives the dispatcher's EXIT trap).

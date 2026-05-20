@@ -197,12 +197,20 @@
   },
   {
     "name": "clarify",
-    "description": "Ask the user a clarifying question. Stops the turn and waits.",
+    "description": "Ask the user a question and stop the turn. Two shapes: (1) plain \u2014 pass only `question`, user answers via free text. (2) multi-choice \u2014 pass `question` + `options` (array of 2-6 distinct labels), renders as Telegram inline buttons; user taps one (or types `Other: ...`). Use multi-choice when you've identified 2-6 concrete paths and want a fast tap rather than free text \u2014 especially before irreversible work or when scoping a request. Don't use it to confirm what the user obviously wants.",
     "parameters": {
       "type": "object",
       "properties": {
         "question": {
-          "type": "string"
+          "type": "string",
+          "description": "The question to ask. Be specific and concise \u2014 under 200 chars works best on mobile."
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Optional. 2-6 distinct option labels (each \u226460 chars). When provided, renders as inline keyboard buttons on Telegram. Make labels self-explanatory \u2014 no extra description column. Order from most\u2192least likely. Omit for free-text questions."
         }
       },
       "required": [
