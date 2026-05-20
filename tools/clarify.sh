@@ -56,10 +56,10 @@ if [[ "$have_opts" == "1" && -n "$session_id" ]]; then
 
     # Unique question id so a later clarify overwriting this state file
     # cleanly invalidates any old buttons (router checks qid match on tap).
-    local _qid; _qid=$(date +%s%N)
+    _qid=$(date +%s%N)
 
     # Save state: callback handler in router.sh reads this to resolve index → label
-    SID="$session_id" QID="$_qid" Q="$question" OPTS="$options_json" CID="$chat_id" TID="${thread_id:-}" python3 -c '
+    SID="$session_id" QID="$_qid" Q="$question" OPTS="$options_json" CID="$chat_id" TID="${thread_id:-}" python3 <<'PYEOF'
 import json, os, time
 state = {
     "session_id": os.environ["SID"],
@@ -71,7 +71,7 @@ state = {
     "ts":         int(time.time()),
 }
 open(f"brain/state/clarify_{os.environ['SID']}.json", "w").write(json.dumps(state))
-'
+PYEOF
 
     # Build the inline_keyboard payload: one button per row (max readable on mobile)
     payload=$(SID="$session_id" QID="$_qid" Q="$question" OPTS="$options_json" CID="$chat_id" TID="${thread_id:-}" python3 -c '
@@ -104,15 +104,15 @@ print(json.dumps(d))
 
     # Stash the question message id alongside state (for clean button removal later)
     if [[ -n "$msg_id" ]]; then
-        python3 -c '
-import json, os, sys
+        SID="$session_id" MID="$msg_id" python3 <<'PYEOF'
+import json, os
 p = "brain/state/clarify_" + os.environ["SID"] + ".json"
 try:
     s = json.load(open(p))
-    s["msg_id"] = int(sys.argv[1])
+    s["msg_id"] = int(os.environ["MID"])
     open(p, "w").write(json.dumps(s))
 except Exception: pass
-' "$msg_id"
+PYEOF
     fi
 
     echo "CLARIFY_SENT_WITH_BUTTONS"
