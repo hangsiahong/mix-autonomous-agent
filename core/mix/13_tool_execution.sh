@@ -50,9 +50,12 @@ for k, v in d.items():
     v_str = v if isinstance(v, str) else json.dumps(v)
     print(f'export TOOL_{k}={shlex.quote(v_str)}')
 ")"
-    # Export context so tools like clarify can send Telegram messages
+    # Export context so tools like clarify can send Telegram messages.
+    # SESSION_ID is also exposed for tools that need per-session state files
+    # (tool_search needs it to track which deferred tools have been activated).
     export TOOL_CHAT_ID="$chat_id"
     export TOOL_THREAD_ID="$thread_id"
+    export TOOL_SESSION_ID="${AMA_SESSION_ID:-${chat_id}${thread_id:+_${thread_id}}}"
     
     local output
     output=$(bash "$script" 2>&1)
@@ -64,7 +67,7 @@ import json, sys
 for k in json.loads(sys.stdin.read()):
     print(f'unset TOOL_{k}')
 ")"
-    unset TOOL_CHAT_ID TOOL_THREAD_ID
+    unset TOOL_CHAT_ID TOOL_THREAD_ID TOOL_SESSION_ID
     
     echo "$output"
 }

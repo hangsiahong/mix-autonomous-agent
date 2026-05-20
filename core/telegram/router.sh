@@ -520,6 +520,7 @@ open(sys.argv[1],'w').write(json.dumps(d, separators=(',',':')))" "$_gfile" 2>/d
                       "${DIR}/brain/state/active_skill_${session_id}" \
                       "${DIR}/brain/state/prefetch_${session_id}" \
                       "${DIR}/brain/state/budget_${session_id}.json" \
+                      "${DIR}/brain/state/active_tools_${session_id}.json" \
                       "${DIR}/brain/state/goal_${session_id}.json" 2>/dev/null || true
                 # Generate the session recap in the background against the
                 # just-archived history file (uses `( cmd & )` detach idiom so

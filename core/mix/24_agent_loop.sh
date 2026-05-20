@@ -72,6 +72,11 @@ run_agent() {
     # the invoking shell's PID, not ours; $BASHPID is the actual process PID)
     local _agent_pid=$BASHPID
 
+    # Export session_id so tool wrappers (tools/<name>.sh) can resolve per-
+    # session state files without needing to reconstruct it from chat_id +
+    # thread_id. Consumed by tool_search via TOOL_SESSION_ID.
+    export AMA_SESSION_ID="$session_id"
+
     # Session Lock block
     (
         # Wait for the lock — write PID file INSIDE lock so it always points
@@ -236,6 +241,17 @@ print(line)
         local _abudget_line
         _abudget_line=$(python3 tools/token_budget.py line "$session_id" 2>/dev/null)
         [[ -n "$_abudget_line" ]] && context_prompt+="${_abudget_line}\n"
+
+        # Deferred tools: list names of tools the model COULD call but whose
+        # schemas aren't loaded yet (saves ~1.5-2k tokens/turn baseline by
+        # keeping their schemas out of the prompt until needed). Model uses
+        # tool_search to fetch a schema when it actually wants to use one.
+        local _deferred_list
+        _deferred_list=$(python3 tools/tool_search.py list-deferred "$session_id" 2>/dev/null)
+        if [[ -n "$_deferred_list" ]]; then
+            context_prompt+="\n## Deferred Tools (call \`tool_search\` to load a schema)\n"
+            context_prompt+="${_deferred_list}\n"
+        fi
 
         # Status-query circuit breaker. When the user asks a count/list/status
         # question, the right answer is "one authoritative tool call, then

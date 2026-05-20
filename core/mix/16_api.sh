@@ -257,28 +257,56 @@ print(tools_json)
     [[ -z "$_all_tools" ]] && _all_tools=$(cat brain/tools.json 2>/dev/null || echo '[]')
   fi
   local _active_ts="${TOOL_EXTRA_TOOLSETS:-} $_default_ts"
+  # Deferred-tool activation set: any tools the model has loaded this session
+  # via tool_search. Empty array on first turn, grows as model calls
+  # tool_search. Cleared on /new. See tools/tool_search.py.
+  local _active_deferred_json="[]"
+  if [[ -n "${AMA_SESSION_ID:-}" ]]; then
+      _active_deferred_json=$(python3 tools/tool_search.py active-json "$AMA_SESSION_ID" 2>/dev/null || echo "[]")
+  fi
   local tools
-  tools=$(python3 -c "
-import json, sys
+  tools=$(ACTIVE_DEFERRED="$_active_deferred_json" python3 -c "
+import json, os, sys
 raw = open(sys.argv[1]).read()
 try:
     all_tools = json.loads(raw)
 except:
     print(raw); sys.exit(0)
-active = set(sys.argv[2].split())
-# Always include tools with no toolset field (legacy/custom tools)
-filtered = [t for t in all_tools if t.get('toolset','core') in active or 'toolset' not in t]
-# Strip internal 'toolset' field before sending to API
+active_ts = set(sys.argv[2].split())
+active_deferred = set(json.loads(os.environ.get('ACTIVE_DEFERRED','[]') or '[]'))
+# Two-stage filter:
+#   1. Deferred tools: included ONLY if (a) it's tool_search itself, or
+#      (b) the model has activated it this session via tool_search. Activation
+#      bypasses the toolset filter — once you've loaded it, you can use it
+#      regardless of which toolset it belongs to.
+#   2. Non-deferred tools: classic toolset filter (default toolsets + skill
+#      additions). Legacy tools without a 'toolset' field are always included.
+filtered = []
+for t in all_tools:
+    name = t.get('name','')
+    is_deferred = bool(t.get('defer'))
+    if is_deferred:
+        if name == 'tool_search' or name in active_deferred:
+            filtered.append(t)
+        # else: deferred + not activated → skip (model sees name only via
+        # the per-turn ## Deferred Tools block in 24_agent_loop.sh)
+    else:
+        if t.get('toolset','core') in active_ts or 'toolset' not in t:
+            filtered.append(t)
+# Strip internal bookkeeping fields before sending to the API.
 for t in filtered:
     t.pop('toolset', None)
+    t.pop('defer', None)
 print(json.dumps(filtered, separators=(',',':')))
 " <(printf '%s' "$_all_tools") "$_active_ts" 2>/dev/null)
-  # Fallback: if filter fails, send all tools (minus toolset field)
+  # Fallback: if filter fails, send all tools (minus internal fields)
   if [[ -z "$tools" || "$tools" == "null" ]]; then
     tools=$(python3 -c "
 import json,sys
 t=json.loads(open(sys.argv[1]).read())
-for x in t: x.pop('toolset',None)
+for x in t:
+    x.pop('toolset',None)
+    x.pop('defer',None)
 print(json.dumps(t,separators=(',',':')))
 " <(cat brain/tools.json) 2>/dev/null || cat brain/tools.json)
   fi
