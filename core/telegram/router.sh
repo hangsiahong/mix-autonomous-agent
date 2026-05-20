@@ -463,6 +463,7 @@ open(sys.argv[1],'w').write(json.dumps(d, separators=(',',':')))" "$_gfile" 2>/d
 /schedule add every=12h "..." [model=X] — recurring task; /schedule list|remove|pause|resume
 
 <b>Config</b>
+/budget — set token budget (e.g. <code>/budget 500k</code>) or include <code>+500k</code> in any message; /budget clear to remove
 /model &lt;name&gt; — switch model this session
 /skill &lt;name&gt; — activate a skill • /skill off to clear
 /skills — list available skills
@@ -518,6 +519,7 @@ open(sys.argv[1],'w').write(json.dumps(d, separators=(',',':')))" "$_gfile" 2>/d
                       "${DIR}/brain/state/queue_${session_id}" \
                       "${DIR}/brain/state/active_skill_${session_id}" \
                       "${DIR}/brain/state/prefetch_${session_id}" \
+                      "${DIR}/brain/state/budget_${session_id}.json" \
                       "${DIR}/brain/state/goal_${session_id}.json" 2>/dev/null || true
                 # Generate the session recap in the background against the
                 # just-archived history file (uses `( cmd & )` detach idiom so
@@ -635,6 +637,46 @@ else:
                         local _removed_count; _removed_count=$(echo "$_undo_result" | cut -d: -f2)
                         local _preview; _preview=$(echo "$_undo_result" | cut -d: -f3-)
                         tg_send "$chat_id" "↩️ Removed $_removed_count message(s). Last prompt was: <i>${_preview}</i>" "$thread_id" "HTML"
+                    fi
+                fi
+                ;;
+
+            /budget)
+                # Per-session token budget knob (cc-oss-inspired). Examples:
+                #   /budget              → show current budget + spent
+                #   /budget 500k         → set 500_000-token budget
+                #   /budget spend 1.5m   → same, verbose form
+                #   /budget clear        → remove budget; agent runs unconstrained
+                local _budget_args="$args"
+                if [[ -z "$_budget_args" ]]; then
+                    local _line; _line=$(python3 tools/token_budget.py line "$session_id" 2>/dev/null)
+                    if [[ -n "$_line" ]]; then
+                        tg_send "$chat_id" "${_line}
+
+<i>Use <code>/budget clear</code> to remove, or just send a new value to replace (e.g. <code>+500k</code> in any message).</i>" "$thread_id" "HTML"
+                    else
+                        tg_send "$chat_id" "<i>No active token budget for this session.</i>
+
+Set one by including a budget anywhere in a message:
+• <code>+500k</code>  or  <code>+1.5m</code>  (shorthand)
+• <code>spend 50k tokens</code>  (verbose)
+
+Or use <code>/budget &lt;value&gt;</code> directly." "$thread_id" "HTML"
+                    fi
+                elif [[ "$_budget_args" == "clear" || "$_budget_args" == "reset" || "$_budget_args" == "off" ]]; then
+                    python3 tools/token_budget.py clear "$session_id" 2>/dev/null
+                    tg_send "$chat_id" "✅ Budget cleared. Agent runs unconstrained." "$thread_id"
+                else
+                    # Parse argument via the same library — accepts "500k", "+500k", "spend 50k tokens"
+                    local _val; _val=$(printf '%s' "$_budget_args" | python3 tools/token_budget.py parse 2>/dev/null)
+                    # Allow bare numeric prefix too: "500k", "1.5m" without the "+"
+                    [[ -z "$_val" ]] && _val=$(printf '+%s' "$_budget_args" | python3 tools/token_budget.py parse 2>/dev/null)
+                    if [[ -n "$_val" ]]; then
+                        python3 tools/token_budget.py set "$session_id" "$_val" user >/dev/null
+                        local _line2; _line2=$(python3 tools/token_budget.py line "$session_id" 2>/dev/null)
+                        tg_send "$chat_id" "✅ ${_line2}" "$thread_id" "HTML"
+                    else
+                        tg_send "$chat_id" "Couldn't parse budget from <code>${_budget_args}</code>. Try <code>500k</code>, <code>1.5m</code>, or <code>spend 50k tokens</code>." "$thread_id" "HTML"
                     fi
                 fi
                 ;;
