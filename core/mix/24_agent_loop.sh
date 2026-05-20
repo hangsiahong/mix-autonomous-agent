@@ -629,6 +629,27 @@ for tc in json.loads(open(sys.argv[1]).read()):
     print(f'{name.strip()}|{tc.get(\"id\", \"\").strip()}')
 " <(printf '%s' "$tool_calls"))
                 fi
+                # Post-batch file-mutation verifier (hermes v0.14.0 pattern).
+                # Stats every file targeted by write tools in THIS batch; if any
+                # exist + sizes look off, append the footer to the last tool
+                # result so the model can spot silent write failures before its
+                # next text reply (or before the next tool batch).
+                local _fm_footer
+                _fm_footer=$(printf '%s' "$tool_calls" | python3 tools/file_mutation_check.py 2>/dev/null)
+                if [[ -n "$_fm_footer" ]]; then
+                    HISTORY=$(python3 -c "
+import json, sys
+h = json.loads(open(sys.argv[1]).read())
+footer = open(sys.argv[2]).read()
+for i in range(len(h)-1, -1, -1):
+    if h[i].get('role') == 'tool':
+        c = h[i].get('content', '')
+        h[i]['content'] = str(c) + '\n' + footer
+        break
+print(json.dumps(h, separators=(',',':')))
+" <(printf '%s' "$HISTORY") <(printf '%s' "$_fm_footer") 2>/dev/null || printf '%s' "$HISTORY")
+                fi
+
                 # Drain pending /steer into last tool result (hermes pattern)
                 if [[ -f "$steer_file" ]]; then
                     local _steer_text; _steer_text=$(cat "$steer_file" 2>/dev/null)
