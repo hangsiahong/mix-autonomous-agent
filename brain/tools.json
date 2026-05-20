@@ -5,10 +5,18 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "query": {"type": "string", "description": "Search query."},
-        "limit": {"type": "integer", "description": "1-15, default 8."}
+        "query": {
+          "type": "string",
+          "description": "Search query."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "1-15, default 8."
+        }
       },
-      "required": ["query"]
+      "required": [
+        "query"
+      ]
     },
     "toolset": "search"
   },
@@ -18,11 +26,22 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "url": {"type": "string", "description": "Public http/https URL."},
-        "query": {"type": "string", "description": "Optional: what to extract from the page."},
-        "max_chars": {"type": "integer", "description": "Truncation cap, default 8000."}
+        "url": {
+          "type": "string",
+          "description": "Public http/https URL."
+        },
+        "query": {
+          "type": "string",
+          "description": "Optional: what to extract from the page."
+        },
+        "max_chars": {
+          "type": "integer",
+          "description": "Truncation cap, default 8000."
+        }
       },
-      "required": ["url"]
+      "required": [
+        "url"
+      ]
     },
     "toolset": "search"
   },
@@ -32,10 +51,18 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "command": {"type": "string", "description": "The command."},
-        "timeout": {"type": "integer", "description": "Kill after N seconds. Default 30, max 120."}
+        "command": {
+          "type": "string",
+          "description": "The command."
+        },
+        "timeout": {
+          "type": "integer",
+          "description": "Kill after N seconds. Default 30, max 120."
+        }
       },
-      "required": ["command"]
+      "required": [
+        "command"
+      ]
     },
     "toolset": "core"
   },
@@ -45,25 +72,48 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "path": {"type": "string", "description": "Relative path."},
-        "content": {"type": "string", "description": "Full content."},
-        "append": {"type": "boolean", "description": "Append instead of overwrite."}
+        "path": {
+          "type": "string",
+          "description": "Relative path."
+        },
+        "content": {
+          "type": "string",
+          "description": "Full content."
+        },
+        "append": {
+          "type": "boolean",
+          "description": "Append instead of overwrite."
+        }
       },
-      "required": ["path", "content"]
+      "required": [
+        "path",
+        "content"
+      ]
     },
     "toolset": "core"
   },
   {
     "name": "read_code",
-    "description": "Read a file with line numbers. Use this before edit_code/patch — never guess content.",
+    "description": "Read a file with line numbers. Use this before edit_code/patch \u2014 never guess content.",
     "parameters": {
       "type": "object",
       "properties": {
-        "path": {"type": "string", "description": "Relative path within the project."},
-        "offset": {"type": "integer", "description": "1-based starting line. Default 1."},
-        "limit": {"type": "integer", "description": "Max lines (default 500, max 2000)."}
+        "path": {
+          "type": "string",
+          "description": "Relative path within the project."
+        },
+        "offset": {
+          "type": "integer",
+          "description": "1-based starting line. Default 1."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max lines (default 500, max 2000)."
+        }
       },
-      "required": ["path"]
+      "required": [
+        "path"
+      ]
     },
     "toolset": "core"
   },
@@ -73,12 +123,25 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "pattern": {"type": "string", "description": "Text or regex."},
-        "path": {"type": "string", "description": "Directory or file. Default: project root."},
-        "file_glob": {"type": "string", "description": "e.g. '*.sh'."},
-        "ignore_case": {"type": "boolean"}
+        "pattern": {
+          "type": "string",
+          "description": "Text or regex."
+        },
+        "path": {
+          "type": "string",
+          "description": "Directory or file. Default: project root."
+        },
+        "file_glob": {
+          "type": "string",
+          "description": "e.g. '*.sh'."
+        },
+        "ignore_case": {
+          "type": "boolean"
+        }
       },
-      "required": ["pattern"]
+      "required": [
+        "pattern"
+      ]
     },
     "toolset": "search"
   },
@@ -88,7 +151,10 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "directory": {"type": "string", "description": "Relative path. Default: project root."}
+        "directory": {
+          "type": "string",
+          "description": "Relative path. Default: project root."
+        }
       },
       "required": []
     },
@@ -100,22 +166,56 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "action": {"type": "string", "enum": ["add", "list", "done", "delete", "clear"]},
-        "session": {"type": "string", "description": "Default 'default'."},
-        "text": {"type": "string", "description": "Required for add."},
-        "id": {"type": "string", "description": "Required for done/delete."}
+        "action": {
+          "type": "string",
+          "enum": [
+            "add",
+            "list",
+            "done",
+            "delete",
+            "clear"
+          ]
+        },
+        "session": {
+          "type": "string",
+          "description": "Default 'default'."
+        },
+        "text": {
+          "type": "string",
+          "description": "Required for add."
+        },
+        "id": {
+          "type": "string",
+          "description": "Required for done/delete."
+        }
       },
-      "required": ["action"]
+      "required": [
+        "action"
+      ]
     },
     "toolset": "meta"
   },
   {
     "name": "clarify",
-    "description": "Ask the user a clarifying question. Stops the turn and waits.",
+    "description": "Ask the user a question and stop the turn. Two shapes: (1) plain \u2014 pass only `question`, user answers via free text. (2) multi-choice \u2014 pass `question` + `options` (array of 2-6 distinct labels), renders as Telegram inline buttons; user taps one (or types `Other: ...`). Use multi-choice when you've identified 2-6 concrete paths and want a fast tap rather than free text \u2014 especially before irreversible work or when scoping a request. Don't use it to confirm what the user obviously wants.",
     "parameters": {
       "type": "object",
-      "properties": {"question": {"type": "string"}},
-      "required": ["question"]
+      "properties": {
+        "question": {
+          "type": "string",
+          "description": "The question to ask. Be specific and concise \u2014 under 200 chars works best on mobile."
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Optional. 2-6 distinct option labels (each \u226460 chars). When provided, renders as inline keyboard buttons on Telegram. Make labels self-explanatory \u2014 no extra description column. Order from most\u2192least likely. Omit for free-text questions."
+        }
+      },
+      "required": [
+        "question"
+      ]
     },
     "toolset": "core"
   },
@@ -125,25 +225,57 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "action": {"type": "string", "enum": ["run", "list", "output", "kill"]},
-        "command": {"type": "string", "description": "Required for run."},
-        "name": {"type": "string", "description": "Label for output/kill. Auto-generated otherwise."}
+        "action": {
+          "type": "string",
+          "enum": [
+            "run",
+            "list",
+            "output",
+            "kill"
+          ]
+        },
+        "command": {
+          "type": "string",
+          "description": "Required for run."
+        },
+        "name": {
+          "type": "string",
+          "description": "Label for output/kill. Auto-generated otherwise."
+        }
       },
-      "required": ["action"]
+      "required": [
+        "action"
+      ]
     },
     "toolset": "meta"
   },
   {
     "name": "session_search",
-    "description": "Search past sessions by keyword/topic. Returns ranked summaries.",
+    "description": "Recall past conversations across all sessions. No LLM cost \u2014 pure SQLite/FTS5 lookup. Three modes (inferred from args): (1) discovery \u2014 pass `query` for top-N matching sessions with snippets + \u00b1window context + first/last bookends. (2) scroll \u2014 pass `session_id` + `around_message_id` to get a window centered on that message; re-anchor to page deeper. (3) browse \u2014 no args returns recent sessions with previews. Far cheaper and faster than memory_recall for finding *what we discussed before*; use this when the user references a past conversation/topic/decision.",
     "parameters": {
       "type": "object",
       "properties": {
-        "query": {"type": "string"},
-        "session": {"type": "string", "description": "Optional: specific session ID."},
-        "limit": {"type": "integer", "description": "1-5, default 3."}
-      },
-      "required": ["query"]
+        "query": {
+          "type": "string",
+          "description": "Discovery mode: search terms. Multi-word AND-matched via FTS5. Omit to browse or scroll."
+        },
+        "session_id": {
+          "type": "string",
+          "description": "Filter discovery to one session, OR (with around_message_id) trigger scroll mode."
+        },
+        "around_message_id": {
+          "type": "integer",
+          "description": "Scroll mode: anchor message id. Combined with session_id, returns \u00b1window messages around it. Get message ids from a prior discovery result."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Discovery: max sessions (1-10, default 5). Browse: max sessions (1-50, default 15)."
+        },
+        "window": {
+          "type": "integer",
+          "description": "Discovery: msgs each side of match (0-15, default 5). Scroll: msgs each side of anchor (1-30, default 5)."
+        }
+      }
     },
     "toolset": "memory"
   },
@@ -153,13 +285,39 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "action": {"type": "string", "enum": ["add", "replace", "remove", "read"]},
-        "target": {"type": "string", "enum": ["memory", "user"], "description": "memory=agent notes (3KB cap), user=user profile (2KB cap)."},
-        "content": {"type": "string", "description": "Required for add."},
-        "old_text": {"type": "string", "description": "Unique substring. Required for replace/remove."},
-        "new_content": {"type": "string", "description": "Required for replace."}
+        "action": {
+          "type": "string",
+          "enum": [
+            "add",
+            "replace",
+            "remove",
+            "read"
+          ]
+        },
+        "target": {
+          "type": "string",
+          "enum": [
+            "memory",
+            "user"
+          ],
+          "description": "memory=agent notes (3KB cap), user=user profile (2KB cap)."
+        },
+        "content": {
+          "type": "string",
+          "description": "Required for add."
+        },
+        "old_text": {
+          "type": "string",
+          "description": "Unique substring. Required for replace/remove."
+        },
+        "new_content": {
+          "type": "string",
+          "description": "Required for replace."
+        }
       },
-      "required": ["action"]
+      "required": [
+        "action"
+      ]
     },
     "toolset": "memory"
   },
@@ -169,13 +327,24 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "prompt": {"type": "string"},
-        "width": {"type": "integer", "description": "Default 1024."},
-        "height": {"type": "integer", "description": "Default 1024."}
+        "prompt": {
+          "type": "string"
+        },
+        "width": {
+          "type": "integer",
+          "description": "Default 1024."
+        },
+        "height": {
+          "type": "integer",
+          "description": "Default 1024."
+        }
       },
-      "required": ["prompt"]
+      "required": [
+        "prompt"
+      ]
     },
-    "toolset": "media"
+    "toolset": "media",
+    "defer": true
   },
   {
     "name": "edit_code",
@@ -183,12 +352,26 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "path": {"type": "string"},
-        "old_string": {"type": "string", "description": "Multi-line OK."},
-        "new_string": {"type": "string", "description": "Multi-line OK."},
-        "replace_all": {"type": "boolean"}
+        "path": {
+          "type": "string"
+        },
+        "old_string": {
+          "type": "string",
+          "description": "Multi-line OK."
+        },
+        "new_string": {
+          "type": "string",
+          "description": "Multi-line OK."
+        },
+        "replace_all": {
+          "type": "boolean"
+        }
       },
-      "required": ["path", "old_string", "new_string"]
+      "required": [
+        "path",
+        "old_string",
+        "new_string"
+      ]
     },
     "toolset": "core"
   },
@@ -198,9 +381,14 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "patch": {"type": "string", "description": "Full V4A patch text incl. *** Begin Patch / *** End Patch."}
+        "patch": {
+          "type": "string",
+          "description": "Full V4A patch text incl. *** Begin Patch / *** End Patch."
+        }
       },
-      "required": ["patch"]
+      "required": [
+        "patch"
+      ]
     },
     "toolset": "core"
   },
@@ -210,7 +398,10 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "depth": {"type": "integer", "description": "Default 3."}
+        "depth": {
+          "type": "integer",
+          "description": "Default 3."
+        }
       },
       "required": []
     },
@@ -222,10 +413,17 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "text": {"type": "string"},
-        "metadata_json": {"type": "string", "description": "e.g. '{\"topic\":\"...\"}'."}
+        "text": {
+          "type": "string"
+        },
+        "metadata_json": {
+          "type": "string",
+          "description": "e.g. '{\"topic\":\"...\"}'."
+        }
       },
-      "required": ["text"]
+      "required": [
+        "text"
+      ]
     },
     "toolset": "memory"
   },
@@ -235,24 +433,41 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "query": {"type": "string"},
-        "limit": {"type": "integer", "description": "Default 3."}
+        "query": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Default 3."
+        }
       },
-      "required": ["query"]
+      "required": [
+        "query"
+      ]
     },
     "toolset": "memory"
   },
   {
     "name": "sys_info",
     "description": "CPU, memory, disk, uptime stats.",
-    "parameters": {"type": "object", "properties": {}, "required": []},
-    "toolset": "inspect"
+    "parameters": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    },
+    "toolset": "inspect",
+    "defer": true
   },
   {
     "name": "read_error_log",
     "description": "Recent agent errors for diagnosis.",
-    "parameters": {"type": "object", "properties": {}, "required": []},
-    "toolset": "inspect"
+    "parameters": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    },
+    "toolset": "inspect",
+    "defer": true
   },
   {
     "name": "custom_tool_manager",
@@ -260,15 +475,36 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "action": {"type": "string", "enum": ["create", "list", "delete"]},
-        "name": {"type": "string", "description": "No spaces."},
-        "description": {"type": "string"},
-        "code": {"type": "string", "description": "Bash script body."},
-        "parameters_json": {"type": "string", "description": "JSON schema of params."}
+        "action": {
+          "type": "string",
+          "enum": [
+            "create",
+            "list",
+            "delete"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "description": "No spaces."
+        },
+        "description": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string",
+          "description": "Bash script body."
+        },
+        "parameters_json": {
+          "type": "string",
+          "description": "JSON schema of params."
+        }
       },
-      "required": ["action"]
+      "required": [
+        "action"
+      ]
     },
-    "toolset": "meta"
+    "toolset": "meta",
+    "defer": true
   },
   {
     "name": "skill_manager",
@@ -276,14 +512,39 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "action": {"type": "string", "enum": ["list", "create", "bind", "unbind"]},
-        "skill": {"type": "string", "description": "Required for create/bind/unbind."},
-        "prompt": {"type": "string", "description": "Required for create."},
-        "toolsets": {"type": "string", "description": "Space-separated extras, e.g. 'inspect media'."},
-        "chat_id": {"type": "string", "description": "Required for bind/unbind."},
-        "thread_id": {"type": "string", "description": "Required for bind/unbind."}
+        "action": {
+          "type": "string",
+          "enum": [
+            "list",
+            "create",
+            "bind",
+            "unbind"
+          ]
+        },
+        "skill": {
+          "type": "string",
+          "description": "Required for create/bind/unbind."
+        },
+        "prompt": {
+          "type": "string",
+          "description": "Required for create."
+        },
+        "toolsets": {
+          "type": "string",
+          "description": "Space-separated extras, e.g. 'inspect media'."
+        },
+        "chat_id": {
+          "type": "string",
+          "description": "Required for bind/unbind."
+        },
+        "thread_id": {
+          "type": "string",
+          "description": "Required for bind/unbind."
+        }
       },
-      "required": ["action"]
+      "required": [
+        "action"
+      ]
     },
     "toolset": "meta"
   },
@@ -293,19 +554,37 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "skill": {"type": "string", "description": "Short name."},
-        "repo": {"type": "string", "description": "https:// git URL."},
-        "toolsets": {"type": "string", "description": "Optional extras."}
+        "skill": {
+          "type": "string",
+          "description": "Short name."
+        },
+        "repo": {
+          "type": "string",
+          "description": "https:// git URL."
+        },
+        "toolsets": {
+          "type": "string",
+          "description": "Optional extras."
+        }
       },
-      "required": ["skill", "repo"]
+      "required": [
+        "skill",
+        "repo"
+      ]
     },
-    "toolset": "meta"
+    "toolset": "meta",
+    "defer": true
   },
   {
     "name": "insights",
     "description": "Token + tool usage stats.",
-    "parameters": {"type": "object", "properties": {}, "required": []},
-    "toolset": "inspect"
+    "parameters": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    },
+    "toolset": "inspect",
+    "defer": true
   },
   {
     "name": "browser",
@@ -313,14 +592,35 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "action": {"type": "string", "enum": ["navigate", "snapshot", "click", "type", "scroll"]},
-        "url": {"type": "string", "description": "Required for navigate."},
-        "selector": {"type": "string", "description": "CSS selector or visible text."},
-        "text": {"type": "string", "description": "Required for type."}
+        "action": {
+          "type": "string",
+          "enum": [
+            "navigate",
+            "snapshot",
+            "click",
+            "type",
+            "scroll"
+          ]
+        },
+        "url": {
+          "type": "string",
+          "description": "Required for navigate."
+        },
+        "selector": {
+          "type": "string",
+          "description": "CSS selector or visible text."
+        },
+        "text": {
+          "type": "string",
+          "description": "Required for type."
+        }
       },
-      "required": ["action"]
+      "required": [
+        "action"
+      ]
     },
-    "toolset": "search"
+    "toolset": "search",
+    "defer": true
   },
   {
     "name": "recap",
@@ -328,8 +628,14 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "session_id": {"type": "string", "description": "Auto-detected if omitted."},
-        "last_n": {"type": "integer", "description": "Default 20."}
+        "session_id": {
+          "type": "string",
+          "description": "Auto-detected if omitted."
+        },
+        "last_n": {
+          "type": "integer",
+          "description": "Default 20."
+        }
       },
       "required": []
     },
@@ -340,10 +646,17 @@
     "description": "Read a kanban task's state and dependencies.",
     "parameters": {
       "type": "object",
-      "properties": {"task_id": {"type": "string"}},
-      "required": ["task_id"]
+      "properties": {
+        "task_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_id"
+      ]
     },
-    "toolset": "kanban"
+    "toolset": "kanban",
+    "defer": true
   },
   {
     "name": "kanban_create",
@@ -351,15 +664,33 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "title": {"type": "string"},
-        "assignee": {"type": "string"},
-        "body": {"type": "string", "description": "Full spec."},
-        "parents": {"type": "array", "items": {"type": "string"}},
-        "priority": {"type": "integer"}
+        "title": {
+          "type": "string"
+        },
+        "assignee": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string",
+          "description": "Full spec."
+        },
+        "parents": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "priority": {
+          "type": "integer"
+        }
       },
-      "required": ["title", "assignee"]
+      "required": [
+        "title",
+        "assignee"
+      ]
     },
-    "toolset": "kanban"
+    "toolset": "kanban",
+    "defer": true
   },
   {
     "name": "kanban_complete",
@@ -367,13 +698,24 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "task_id": {"type": "string"},
-        "summary": {"type": "string", "description": "1-3 sentences."},
-        "metadata": {"type": "object"}
+        "task_id": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string",
+          "description": "1-3 sentences."
+        },
+        "metadata": {
+          "type": "object"
+        }
       },
-      "required": ["task_id", "summary"]
+      "required": [
+        "task_id",
+        "summary"
+      ]
     },
-    "toolset": "kanban"
+    "toolset": "kanban",
+    "defer": true
   },
   {
     "name": "kanban_block",
@@ -381,12 +723,20 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "task_id": {"type": "string"},
-        "reason": {"type": "string"}
+        "task_id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
       },
-      "required": ["task_id", "reason"]
+      "required": [
+        "task_id",
+        "reason"
+      ]
     },
-    "toolset": "kanban"
+    "toolset": "kanban",
+    "defer": true
   },
   {
     "name": "ast_edit",
@@ -394,17 +744,46 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "action": {"type": "string", "enum": ["validate", "list_symbols", "get_symbol", "replace_func", "add_import", "rename"]},
-        "path": {"type": "string"},
-        "name": {"type": "string", "description": "Function/class name."},
-        "new_body": {"type": "string", "description": "Full replacement source."},
-        "import": {"type": "string", "description": "e.g. 'import os'."},
-        "old_name": {"type": "string"},
-        "new_name": {"type": "string"}
+        "action": {
+          "type": "string",
+          "enum": [
+            "validate",
+            "list_symbols",
+            "get_symbol",
+            "replace_func",
+            "add_import",
+            "rename"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string",
+          "description": "Function/class name."
+        },
+        "new_body": {
+          "type": "string",
+          "description": "Full replacement source."
+        },
+        "import": {
+          "type": "string",
+          "description": "e.g. 'import os'."
+        },
+        "old_name": {
+          "type": "string"
+        },
+        "new_name": {
+          "type": "string"
+        }
       },
-      "required": ["action", "path"]
+      "required": [
+        "action",
+        "path"
+      ]
     },
-    "toolset": "inspect"
+    "toolset": "inspect",
+    "defer": true
   },
   {
     "name": "last_session",
@@ -412,8 +791,13 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "n": {"type": "integer", "description": "Default 3."},
-        "session": {"type": "string"}
+        "n": {
+          "type": "integer",
+          "description": "Default 3."
+        },
+        "session": {
+          "type": "string"
+        }
       },
       "required": []
     },
@@ -421,54 +805,143 @@
   },
   {
     "name": "delegate",
-    "description": "Delegate to a sub-agent (Claude Code / Codex / self). sync blocks; async returns a session name — poll with mode=check. For async always pass notify_session+notify_msg_id so the watcher sends Telegram progress.",
+    "description": "Delegate to a sub-agent (Claude Code / Codex / self). sync blocks; async returns a session name \u2014 poll with mode=check. For async always pass notify_session+notify_msg_id so the watcher sends Telegram progress.",
     "parameters": {
       "type": "object",
       "properties": {
-        "mode": {"type": "string", "enum": ["sync", "async", "check", "kill", "list"], "description": "Default sync."},
-        "goal": {"type": "string", "description": "Required for sync/async."},
-        "context": {"type": "string", "description": "File paths, constraints, patterns."},
-        "session": {"type": "string", "description": "tmux session name. Required for check/kill."},
-        "notify_session": {"type": "string", "description": "AMA session_id for async progress notifications."},
-        "notify_msg_id": {"type": "string", "description": "Original user msg_id for reply-to."},
-        "backend": {"type": "string", "enum": ["auto", "claude", "codex", "self"]},
-        "timeout": {"type": "integer", "description": "Seconds. Default 300."},
-        "max_turns": {"type": "integer", "description": "self backend. Default 20."}
+        "mode": {
+          "type": "string",
+          "enum": [
+            "sync",
+            "async",
+            "check",
+            "kill",
+            "list"
+          ],
+          "description": "Default sync."
+        },
+        "goal": {
+          "type": "string",
+          "description": "Required for sync/async."
+        },
+        "context": {
+          "type": "string",
+          "description": "File paths, constraints, patterns."
+        },
+        "session": {
+          "type": "string",
+          "description": "tmux session name. Required for check/kill."
+        },
+        "notify_session": {
+          "type": "string",
+          "description": "AMA session_id for async progress notifications."
+        },
+        "notify_msg_id": {
+          "type": "string",
+          "description": "Original user msg_id for reply-to."
+        },
+        "backend": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "claude",
+            "codex",
+            "self"
+          ]
+        },
+        "timeout": {
+          "type": "integer",
+          "description": "Seconds. Default 300."
+        },
+        "max_turns": {
+          "type": "integer",
+          "description": "self backend. Default 20."
+        }
       },
       "required": []
     },
-    "toolset": "inspect"
+    "toolset": "inspect",
+    "defer": true
   },
   {
     "name": "scheduler",
-    "description": "Schedule recurring tasks. Actions: add (create), list (show all for this chat), remove (delete by id), pause, resume. For add: requires `prompt` + `every` (e.g. '12h', '30m', '1d'). Optional model/provider/skill override pins the task to a specific (e.g. cheap) backend instead of the default. The scheduled task fires via the existing queue mechanism — result lands in the same Telegram chat as a normal turn, tagged [SCHEDULED #N].",
+    "description": "Schedule recurring tasks. Actions: add (create), list (show all for this chat), remove (delete by id), pause, resume. For add: requires `prompt` + `every` (e.g. '12h', '30m', '1d'). Optional model/provider/skill override pins the task to a specific (e.g. cheap) backend instead of the default. The scheduled task fires via the existing queue mechanism \u2014 result lands in the same Telegram chat as a normal turn, tagged [SCHEDULED #N].",
     "parameters": {
       "type": "object",
       "properties": {
-        "action": {"type": "string", "enum": ["add", "list", "remove", "pause", "resume"]},
-        "every": {"type": "string", "description": "Interval like '12h', '30m', '2h30m', '1d'. Min 60s. Required for add."},
-        "prompt": {"type": "string", "description": "What the agent should do each time. Required for add."},
-        "model": {"type": "string", "description": "Pin to a specific model (e.g. 'koompi-free') — optional, otherwise uses session default."},
-        "provider": {"type": "string", "description": "Pin to a specific provider (e.g. 'kconsole') — optional."},
-        "skill": {"type": "string", "description": "Pin to a specific skill — optional."},
-        "chat_id": {"type": "string", "description": "Telegram chat to deliver results to. Defaults to current chat."},
-        "thread_id": {"type": "string", "description": "Telegram thread/topic. Defaults to current."},
-        "id": {"type": "integer", "description": "Task id. Required for remove/pause/resume."}
+        "action": {
+          "type": "string",
+          "enum": [
+            "add",
+            "list",
+            "remove",
+            "pause",
+            "resume"
+          ]
+        },
+        "every": {
+          "type": "string",
+          "description": "Interval like '12h', '30m', '2h30m', '1d'. Min 60s. Required for add."
+        },
+        "prompt": {
+          "type": "string",
+          "description": "What the agent should do each time. Required for add."
+        },
+        "model": {
+          "type": "string",
+          "description": "Pin to a specific model (e.g. 'koompi-free') \u2014 optional, otherwise uses session default."
+        },
+        "provider": {
+          "type": "string",
+          "description": "Pin to a specific provider (e.g. 'kconsole') \u2014 optional."
+        },
+        "skill": {
+          "type": "string",
+          "description": "Pin to a specific skill \u2014 optional."
+        },
+        "chat_id": {
+          "type": "string",
+          "description": "Telegram chat to deliver results to. Defaults to current chat."
+        },
+        "thread_id": {
+          "type": "string",
+          "description": "Telegram thread/topic. Defaults to current."
+        },
+        "id": {
+          "type": "integer",
+          "description": "Task id. Required for remove/pause/resume."
+        }
       },
-      "required": ["action"]
+      "required": [
+        "action"
+      ]
     },
-    "toolset": "meta"
+    "toolset": "meta",
+    "defer": true
   },
   {
     "name": "access_control",
-    "description": "Manage whitelist. Actions: whitelist (add), revoke (remove), sethome (set home_chat), log (show last 20 changes). Every mutation auto-logged to brain/state/access_control.log — use action=log to find who was last added/removed instead of grepping session history.",
+    "description": "Manage whitelist. Actions: whitelist (add), revoke (remove), sethome (set home_chat), log (show last 20 changes). Every mutation auto-logged to brain/state/access_control.log \u2014 use action=log to find who was last added/removed instead of grepping session history.",
     "parameters": {
       "type": "object",
       "properties": {
-        "action": {"type": "string", "enum": ["whitelist", "revoke", "sethome", "log"]},
-        "target_id": {"type": "string", "description": "User or chat ID. Required for whitelist/revoke/sethome."}
+        "action": {
+          "type": "string",
+          "enum": [
+            "whitelist",
+            "revoke",
+            "sethome",
+            "log"
+          ]
+        },
+        "target_id": {
+          "type": "string",
+          "description": "User or chat ID. Required for whitelist/revoke/sethome."
+        }
       },
-      "required": ["action"]
+      "required": [
+        "action"
+      ]
     },
     "toolset": "core"
   },
@@ -478,13 +951,115 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "path": {"type": "string"},
-        "caption": {"type": "string"},
-        "chat_id": {"type": "string", "description": "Default: current chat."},
-        "thread_id": {"type": "string"}
+        "path": {
+          "type": "string"
+        },
+        "caption": {
+          "type": "string"
+        },
+        "chat_id": {
+          "type": "string",
+          "description": "Default: current chat."
+        },
+        "thread_id": {
+          "type": "string"
+        }
       },
-      "required": ["path"]
+      "required": [
+        "path"
+      ]
     },
     "toolset": "core"
+  },
+  {
+    "name": "tool_search",
+    "description": "Fetches schemas for tools marked as deferred so you can call them. Deferred tools appear by name (no schema) in the `## Deferred Tools` context block \u2014 until you load them via this tool, you cannot invoke them. Returns one `<function>{...}</function>` line per match.\n\nQuery forms:\n  select:foo,bar  \u2014 fetch these exact tools by name\n  ast python      \u2014 keyword search, ranked by relevance\n  +kanban create  \u2014 require `kanban`, rank remaining terms\n\nLoaded tool schemas persist for the rest of this session (cleared on /new).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Search query. `select:name1,name2` for exact, otherwise keywords."
+        },
+        "max_results": {
+          "type": "integer",
+          "description": "Cap on number of schemas to return (default 5).",
+          "default": 5
+        }
+      },
+      "required": [
+        "query"
+      ]
+    },
+    "toolset": "core"
+  },
+  {
+    "name": "task",
+    "description": "Persistent, cross-session structured task list. SQLite-backed, survives /new and bot restarts. Use for genuinely multi-step work (3+ distinct sub-tasks) \u2014 skip for trivial single-step requests. Differs from `todo` (simpler, per-session checklist).\n\nActions:\n- `create`: needs subject; optional description, active_form, metadata\n- `list`: optional filter_status. Default lists open tasks.\n- `get`: needs task_id, returns full details\n- `update`: needs task_id + at least one field. Status workflow: pending \u2192 in_progress \u2192 completed (or failed/deleted)\n- `delete`: needs task_id (soft-delete \u2014 sets status=deleted)\n\nWhen you start a task, mark it in_progress IMMEDIATELY so the user sees progress. When you complete or fail it, update status before moving on. Never leave a task at in_progress after the turn ends.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "create",
+            "list",
+            "get",
+            "update",
+            "delete"
+          ]
+        },
+        "subject": {
+          "type": "string",
+          "description": "Imperative title (create / update). E.g. 'Fix auth bug'."
+        },
+        "description": {
+          "type": "string",
+          "description": "What needs to be done."
+        },
+        "active_form": {
+          "type": "string",
+          "description": "Present-continuous form shown while in_progress, e.g. 'Fixing auth bug'."
+        },
+        "task_id": {
+          "type": "integer",
+          "description": "Required for get / update / delete."
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "in_progress",
+            "completed",
+            "failed",
+            "deleted"
+          ],
+          "description": "Update only."
+        },
+        "owner": {
+          "type": "string",
+          "description": "Agent/subagent assigned. Update only."
+        },
+        "metadata": {
+          "type": "object",
+          "description": "Arbitrary JSON object. On update, merged in (key=null deletes)."
+        },
+        "filter_status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "in_progress",
+            "completed",
+            "failed",
+            "deleted"
+          ],
+          "description": "List only: filter by status."
+        }
+      },
+      "required": [
+        "action"
+      ]
+    },
+    "toolset": "meta"
   }
 ]

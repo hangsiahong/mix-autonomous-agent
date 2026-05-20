@@ -68,6 +68,15 @@ fi
 mkdir -p "$skill_dir"
 printf '%s' "$prompt" > "${skill_dir}/prompt.md"
 
+# Step 3b: Copy any sub-directories (e.g. skills/) from clone so the
+# prompt's relative file references (like skills/orders/queries.md) resolve.
+if [[ -d "${clone_dir}/skills" ]]; then
+    cp -r "${clone_dir}/skills" "${skill_dir}/skills"
+fi
+if [[ -d "${clone_dir}/docs" ]]; then
+    cp -r "${clone_dir}/docs" "${skill_dir}/docs"
+fi
+
 if [[ -n "$toolsets" ]]; then
     TS="$toolsets" python3 -c "
 import json, os

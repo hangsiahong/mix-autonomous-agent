@@ -119,6 +119,68 @@ _ama_handle_callback() {
             rm -f "$_stop_btn_file"
             ;;
 
+        clarify:*)
+            # Format: clarify:<sid>:<qid>:<option_index>
+            #   qid lets a later clarify overwrite state and invalidate old buttons.
+            local _payload="${data#clarify:}"
+            local _sid _qid _idx
+            IFS=':' read -r _sid _qid _idx <<< "$_payload"
+            local _state_file="${DIR}/brain/state/clarify_${_sid}.json"
+
+            if [[ ! -f "$_state_file" || -z "$_idx" ]]; then
+                # Stale button (state cleared by a newer clarify or /new). Just strip buttons.
+                [[ -n "$btn_msg_id" ]] && tg_remove_buttons "$chat_id" "$btn_msg_id" 2>/dev/null || true
+                return
+            fi
+
+            # Resolve index → label, ALSO verify qid matches the current state.
+            # Mismatch ⇒ a newer clarify replaced this question; tap is stale.
+            local _resolved
+            _resolved=$(IDX="$_idx" QID="$_qid" python3 -c '
+import json, os, sys
+try:
+    s = json.load(open(sys.argv[1]))
+    if str(s.get("qid","")) != os.environ["QID"]:
+        sys.exit(0)  # stale
+    opts = s.get("options") or []
+    i = int(os.environ["IDX"])
+    if 0 <= i < len(opts):
+        print(opts[i])
+except Exception:
+    pass
+' "$_state_file" 2>/dev/null)
+
+            if [[ -z "$_resolved" ]]; then
+                [[ -n "$btn_msg_id" ]] && tg_remove_buttons "$chat_id" "$btn_msg_id" 2>/dev/null || true
+                rm -f "$_state_file"
+                return
+            fi
+
+            # Pull stashed thread_id + msg_id + question so we dispatch to the right chat
+            local _orig_q _orig_tid _orig_msg
+            _orig_q=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("question",""))' "$_state_file" 2>/dev/null)
+            _orig_tid=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("thread_id","") or "")' "$_state_file" 2>/dev/null)
+            _orig_msg=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("msg_id","") or "")' "$_state_file" 2>/dev/null)
+
+            # Edit the question message in place: strip buttons, show selection.
+            if [[ -n "$_orig_msg" ]]; then
+                local _edited
+                _edited=$(printf '❓ %s\n\n→ <b>%s</b>' "${_orig_q}" "${_resolved}")
+                tg_edit "$chat_id" "$_orig_msg" "$_edited" "HTML" > /dev/null 2>&1 || \
+                    tg_remove_buttons "$chat_id" "$_orig_msg" 2>/dev/null || true
+            elif [[ -n "$btn_msg_id" ]]; then
+                tg_remove_buttons "$chat_id" "$btn_msg_id" 2>/dev/null || true
+            fi
+
+            # Clear state — next clarify call overwrites anyway, but be tidy
+            rm -f "$_state_file"
+
+            # Dispatch the chosen text as the next user turn. Skill auto-bind reuses
+            # whatever was already bound for the previous turn (env _AMA_SKILL).
+            local _skill="${AMA_DEFAULT_SKILL:-default}"
+            ( set -m; run_agent "$chat_id" "$_resolved" "$user_id" "[]" "$_orig_tid" "$_sid" "" "$username" "$_skill" "0" ) &
+            ;;
+
         interrupt:*)
             local _sid="${data#interrupt:}"
             local _pending_file="${DIR}/brain/state/interrupt_input_${_sid}"
@@ -276,6 +338,13 @@ For code/text: cat \"${_mf_path}\""
             "$thread_id" "$user_id" "$username" "$message_id"
         return
     fi
+
+    # User typed a free-text reply: invalidate any pending clarify buttons.
+    # Without this, the user could type AND then later tap an old button → double dispatch.
+    # The qid check still protects from race conditions, but clearing here is the
+    # canonical "this question is answered" signal.
+    [[ -f "${DIR}/brain/state/clarify_${session_id}.json" ]] && \
+        rm -f "${DIR}/brain/state/clarify_${session_id}.json" 2>/dev/null || true
 
     # Per-group mode gate
     # Mode resolved: per-group setting > REQUIRE_MENTION env fallback > active
@@ -463,6 +532,8 @@ open(sys.argv[1],'w').write(json.dumps(d, separators=(',',':')))" "$_gfile" 2>/d
 /schedule add every=12h "..." [model=X] — recurring task; /schedule list|remove|pause|resume
 
 <b>Config</b>
+/tasks [status|all] — list persistent tasks for this session (pending|in_progress|completed|failed|deleted|all)
+/budget — set token budget (e.g. <code>/budget 500k</code>) or include <code>+500k</code> in any message; /budget clear to remove
 /model &lt;name&gt; — switch model this session
 /skill &lt;name&gt; — activate a skill • /skill off to clear
 /skills — list available skills
@@ -518,7 +589,10 @@ open(sys.argv[1],'w').write(json.dumps(d, separators=(',',':')))" "$_gfile" 2>/d
                       "${DIR}/brain/state/queue_${session_id}" \
                       "${DIR}/brain/state/active_skill_${session_id}" \
                       "${DIR}/brain/state/prefetch_${session_id}" \
-                      "${DIR}/brain/state/goal_${session_id}.json" 2>/dev/null || true
+                      "${DIR}/brain/state/budget_${session_id}.json" \
+                      "${DIR}/brain/state/active_tools_${session_id}.json" \
+                      "${DIR}/brain/state/goal_${session_id}.json" \
+                      "${DIR}/brain/state/clarify_${session_id}.json" 2>/dev/null || true
                 # Generate the session recap in the background against the
                 # just-archived history file (uses `( cmd & )` detach idiom so
                 # the work survives the dispatcher's EXIT trap).
@@ -635,6 +709,93 @@ else:
                         local _removed_count; _removed_count=$(echo "$_undo_result" | cut -d: -f2)
                         local _preview; _preview=$(echo "$_undo_result" | cut -d: -f3-)
                         tg_send "$chat_id" "↩️ Removed $_removed_count message(s). Last prompt was: <i>${_preview}</i>" "$thread_id" "HTML"
+                    fi
+                fi
+                ;;
+
+            /tasks)
+                # List tasks for this session (Telegram-facing wrapper around
+                # the `task` tool). Optional first arg filters by status:
+                #   /tasks                 → all open (pending + in_progress + failed)
+                #   /tasks all             → include completed and deleted too
+                #   /tasks pending         → filter to that status
+                local _tasks_arg=$(echo "$args" | awk '{print $1}')
+                local _tasks_html
+                _tasks_html=$(SID="$session_id" ARG="$_tasks_arg" python3 -c "
+import os, sys
+sys.path.insert(0, 'tools')
+from task_manager import list_tasks, _STATUS_EMOJI
+sid = os.environ['SID']
+arg = os.environ['ARG']
+if arg == 'all':
+    tasks = list_tasks(session_id=sid, include_deleted=True)
+elif arg in ('pending','in_progress','completed','failed','deleted'):
+    tasks = list_tasks(session_id=sid, status=arg)
+else:
+    tasks = list_tasks(session_id=sid)
+if not tasks:
+    print('<i>No tasks for this session.</i>')
+    sys.exit(0)
+# Group by status; open ones first
+groups = {}
+for t in tasks:
+    groups.setdefault(t['status'], []).append(t)
+lines = []
+for status in ('in_progress','pending','failed','completed','deleted'):
+    rows = groups.get(status, [])
+    if not rows: continue
+    label = status.replace('_',' ').title()
+    lines.append(f'<b>{label} ({len(rows)})</b>')
+    for t in rows:
+        em = _STATUS_EMOJI.get(t.get('status','?'),'·')
+        sub = (t.get('subject') or '').replace('<','&lt;').replace('>','&gt;')
+        lines.append(f'  {em} #{t[\"id\"]} {sub}')
+    lines.append('')
+print('\n'.join(lines).rstrip())
+" 2>/dev/null)
+                if [[ -z "$_tasks_html" ]]; then
+                    tg_send "$chat_id" "<i>Couldn't load tasks.</i>" "$thread_id" "HTML"
+                else
+                    tg_send "$chat_id" "$_tasks_html" "$thread_id" "HTML"
+                fi
+                ;;
+
+            /budget)
+                # Per-session token budget knob (cc-oss-inspired). Examples:
+                #   /budget              → show current budget + spent
+                #   /budget 500k         → set 500_000-token budget
+                #   /budget spend 1.5m   → same, verbose form
+                #   /budget clear        → remove budget; agent runs unconstrained
+                local _budget_args="$args"
+                if [[ -z "$_budget_args" ]]; then
+                    local _line; _line=$(python3 tools/token_budget.py line "$session_id" 2>/dev/null)
+                    if [[ -n "$_line" ]]; then
+                        tg_send "$chat_id" "${_line}
+
+<i>Use <code>/budget clear</code> to remove, or just send a new value to replace (e.g. <code>+500k</code> in any message).</i>" "$thread_id" "HTML"
+                    else
+                        tg_send "$chat_id" "<i>No active token budget for this session.</i>
+
+Set one by including a budget anywhere in a message:
+• <code>+500k</code>  or  <code>+1.5m</code>  (shorthand)
+• <code>spend 50k tokens</code>  (verbose)
+
+Or use <code>/budget &lt;value&gt;</code> directly." "$thread_id" "HTML"
+                    fi
+                elif [[ "$_budget_args" == "clear" || "$_budget_args" == "reset" || "$_budget_args" == "off" ]]; then
+                    python3 tools/token_budget.py clear "$session_id" 2>/dev/null
+                    tg_send "$chat_id" "✅ Budget cleared. Agent runs unconstrained." "$thread_id"
+                else
+                    # Parse argument via the same library — accepts "500k", "+500k", "spend 50k tokens"
+                    local _val; _val=$(printf '%s' "$_budget_args" | python3 tools/token_budget.py parse 2>/dev/null)
+                    # Allow bare numeric prefix too: "500k", "1.5m" without the "+"
+                    [[ -z "$_val" ]] && _val=$(printf '+%s' "$_budget_args" | python3 tools/token_budget.py parse 2>/dev/null)
+                    if [[ -n "$_val" ]]; then
+                        python3 tools/token_budget.py set "$session_id" "$_val" user >/dev/null
+                        local _line2; _line2=$(python3 tools/token_budget.py line "$session_id" 2>/dev/null)
+                        tg_send "$chat_id" "✅ ${_line2}" "$thread_id" "HTML"
+                    else
+                        tg_send "$chat_id" "Couldn't parse budget from <code>${_budget_args}</code>. Try <code>500k</code>, <code>1.5m</code>, or <code>spend 50k tokens</code>." "$thread_id" "HTML"
                     fi
                 fi
                 ;;

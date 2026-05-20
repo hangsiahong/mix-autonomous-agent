@@ -281,11 +281,20 @@ _apply_provider_history_filter() {
 decay_history() {
     local _keep="${DECAY_KEEP:-4}"
     local _arg_cap="${DECAY_ARG_CAP:-2000}"
-    HISTORY=$(DECAY_KEEP="$_keep" DECAY_ARG_CAP="$_arg_cap" python3 -c '
+    local _deep_keep="${DEEP_DECAY_KEEP:-}"   # defaults to _keep*3 in python
+    local _image_keep="${IMAGE_DECAY_KEEP:-}" # defaults to _keep*2 in python
+    HISTORY=$(DECAY_KEEP="$_keep" DECAY_ARG_CAP="$_arg_cap" \
+              DEEP_DECAY_KEEP="$_deep_keep" IMAGE_DECAY_KEEP="$_image_keep" \
+              python3 -c '
 import json, os, sys
 h = json.loads(open(sys.argv[1]).read())
 keep = int(os.environ.get("DECAY_KEEP", "4"))
 arg_cap = int(os.environ.get("DECAY_ARG_CAP", "2000"))
+# Two extra tiers (cc-oss microCompact inspired):
+#   deep_keep — groups older than this get FULL clearing (no preserved line)
+#   image_keep — image parts in user messages older than N user-turns get scrubbed
+deep_keep = int(os.environ.get("DEEP_DECAY_KEEP") or (keep * 3))
+image_keep = int(os.environ.get("IMAGE_DECAY_KEEP") or (keep * 2))
 
 # Index of tool_call → tool_result groups, in order.
 # A "group" = assistant(tool_calls) + its trailing tool messages.
@@ -302,11 +311,15 @@ while i < len(h):
     else:
         i += 1
 
-# Decay every group except the last `keep`
+# Decay tier-1: all groups except last `keep` get 1-line collapse + arg redaction
 to_decay = groups[:-keep] if len(groups) > keep else []
+# Decay tier-2: groups older than `deep_keep` get FULL clearing (no preserved line)
+to_deep_decay = set(groups[:-deep_keep]) if len(groups) > deep_keep else set()
 _VERBOSE_ARGS = ("content", "code", "patch_text", "new_string", "new_body", "text", "body")
 
 for (start, end) in to_decay:
+    deep = (start, end) in to_deep_decay
+
     # 1. Redact verbose argument fields in assistant tool_calls
     a = h[start]
     for tc in (a.get("tool_calls") or []):
@@ -327,7 +340,7 @@ for (start, end) in to_decay:
         except Exception:
             pass
 
-    # 2. Collapse tool results to 1-line summary
+    # 2. Collapse tool results — 1-line summary OR full clear if deep
     for k in range(start + 1, end):
         msg = h[k]
         if msg.get("role") != "tool":
@@ -335,13 +348,42 @@ for (start, end) in to_decay:
         c = msg.get("content", "")
         if not isinstance(c, str):
             c = str(c)
+        if deep and len(c) >= 200:
+            msg["content"] = f"[old tool result cleared | {len(c)} chars]"
+            continue
         if len(c) < 200:
             continue  # already small
-        # Keep first non-empty line; mark size
         first = next((line.strip() for line in c.splitlines() if line.strip()), "").replace("\n", " ")
         if len(first) > 140:
             first = first[:140]
         msg["content"] = f"[decayed | {len(c)} chars] {first}"
+
+# 3. Image-part scrubbing. Walk user messages (oldest → newest); for any user
+#    message whose distance-from-end exceeds image_keep user-turns, replace any
+#    image/image_url parts with a tiny placeholder. A single image base64 part
+#    can be 5-50k tokens — far more than any tool result we already decay.
+user_idxs = [k for k, m in enumerate(h) if m.get("role") == "user"]
+if len(user_idxs) > image_keep:
+    stale_user_idxs = set(user_idxs[:-image_keep])
+    for k in stale_user_idxs:
+        msg = h[k]
+        c = msg.get("content")
+        if not isinstance(c, list):
+            continue
+        new_parts = []
+        scrubbed = 0
+        for p in c:
+            if not isinstance(p, dict):
+                new_parts.append(p)
+                continue
+            ptype = p.get("type", "")
+            if ptype in ("image_url", "image", "input_image"):
+                scrubbed += 1
+                continue  # drop entirely; replaced below
+            new_parts.append(p)
+        if scrubbed:
+            new_parts.append({"type": "text", "text": f"[{scrubbed} image(s) elided — older than {image_keep} user turns]"})
+            msg["content"] = new_parts
 
 print(json.dumps(h, separators=(",", ":")))
 ' <(printf '%s' "$HISTORY") 2>/dev/null || printf '%s' "$HISTORY")

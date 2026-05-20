@@ -2,267 +2,439 @@
 <html lang="en" class="scroll-smooth">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="description" content="AMA — a Telegram-controlled agent built on a bash harness. Runs Gemini 3 Flash (or 11 other providers) with persistent memory, custom tools, and self-healing.">
     <title>AMA — Autonomous Mix Agent</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/ScrollTrigger.min.js"></script>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap');
-        
+        @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500&display=swap');
+
         :root {
             --bg: #000000;
             --fg: #ffffff;
             --accent: #00ff41;
         }
 
+        html { -webkit-text-size-adjust: 100%; }
+
         body {
             background-color: var(--bg);
             color: var(--fg);
             font-family: 'Space Grotesk', sans-serif;
             overflow-x: hidden;
+            -webkit-font-smoothing: antialiased;
         }
 
         .serif { font-family: 'Instrument Serif', serif; }
-        
+        .mono  { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+
         .type-giant {
-            font-size: clamp(4rem, 18vw, 15rem);
-            line-height: 0.8;
-            letter-spacing: -0.06em;
+            font-size: clamp(3rem, 16vw, 14rem);
+            line-height: 0.85;
+            letter-spacing: -0.05em;
+        }
+
+        .type-display {
+            font-size: clamp(2.5rem, 9vw, 7rem);
+            line-height: 0.9;
+            letter-spacing: -0.04em;
         }
 
         .glass-nav {
             background: rgba(0, 0, 0, 0.7);
             backdrop-filter: blur(30px);
-            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            -webkit-backdrop-filter: blur(30px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
         }
 
         .marquee-content {
             display: flex;
-            animation: marquee 30s linear infinite;
+            width: max-content;          /* don't shrink to parent — without this flex squeezes the spans and the animation barely moves visually */
+            animation: marquee 25s linear infinite;
+            white-space: nowrap;
+            will-change: transform;
         }
-
+        .marquee-content > * { flex-shrink: 0; }
         @keyframes marquee {
-            0% { transform: translateX(0); }
-            100% { transform: translateX(-50%); }
+            from { transform: translateX(0); }
+            to   { transform: translateX(-50%); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .marquee-content { animation: none; }
         }
 
         .noise-bg {
             position: fixed;
-            top: 0; left: 0; width: 100%; height: 100%;
+            inset: 0;
             pointer-events: none;
             opacity: 0.05;
-            z-index: 100;
+            z-index: 90;
             background: url('https://grainy-gradients.vercel.app/noise.svg');
         }
 
         .scanline {
-            width: 100%;
-            height: 100px;
-            z-index: 99;
-            background: linear-gradient(0deg, rgba(0, 255, 65, 0) 0%, rgba(0, 255, 65, 0.05) 50%, rgba(0, 255, 65, 0) 100%);
-            opacity: 0.1;
-            position: absolute;
-            bottom: 100%;
-            animation: scanline 8s linear infinite;
+            width: 100%; height: 100px;
+            background: linear-gradient(0deg, rgba(0,255,65,0) 0%, rgba(0,255,65,0.06) 50%, rgba(0,255,65,0) 100%);
+            opacity: 0.18;
+            position: absolute; bottom: 100%; left: 0;
+            animation: scanline 9s linear infinite;
+            pointer-events: none;
         }
+        @keyframes scanline { from { bottom: -10%; } to { bottom: 110%; } }
+        @media (prefers-reduced-motion: reduce) { .scanline { animation: none; display: none; } }
 
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(12, 1fr);
+            grid-template-columns: repeat(4, minmax(0, 1fr));
             border-top: 1px solid rgba(255, 255, 255, 0.1);
         }
-
         .stat-box {
-            grid-column: span 3;
-            padding: 40px;
+            padding: clamp(20px, 4vw, 40px);
             border-right: 1px solid rgba(255, 255, 255, 0.1);
         }
-
+        .stat-box:last-child { border-right: 0; }
         @media (max-width: 768px) {
-            .stat-box { grid-column: span 6; }
+            .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .stat-box:nth-child(2) { border-right: 0; }
+            .stat-box:nth-child(1), .stat-box:nth-child(2) {
+                border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            }
+        }
+
+        /* Code/terminal blocks */
+        .term {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: clamp(11px, 1.2vw, 13px);
+            line-height: 1.65;
+            background: #0a0a0a;
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 14px;
+            padding: 22px;
+            overflow-x: auto;
+        }
+        .term .prompt { color: var(--accent); }
+        .term .dim    { color: rgba(255,255,255,0.4); }
+        .term .user   { color: #94a3ff; }
+        .term .bot    { color: #ffffff; }
+
+        /* Hide GSAP-faded sections gracefully if JS doesn't run */
+        .js-gsap { opacity: 1; }
+
+        /* Tap target buffer on mobile */
+        @media (max-width: 640px) {
+            a.btn-lg { padding: 18px 28px; font-size: 16px; }
         }
     </style>
 </head>
-<body class="antialiased selection:bg-white selection:text-black">
-    <div class="noise-bg"></div>
+<body class="antialiased selection:bg-[#00ff41] selection:text-black">
+    <div class="noise-bg" aria-hidden="true"></div>
 
     <header class="fixed top-0 w-full z-[100] glass-nav">
-        <nav class="flex justify-between items-center py-6 px-6 md:px-12">
-            <div class="text-xl font-bold tracking-tighter uppercase flex items-center gap-2">
-                <span class="w-2 h-2 bg-[#00ff41] rounded-full animate-pulse"></span>
-                AMA [v4.2.0]
-            </div>
-            <div class="hidden md:flex gap-12 text-[10px] font-bold uppercase tracking-[0.2em] opacity-40">
-                <a href="#logic" class="hover:opacity-100 transition-opacity">Neural Logic</a>
+        <nav class="flex justify-between items-center py-5 px-5 md:px-12 gap-4">
+            <a href="#top" class="text-base md:text-xl font-bold tracking-tighter uppercase flex items-center gap-2 shrink-0">
+                <span class="w-2 h-2 bg-[#00ff41] rounded-full animate-pulse" aria-hidden="true"></span>
+                AMA
+            </a>
+            <div class="hidden md:flex gap-10 text-[10px] font-bold uppercase tracking-[0.2em] opacity-50">
+                <a href="#what" class="hover:opacity-100 transition-opacity">What it is</a>
                 <a href="#harness" class="hover:opacity-100 transition-opacity">Harness</a>
                 <a href="#memory" class="hover:opacity-100 transition-opacity">Memory</a>
+                <a href="#dna" class="hover:opacity-100 transition-opacity">Influences</a>
             </div>
-            <div class="text-[10px] font-bold uppercase border border-white/20 px-4 py-2 rounded-full hover:bg-white hover:text-black transition-all cursor-pointer">
-                Access Terminal
-            </div>
+            <a href="https://github.com/hangsiahong/mix-autonomous-agent" target="_blank" rel="noopener"
+               class="text-[10px] font-bold uppercase border border-white/20 px-3 py-2 md:px-4 rounded-full hover:bg-white hover:text-black transition-all">
+                GitHub
+            </a>
         </nav>
     </header>
 
-    <main>
-        <!-- Hero Section -->
-        <section class="min-h-screen pt-48 flex flex-col justify-between px-6 md:px-12 pb-12 relative">
-            <div class="scanline"></div>
+    <main id="top">
+        <!-- Hero -->
+        <section class="min-h-screen pt-36 md:pt-48 flex flex-col justify-between px-5 md:px-12 pb-12 relative">
+            <div class="scanline" aria-hidden="true"></div>
+
             <div class="relative z-10">
                 <h1 class="type-giant font-bold" id="ama-hero">
-                    AGENTIC<br><span class="serif italic font-light text-neutral-500">AUTONOMY.</span>
+                    TELEGRAM<br>
+                    <span class="serif italic font-light text-neutral-500">agent.</span>
                 </h1>
-                
-                <div class="mt-16 grid grid-cols-1 md:grid-cols-12 gap-12">
-                    <div class="md:col-start-1 md:col-span-4">
-                        <p class="text-xs font-bold uppercase tracking-widest text-neutral-500 mb-6">[ SYSTEM STATUS: OPERATIONAL ]</p>
-                        <p class="text-2xl font-light leading-snug">
-                            AMA (Autonomous Mix Agent) is not just a bot. It is a self-evolving harness running in a raw bash environment. It thinks, codes, and executes in the real world.
+
+                <div class="mt-12 md:mt-16 grid grid-cols-1 md:grid-cols-12 gap-8 md:gap-12">
+                    <div class="md:col-start-1 md:col-span-5">
+                        <p class="text-[10px] font-bold uppercase tracking-widest text-[#00ff41] mb-4">
+                            ● bash harness · gemini 3 flash · 38 tools
                         </p>
+                        <p class="text-xl md:text-2xl font-light leading-snug text-neutral-200">
+                            A self-hosted agent that lives in your Telegram. Runs on a bash harness, talks to Google Vertex AI by default, swaps to <span class="text-white">11 other providers</span> with one <span class="mono text-[#00ff41]">.env</span> change. Persistent memory across sessions, writes its own tools, restarts itself when something breaks.
+                        </p>
+
+                        <div class="mt-8 flex flex-wrap gap-3">
+                            <a href="https://github.com/hangsiahong/mix-autonomous-agent" target="_blank" rel="noopener"
+                               class="btn-lg px-6 py-3 bg-white text-black text-sm font-bold rounded-full hover:scale-[1.02] transition-transform">
+                                Clone the repo
+                            </a>
+                            <a href="#harness"
+                               class="btn-lg px-6 py-3 border border-white/20 text-sm font-bold rounded-full hover:bg-white/10 transition-all">
+                                How it works
+                            </a>
+                        </div>
                     </div>
-                    <div class="md:col-start-8 md:col-span-5 relative">
-                        <div class="aspect-square bg-neutral-900 rounded-2xl overflow-hidden border border-white/5">
-                            <img src="https://image.pollinations.ai/prompt/Cinematic%20macro%20shot%20of%20a%20glowing%20CPU%20core%20under%20heavy%20load%2C%20intricate%20circuits%2C%20cyan%20and%20magenta%20subsurface%20scattering%2C%20dark%20industrial%20setting%2C%208k?width=800&height=800&nologo=true" 
-                                 class="w-full h-full object-cover opacity-60 mix-blend-screen" alt="AMA Core">
+
+                    <!-- Terminal preview replaces the AI-generated CPU image -->
+                    <div class="md:col-start-7 md:col-span-6 relative">
+                        <div class="term">
+                            <div><span class="dim">[user]</span> <span class="user">ama, run pytest on the api package and tell me what failed</span></div>
+                            <div class="mt-2"><span class="prompt">→</span> <span class="dim">bash(command="cd api && pytest -x")</span></div>
+                            <div><span class="prompt">→</span> <span class="dim">read_code(path="api/tests/test_routes.py")</span></div>
+                            <div><span class="prompt">→</span> <span class="dim">edit_code(path="api/routes.py")</span></div>
+                            <div class="mt-3"><span class="dim">[ama]</span> <span class="bot">test_routes.py::test_get_user failed — assertion on line 42, model returned id as str not int. Patched the schema. Tests green now. <span class="dim">[3 tools · 4.1s]</span></span></div>
                         </div>
-                        <div class="absolute -bottom-6 -left-6 bg-black p-6 border border-white/10 rounded-xl max-w-xs">
-                            <p class="text-[10px] font-mono text-[#00ff41] mb-2">$ tail -f /brain/logs/neural.log</p>
-                            <p class="text-[9px] font-mono opacity-40">>> Initializing toolsets: [core, search, memory, meta]... Success.</p>
-                        </div>
+                        <p class="mt-3 text-[10px] mono text-neutral-600 px-1">
+                            real session shape. tool calls visible to the user in-chat.
+                        </p>
                     </div>
                 </div>
             </div>
+
         </section>
 
         <!-- Marquee -->
-        <div class="marquee border-y border-white/10 py-12 my-32 overflow-hidden">
+        <div class="border-y border-white/10 py-8 md:py-12 my-20 md:my-32 overflow-hidden">
             <div class="marquee-content">
-                <span class="text-6xl font-bold uppercase mx-16">Bash-First Workflow &middot;</span>
-                <span class="text-6xl font-bold uppercase mx-16 serif italic font-light">Self-Correcting Code &middot;</span>
-                <span class="text-6xl font-bold uppercase mx-16">Persistent LanceDB Memory &middot;</span>
-                <span class="text-6xl font-bold uppercase mx-16 serif italic font-light">Multimodal Vision &middot;</span>
+                <span class="text-4xl md:text-6xl font-bold uppercase mx-10 md:mx-16">writes its own tools</span>
+                <span class="text-4xl md:text-6xl font-bold uppercase mx-10 md:mx-16 serif italic font-light">·</span>
+                <span class="text-4xl md:text-6xl font-bold uppercase mx-10 md:mx-16">remembers across sessions</span>
+                <span class="text-4xl md:text-6xl font-bold uppercase mx-10 md:mx-16 serif italic font-light">·</span>
+                <span class="text-4xl md:text-6xl font-bold uppercase mx-10 md:mx-16">12 providers, 1 prompt</span>
+                <span class="text-4xl md:text-6xl font-bold uppercase mx-10 md:mx-16 serif italic font-light">·</span>
+                <span class="text-4xl md:text-6xl font-bold uppercase mx-10 md:mx-16">self-heals on failure</span>
+                <span class="text-4xl md:text-6xl font-bold uppercase mx-10 md:mx-16 serif italic font-light">·</span>
+                <!-- duplicate for seamless loop -->
+                <span class="text-4xl md:text-6xl font-bold uppercase mx-10 md:mx-16">writes its own tools</span>
+                <span class="text-4xl md:text-6xl font-bold uppercase mx-10 md:mx-16 serif italic font-light">·</span>
+                <span class="text-4xl md:text-6xl font-bold uppercase mx-10 md:mx-16">remembers across sessions</span>
+                <span class="text-4xl md:text-6xl font-bold uppercase mx-10 md:mx-16 serif italic font-light">·</span>
+                <span class="text-4xl md:text-6xl font-bold uppercase mx-10 md:mx-16">12 providers, 1 prompt</span>
+                <span class="text-4xl md:text-6xl font-bold uppercase mx-10 md:mx-16 serif italic font-light">·</span>
+                <span class="text-4xl md:text-6xl font-bold uppercase mx-10 md:mx-16">self-heals on failure</span>
+                <span class="text-4xl md:text-6xl font-bold uppercase mx-10 md:mx-16 serif italic font-light">·</span>
             </div>
         </div>
 
-        <!-- Section: The Harness -->
-        <section id="harness" class="py-40 px-6 md:px-12 bg-white text-black rounded-t-[4rem]">
+        <!-- What it is -->
+        <section id="what" class="px-5 md:px-12 py-16 md:py-24">
+            <div class="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-12 gap-8 items-start">
+                <div class="md:col-span-4">
+                    <h2 class="type-display font-bold">What it is.</h2>
+                </div>
+                <div class="md:col-span-7 md:col-start-6 text-lg md:text-xl font-light leading-relaxed text-neutral-300 space-y-5">
+                    <p>
+                        AMA is a long-polling Telegram bot. Each incoming message starts a bash subshell holding a <span class="mono text-[#00ff41]">flock</span> on the session id, which calls Google Vertex AI's streaming API, parses tool calls out of the response, runs them, feeds results back, and edits its first reply message as the conversation unfolds.
+                    </p>
+                    <p>
+                        Everything sits on the filesystem. History is a JSON file per session. Memory is a LanceDB store plus a SQLite session DB with FTS5 search. Tools are bash and python scripts the agent can extend at runtime. No daemons, no message brokers, no Kubernetes.
+                    </p>
+                </div>
+            </div>
+        </section>
+
+        <!-- The Harness — white section -->
+        <section id="harness" class="py-24 md:py-40 px-5 md:px-12 bg-white text-black rounded-t-[3rem] md:rounded-t-[4rem]">
             <div class="max-w-7xl mx-auto">
-                <div class="grid grid-cols-1 md:grid-cols-12 gap-12 mb-32 items-end">
+                <div class="grid grid-cols-1 md:grid-cols-12 gap-8 mb-16 md:mb-32 items-end">
                     <div class="md:col-span-8">
-                        <h2 class="text-7xl md:text-9xl font-bold tracking-tighter leading-[0.8]">The Harness<br><span class="serif italic font-light opacity-40 text-8xl">Architecture.</span></h2>
+                        <h2 class="type-display font-bold">
+                            The harness.<br>
+                            <span class="serif italic font-light opacity-40">In four parts.</span>
+                        </h2>
                     </div>
-                    <div class="md:col-span-4 pb-4">
+                    <div class="md:col-span-4 pb-2">
                         <p class="text-sm font-bold uppercase tracking-widest opacity-60">
-                            A custom-built Linux runtime designed for true agentic freedom.
+                            ~5,000 lines of bash + python. The interesting stuff fits in <span class="mono">core/mix/</span> and <span class="mono">tools/</span>.
                         </p>
                     </div>
                 </div>
 
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-px bg-neutral-200 border border-neutral-200">
-                    <div class="bg-white p-12 group hover:bg-black hover:text-white transition-colors duration-500">
-                        <span class="text-sm font-mono mb-8 block opacity-40">/tools/custom/</span>
-                        <h3 class="text-4xl font-bold mb-6">DYNAMIC TOOLING</h3>
-                        <p class="text-xl font-light opacity-60">AMA builds its own tools. If a capability doesn't exist, it writes the bash script, registers the JSON schema, and deploys it in real-time.</p>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-px bg-neutral-200 border border-neutral-200 rounded-2xl overflow-hidden">
+                    <div class="bg-white p-8 md:p-12 hover:bg-black hover:text-white transition-colors duration-500">
+                        <span class="text-xs mono mb-6 block opacity-50">tools/ + brain/tools.json</span>
+                        <h3 class="text-3xl md:text-4xl font-bold mb-4">Custom tools</h3>
+                        <p class="text-base md:text-lg font-light opacity-70 leading-relaxed">
+                            38 declared tools. The agent extends them at runtime via <span class="mono text-[#00ff41]">custom_tool_manager</span> — write a bash script, register a JSON schema, the next turn can call it. New skills land the same way.
+                        </p>
                     </div>
-                    <div class="bg-white p-12 group hover:bg-black hover:text-white transition-colors duration-500">
-                        <span class="text-sm font-mono mb-8 block opacity-40">/brain/memory/</span>
-                        <h3 class="text-4xl font-bold mb-6">LONG-TERM RECALL</h3>
-                        <p class="text-xl font-light opacity-60">Powered by LanceDB, AMA remembers every decision, every snippet, and every user preference across months of history.</p>
+                    <div class="bg-white p-8 md:p-12 hover:bg-black hover:text-white transition-colors duration-500" id="memory">
+                        <span class="text-xs mono mb-6 block opacity-50">brain/state/ + LanceDB</span>
+                        <h3 class="text-3xl md:text-4xl font-bold mb-4">Two-layer memory</h3>
+                        <p class="text-base md:text-lg font-light opacity-70 leading-relaxed">
+                            LanceDB for semantic recall, SQLite + FTS5 for keyword search across every past session. <span class="mono">session_search</span> returns actual messages with ±5-msg context windows — no LLM summarisation tax.
+                        </p>
                     </div>
-                    <div class="bg-white p-12 group hover:bg-black hover:text-white transition-colors duration-500">
-                        <span class="text-sm font-mono mb-8 block opacity-40">/core/mix/</span>
-                        <h3 class="text-4xl font-bold mb-6">MULTI-MODAL CORE</h3>
-                        <p class="text-xl font-light opacity-60">Swapping models like magazines. GPT-4o for vision, Claude 3.5 for logic, Gemini 1.5 for context—all in one seamless turn.</p>
+                    <div class="bg-white p-8 md:p-12 hover:bg-black hover:text-white transition-colors duration-500">
+                        <span class="text-xs mono mb-6 block opacity-50">core/mix/providers/</span>
+                        <h3 class="text-3xl md:text-4xl font-bold mb-4">12 model backends</h3>
+                        <p class="text-base md:text-lg font-light opacity-70 leading-relaxed">
+                            Google, Anthropic, OpenRouter, DeepSeek, Copilot, Groq, KConsole, MiniMax, Mistral, Ollama, xAI, Z.ai. Switch the active model with <span class="mono">PROVIDER=</span> + <span class="mono">MODEL=</span> in <span class="mono">.env</span>. Same tool schema for every one.
+                        </p>
                     </div>
-                    <div class="bg-white p-12 group hover:bg-black hover:text-white transition-colors duration-500">
-                        <span class="text-sm font-mono mb-8 block opacity-40">/project/registry/</span>
-                        <h3 class="text-4xl font-bold mb-6">PROJECT STEWARDSHIP</h3>
-                        <p class="text-xl font-light opacity-60">Full control over project structures. AMA manages files, runs tests, and deploys code without human intervention.</p>
+                    <div class="bg-white p-8 md:p-12 hover:bg-black hover:text-white transition-colors duration-500">
+                        <span class="text-xs mono mb-6 block opacity-50">core/mix/27_self_heal.sh</span>
+                        <h3 class="text-3xl md:text-4xl font-bold mb-4">Resilience</h3>
+                        <p class="text-base md:text-lg font-light opacity-70 leading-relaxed">
+                            One <span class="mono">flock</span> per session. <span class="mono">/stop</span> uses recursive group-kill so subprocesses don't outlive the parent. Idle sessions auto-archive. On API/tool errors, the next turn picks up a <span class="mono">heal_request.json</span> describing the fix.
+                        </p>
                     </div>
                 </div>
             </div>
         </section>
 
-        <!-- Technical Stats -->
+        <!-- Stats — real numbers from the codebase -->
         <section class="stats-grid bg-black">
             <div class="stat-box">
-                <span class="text-[10px] font-bold uppercase tracking-widest text-neutral-600 block mb-4">Uptime</span>
-                <span class="text-5xl font-bold">99.9<span class="text-[#00ff41]">%</span></span>
+                <span class="text-[10px] font-bold uppercase tracking-widest text-neutral-500 block mb-3">Tools</span>
+                <span class="text-4xl md:text-5xl font-bold">38<span class="text-[#00ff41]"></span></span>
             </div>
             <div class="stat-box">
-                <span class="text-[10px] font-bold uppercase tracking-widest text-neutral-600 block mb-4">Latency</span>
-                <span class="text-5xl font-bold">~1.2<span class="text-[#00ff41]">s</span></span>
+                <span class="text-[10px] font-bold uppercase tracking-widest text-neutral-500 block mb-3">Providers</span>
+                <span class="text-4xl md:text-5xl font-bold">12<span class="text-[#00ff41]"></span></span>
             </div>
             <div class="stat-box">
-                <span class="text-[10px] font-bold uppercase tracking-widest text-neutral-600 block mb-4">Context</span>
-                <span class="text-5xl font-bold">1<span class="text-[#00ff41]">M+</span></span>
+                <span class="text-[10px] font-bold uppercase tracking-widest text-neutral-500 block mb-3">Skills</span>
+                <span class="text-4xl md:text-5xl font-bold">10<span class="text-[#00ff41]"></span></span>
             </div>
-            <div class="stat-box border-r-0">
-                <span class="text-[10px] font-bold uppercase tracking-widest text-neutral-600 block mb-4">Autonomy</span>
-                <span class="text-5xl font-bold">MAX</span>
+            <div class="stat-box">
+                <span class="text-[10px] font-bold uppercase tracking-widest text-neutral-500 block mb-3">Default context</span>
+                <span class="text-4xl md:text-5xl font-bold">1<span class="text-[#00ff41]">M</span></span>
+                <span class="text-[10px] mono opacity-50 block mt-2">gemini-3-flash-preview</span>
+            </div>
+        </section>
+
+        <!-- Influences -->
+        <section id="dna" class="py-24 md:py-32 px-5 md:px-12 border-t border-white/5">
+            <div class="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-12 gap-8 md:gap-12 items-start">
+                <div class="md:col-span-4">
+                    <p class="text-xs font-bold uppercase tracking-widest opacity-50 mb-4">Influences</p>
+                    <h2 class="text-3xl md:text-5xl font-bold tracking-tighter mb-6 leading-[0.95]">
+                        Patterns we lifted from other harnesses.
+                    </h2>
+                    <p class="text-sm opacity-60 leading-relaxed">
+                        AMA isn't a clean-sheet design — it's an opinionated mix of what works elsewhere, ported to a Telegram-first surface.
+                    </p>
+                </div>
+                <div class="md:col-span-8 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div class="p-6 md:p-8 border border-white/10 rounded-2xl hover:bg-white/5 transition-all">
+                        <div class="text-[10px] mono opacity-40 mb-3">01 / RECALL · COMPRESSION</div>
+                        <div class="text-xl font-bold mb-2">Hermes Agent</div>
+                        <p class="text-sm opacity-60 leading-relaxed">FTS5 no-LLM <span class="mono">session_search</span>, 7-section history compression, async curator pattern.</p>
+                    </div>
+                    <div class="p-6 md:p-8 border border-white/10 rounded-2xl hover:bg-white/5 transition-all">
+                        <div class="text-[10px] mono opacity-40 mb-3">02 / SHAPE · UX</div>
+                        <div class="text-xl font-bold mb-2">Claude Code (cc-oss)</div>
+                        <p class="text-sm opacity-60 leading-relaxed">Deferred tool search, persistent task list, token budget knob, post-batch file-mutation verifier footer.</p>
+                    </div>
+                    <div class="p-6 md:p-8 border border-white/10 rounded-2xl hover:bg-white/5 transition-all">
+                        <div class="text-[10px] mono opacity-40 mb-3">03 / CONTROL</div>
+                        <div class="text-xl font-bold mb-2">OpenClaw</div>
+                        <p class="text-sm opacity-60 leading-relaxed"><span class="mono">/stop</span>, <span class="mono">/steer</span>, <span class="mono">/retry</span>, <span class="mono">/undo</span>, <span class="mono">/queue</span> — mid-run controls users actually use.</p>
+                    </div>
+                    <div class="p-6 md:p-8 border border-white/10 rounded-2xl hover:bg-white/5 transition-all">
+                        <div class="text-[10px] mono opacity-40 mb-3">04 / NATIVE</div>
+                        <div class="text-xl font-bold mb-2">Original to AMA</div>
+                        <p class="text-sm opacity-60 leading-relaxed">Telegram inline-button <span class="mono">clarify</span>, image-part decay, vertex thought_signature flow, skill auto-router.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Quick start -->
+        <section class="py-24 md:py-32 px-5 md:px-12">
+            <div class="max-w-5xl mx-auto">
+                <h2 class="type-display font-bold mb-10">Run it.</h2>
+                <div class="term">
+                    <div><span class="dim"># clone</span></div>
+                    <div><span class="prompt">$</span> git clone https://github.com/hangsiahong/mix-autonomous-agent &amp;&amp; cd mix-autonomous-agent</div>
+                    <div class="mt-3"><span class="dim"># set TG_TOKEN, PROVIDER, MODEL — see .env.example</span></div>
+                    <div><span class="prompt">$</span> cp .env.example .env &amp;&amp; $EDITOR .env</div>
+                    <div class="mt-3"><span class="dim"># launch the long-poll loop</span></div>
+                    <div><span class="prompt">$</span> bash bot.sh</div>
+                </div>
+                <p class="mt-6 text-sm text-neutral-500">
+                    Runs on any linux box with bash, python3, curl, and a Telegram bot token. No docker required.
+                </p>
             </div>
         </section>
 
         <!-- Final CTA -->
-        <section class="py-60 px-6 md:px-12 text-center">
+        <section class="py-32 md:py-48 px-5 md:px-12 text-center border-t border-white/5">
             <div class="max-w-4xl mx-auto">
-                <h2 class="text-6xl md:text-8xl font-bold tracking-tighter mb-12">UNLEASH THE<br><span class="serif italic font-light opacity-30">AUTONOMY.</span></h2>
-                <div class="flex flex-col md:flex-row justify-center gap-6">
-                    <a href="#" class="px-12 py-6 bg-white text-black text-xl font-bold rounded-full hover:scale-105 transition-all">Start a Project</a>
-                    <a href="#" class="px-12 py-6 border border-white/20 text-xl font-bold rounded-full hover:bg-white/10 transition-all">View Docs</a>
+                <h2 class="type-display font-bold mb-10">
+                    Self-host the agent.<br>
+                    <span class="serif italic font-light opacity-40">Your machine, your keys.</span>
+                </h2>
+                <div class="flex flex-col sm:flex-row justify-center gap-4">
+                    <a href="https://github.com/hangsiahong/mix-autonomous-agent" target="_blank" rel="noopener"
+                       class="btn-lg px-10 py-5 bg-white text-black text-lg font-bold rounded-full hover:scale-[1.03] transition-transform">
+                        View on GitHub
+                    </a>
+                    <a href="https://github.com/hangsiahong/mix-autonomous-agent/blob/master/CLAUDE.md" target="_blank" rel="noopener"
+                       class="btn-lg px-10 py-5 border border-white/20 text-lg font-bold rounded-full hover:bg-white/10 transition-all">
+                        Read CLAUDE.md
+                    </a>
                 </div>
             </div>
         </section>
     </main>
 
-    <footer class="py-20 px-6 md:px-12 border-t border-white/10">
-        <div class="flex flex-col md:flex-row justify-between items-start gap-12">
+    <footer class="py-16 md:py-20 px-5 md:px-12 border-t border-white/10">
+        <div class="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-start gap-10">
             <div class="max-w-sm">
-                <div class="text-2xl font-bold tracking-tighter uppercase mb-6">AMA&reg;</div>
+                <div class="text-xl font-bold tracking-tighter uppercase mb-4">AMA</div>
                 <p class="text-xs font-medium uppercase tracking-widest opacity-40 leading-loose">
-                    The autonomous agent for the modern developer. Built on a linux foundation. Controlled via Telegram. Powered by the world's best LLMs.
+                    Autonomous Mix Agent. A bash harness controlled by Telegram. MIT licensed.
                 </p>
             </div>
-            <div class="grid grid-cols-2 md:grid-cols-3 gap-12 text-[10px] font-bold uppercase tracking-widest">
-                <div class="flex flex-col gap-4">
-                    <span class="text-neutral-600">Modules</span>
-                    <a href="#" class="hover:text-[#00ff41]">Skill Manager</a>
-                    <a href="#" class="hover:text-[#00ff41]">Scheduler</a>
-                    <a href="#" class="hover:text-[#00ff41]">Memory Hub</a>
+            <div class="grid grid-cols-2 gap-10 md:gap-16 text-[11px] font-bold uppercase tracking-widest">
+                <div class="flex flex-col gap-3">
+                    <span class="text-neutral-600">Project</span>
+                    <a href="https://github.com/hangsiahong/mix-autonomous-agent" target="_blank" rel="noopener" class="hover:text-[#00ff41]">GitHub</a>
+                    <a href="https://github.com/hangsiahong/mix-autonomous-agent/blob/master/CLAUDE.md" target="_blank" rel="noopener" class="hover:text-[#00ff41]">CLAUDE.md</a>
+                    <a href="https://github.com/hangsiahong/mix-autonomous-agent/issues" target="_blank" rel="noopener" class="hover:text-[#00ff41]">Issues</a>
                 </div>
-                <div class="flex flex-col gap-4">
-                    <span class="text-neutral-600">Connect</span>
-                    <a href="#" class="hover:text-[#00ff41]">Telegram</a>
-                    <a href="#" class="hover:text-[#00ff41]">GitHub</a>
-                    <a href="#" class="hover:text-[#00ff41]">X.com</a>
+                <div class="flex flex-col gap-3">
+                    <span class="text-neutral-600">Stack</span>
+                    <span class="opacity-60">bash + python3</span>
+                    <span class="opacity-60">sqlite + lancedb</span>
+                    <span class="opacity-60">vertex ai (default)</span>
                 </div>
             </div>
         </div>
+        <p class="mt-12 text-[10px] mono opacity-30">
+            built for one user. you. no analytics. no telemetry.
+        </p>
     </footer>
 
     <script>
-        gsap.registerPlugin(ScrollTrigger);
+        if (window.gsap) {
+            gsap.registerPlugin(ScrollTrigger);
 
-        // Hero Reveal
-        gsap.from("#ama-hero", {
-            y: 150,
-            opacity: 0,
-            duration: 1.8,
-            ease: "expo.out"
-        });
-
-        // Section animations
-        gsap.utils.toArray("section").forEach(section => {
-            gsap.from(section, {
+            gsap.from("#ama-hero", {
+                y: 120,
                 opacity: 0,
-                y: 80,
-                duration: 1.2,
-                scrollTrigger: {
-                    trigger: section,
-                    start: "top 85%",
-                }
+                duration: 1.5,
+                ease: "expo.out"
             });
-        });
+
+            gsap.utils.toArray("section").forEach(section => {
+                gsap.from(section, {
+                    opacity: 0,
+                    y: 60,
+                    duration: 1.0,
+                    scrollTrigger: { trigger: section, start: "top 88%" }
+                });
+            });
+        }
     </script>
 </body>
 </html>

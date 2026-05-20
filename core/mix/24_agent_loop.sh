@@ -72,6 +72,11 @@ run_agent() {
     # the invoking shell's PID, not ours; $BASHPID is the actual process PID)
     local _agent_pid=$BASHPID
 
+    # Export session_id so tool wrappers (tools/<name>.sh) can resolve per-
+    # session state files without needing to reconstruct it from chat_id +
+    # thread_id. Consumed by tool_search via TOOL_SESSION_ID.
+    export AMA_SESSION_ID="$session_id"
+
     # Session Lock block
     (
         # Wait for the lock — write PID file INSIDE lock so it always points
@@ -220,6 +225,43 @@ line = (
 print(line)
 " 2>/dev/null)
         [[ -n "$_budget_line" ]] && context_prompt+="${_budget_line}\n"
+
+        # cc-oss-inspired token budget knob: either party can declare a budget
+        # by including "+500k" / "use 50k tokens" / "spend 1.5m tokens" in their
+        # message. Parsed on the user's input here; parsed on the assistant's
+        # text inside the turn loop (further down). Sticky per-session until
+        # /new or explicit clear. Drives both context display and hard-stop.
+        local _user_budget
+        _user_budget=$(printf '%s' "$input" | python3 tools/token_budget.py parse 2>/dev/null)
+        if [[ -n "$_user_budget" ]]; then
+            python3 tools/token_budget.py set "$session_id" "$_user_budget" user >/dev/null 2>&1
+        fi
+        # Inject the active-budget status (if any) into per-turn context so the
+        # model can self-throttle. Empty string = no budget set = no line added.
+        local _abudget_line
+        _abudget_line=$(python3 tools/token_budget.py line "$session_id" 2>/dev/null)
+        [[ -n "$_abudget_line" ]] && context_prompt+="${_abudget_line}\n"
+
+        # Deferred tools: list names of tools the model COULD call but whose
+        # schemas aren't loaded yet (saves ~1.5-2k tokens/turn baseline by
+        # keeping their schemas out of the prompt until needed). Model uses
+        # tool_search to fetch a schema when it actually wants to use one.
+        local _deferred_list
+        _deferred_list=$(python3 tools/tool_search.py list-deferred "$session_id" 2>/dev/null)
+        if [[ -n "$_deferred_list" ]]; then
+            context_prompt+="\n## Deferred Tools (call \`tool_search\` to load a schema)\n"
+            context_prompt+="${_deferred_list}\n"
+        fi
+
+        # Active tasks (persistent, SQLite-backed via `task` tool). Shows up to
+        # 5 pending+in_progress tasks for THIS session so the model sees its
+        # own open work each turn. Empty when no tasks → no header rendered.
+        local _tasks_context
+        _tasks_context=$(python3 tools/task_manager.py context "$session_id" 2>/dev/null)
+        if [[ -n "$_tasks_context" ]]; then
+            context_prompt+="\n## Active Tasks (cross-session, see \`task\` tool to manage)\n"
+            context_prompt+="${_tasks_context}\n"
+        fi
 
         # Status-query circuit breaker. When the user asks a count/list/status
         # question, the right answer is "one authoritative tool call, then
@@ -396,6 +438,11 @@ except: print(); print(); print()" "$_override_file" 2>/dev/null)
         # consumed by the render branches below to emit a "🛑 Stopped" message
         # instead of treating the abort as a max-turns failure.
         local _user_stopped=false
+        # Tracks whether the active token budget was exhausted this turn. Set
+        # inside the token-accounting block when spent ≥ budget. Drives a
+        # dedicated render branch (similar to _user_stopped) so the user sees
+        # "💸 Budget reached" instead of "Max turns reached".
+        local _budget_exhausted=false
         while [ "$turn" -lt "$MAX_TURNS" ]; do
             # Cooperative stop check (top of every turn). The hard-kill path
             # (kill_tree_hard in router.sh) is the primary mechanism — this
@@ -447,6 +494,38 @@ print(u.get('prompt_tokens',u.get('input_tokens',0)))
 print(u.get('completion_tokens',u.get('output_tokens',0)))" 2>/dev/null)
                 total_input_tokens=$((total_input_tokens + ${_it:-0}))
                 total_output_tokens=$((total_output_tokens + ${_ot:-0}))
+
+                # Budget knob: assistant text can also set/replace the budget,
+                # then we accumulate spend and check 90%/100% thresholds.
+                if [[ -n "$text" && "$text" != "null" ]]; then
+                    local _asst_budget
+                    _asst_budget=$(printf '%s' "$text" | python3 tools/token_budget.py parse 2>/dev/null)
+                    if [[ -n "$_asst_budget" ]]; then
+                        python3 tools/token_budget.py set "$session_id" "$_asst_budget" assistant >/dev/null 2>&1
+                    fi
+                fi
+                local _bdelta=$((${_it:-0} + ${_ot:-0}))
+                if [[ "$_bdelta" -gt 0 ]]; then
+                    local _bstatus
+                    _bstatus=$(python3 tools/token_budget.py add "$session_id" "$_bdelta" 2>/dev/null)
+                    if [[ -n "$_bstatus" ]]; then
+                        local _bspent _bpct _bcrossed _bexh
+                        IFS='|' read -r _bspent _bpct _bcrossed _bexh <<< "$_bstatus"
+                        # 90% crossing — inject a one-shot system reminder into
+                        # history. The model sees it on the next call and can
+                        # gracefully wrap up. (Mirrors cc-oss continuation msg.)
+                        if [[ "$_bcrossed" == "1" ]]; then
+                            append_text "user" "[SYSTEM: Token budget warning — you've used ${_bspent} tokens (${_bpct}% of declared budget). Wrap up: finish the current task efficiently or summarize what you've done. Do not abandon — you have ~10% remaining.]"
+                        fi
+                        # 100% — hard-stop the turn loop. Render branch below
+                        # will show a "💸 Budget reached" message with the
+                        # narration trail so the user can see what got done.
+                        if [[ "$_bexh" == "1" ]]; then
+                            _budget_exhausted=true
+                            break
+                        fi
+                    fi
+                fi
             fi
 
             # Update thinking snippet only when new reasoning arrives — persists across turns
@@ -550,6 +629,27 @@ for tc in json.loads(open(sys.argv[1]).read()):
     print(f'{name.strip()}|{tc.get(\"id\", \"\").strip()}')
 " <(printf '%s' "$tool_calls"))
                 fi
+                # Post-batch file-mutation verifier (hermes v0.14.0 pattern).
+                # Stats every file targeted by write tools in THIS batch; if any
+                # exist + sizes look off, append the footer to the last tool
+                # result so the model can spot silent write failures before its
+                # next text reply (or before the next tool batch).
+                local _fm_footer
+                _fm_footer=$(printf '%s' "$tool_calls" | python3 tools/file_mutation_check.py 2>/dev/null)
+                if [[ -n "$_fm_footer" ]]; then
+                    HISTORY=$(python3 -c "
+import json, sys
+h = json.loads(open(sys.argv[1]).read())
+footer = open(sys.argv[2]).read()
+for i in range(len(h)-1, -1, -1):
+    if h[i].get('role') == 'tool':
+        c = h[i].get('content', '')
+        h[i]['content'] = str(c) + '\n' + footer
+        break
+print(json.dumps(h, separators=(',',':')))
+" <(printf '%s' "$HISTORY") <(printf '%s' "$_fm_footer") 2>/dev/null || printf '%s' "$HISTORY")
+                fi
+
                 # Drain pending /steer into last tool result (hermes pattern)
                 if [[ -f "$steer_file" ]]; then
                     local _steer_text; _steer_text=$(cat "$steer_file" 2>/dev/null)
@@ -730,6 +830,51 @@ print('\n'.join(out))
             [[ -n "$_stopped_pane" ]] && _stop_full="${_stopped_pane}"$'\n\n'"${_stop_full}"
             tg_edit_safe "$chat_id" "$msg_id" "$_stop_full" "HTML" "$thread_id" || true
             [[ -n "$user_msg_id" && "$user_msg_id" != "0" ]] && tg_react "$chat_id" "$user_msg_id" "👎" || true
+        elif [[ "$_budget_exhausted" == true ]]; then
+            # Token budget reached. Show narration + steps + the budget status
+            # line so the user can see how far the agent got and decide whether
+            # to /retry with a larger budget or accept the partial result.
+            local _budget_status_line
+            _budget_status_line=$(python3 tools/token_budget.py line "$session_id" 2>/dev/null | sed 's/^- \*\*Active budget\*\*[^:]*:/💸/;s/⚠ approaching limit/exhausted/')
+            local _bx_pane
+            _bx_pane=$(STEPS_LOG="$_steps_log" NARRATION_LOG="$_narration_log" python3 -c "
+import os, re
+EMOJI = {'bash':'🛠️','web_search':'🔍','fetch_url':'🌐','read_file':'📖','write_file':'✍️',
+         'edit_code':'📝','search_files':'🔎','todo':'📋','memory':'🧠','memory_remember':'🧠',
+         'memory_recall':'🧠','process':'⚙️','browser':'🌍','image_generate':'🎨','patch':'🩹',
+         'repo_map':'🗺️','clarify':'❓','session_search':'🗂️','sys_info':'📊','recap':'📝',
+         'custom_tool_manager':'🔧','skill_manager':'🎯','skill_install':'📦','insights':'📈',
+         'delegate':'🤖','ast_edit':'🔬','last_session':'🗓️','send_file':'📤'}
+def esc(s): return s.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+def md_light(t):
+    t = esc(t)
+    t = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', t)
+    t = re.sub(r'\`([^\`]+)\`', r'<code>\1</code>', t)
+    t = re.sub(r'(?<![A-Za-z0-9])_([^_]+)_(?![A-Za-z0-9])', r'<i>\1</i>', t)
+    return t
+out = []
+narr_raw = os.environ.get('NARRATION_LOG','')
+if narr_raw:
+    narr_out = [f'📝 {md_light(e.strip())}' for e in narr_raw.split(chr(0x1e))[-6:] if e.strip()]
+    if narr_out:
+        out.append('<blockquote>' + '\n'.join(narr_out) + '</blockquote>')
+raw = os.environ.get('STEPS_LOG','')
+if raw:
+    for e in raw.split(chr(0x1e))[-8:]:
+        p = e.split('|')
+        if len(p) < 4: continue
+        st, name, key, dur = p[0], p[1], p[2], p[3]
+        em = EMOJI.get(name, '🧩')
+        try: dur_s = f' <i>{int(dur)}s</i>' if int(dur) >= 1 else ''
+        except: dur_s = ''
+        key_s = f' <i>{esc(key)[:60]}</i>' if key else ''
+        out.append(f'✓ <code>{em} {name}</code>{key_s}{dur_s}')
+print('\n'.join(out))
+" 2>/dev/null)
+            local _bx_full="💸 <i>Token budget reached.</i> ${_budget_status_line:-}\n<i>Use /budget clear or send a new budget to continue, or /retry to resume.</i>"
+            [[ -n "$_bx_pane" ]] && _bx_full="${_bx_pane}"$'\n\n'"${_bx_full}"
+            tg_edit_safe "$chat_id" "$msg_id" "$_bx_full" "HTML" "$thread_id" || true
+            [[ -n "$user_msg_id" && "$user_msg_id" != "0" ]] && tg_react "$chat_id" "$user_msg_id" "👎" || true
         elif [[ "$loop_completed" == true ]]; then
             local _elapsed_total=$(( $(date +%s) - _turn_start ))
             local _elapsed_str=""
@@ -865,10 +1010,11 @@ print('\n'.join(out))
         # init → survives the run_agent EXIT trap's `pkill -TERM -P $BASHPID`).
         # A plain `( ... ) &` would keep the chain as a child of run_agent and
         # get TERMed the moment the turn finishes.
-        # Skip post-turn background work entirely on user-initiated stop —
-        # the turn was aborted, reflection would be partial/misleading, and
-        # the curator would burn tokens analysing an incomplete trajectory.
-        if [[ $total_tool_calls -gt 0 && "$_user_stopped" != true ]]; then
+        # Skip post-turn background work entirely on user-initiated stop or
+        # budget exhaustion — the turn was aborted, reflection would be partial
+        # or misleading, and the curator would burn tokens analysing an
+        # incomplete trajectory (defeating the budget the user just imposed).
+        if [[ $total_tool_calls -gt 0 && "$_user_stopped" != true && "$_budget_exhausted" != true ]]; then
             (
                 (
                     # Reflection (read-only inspection, saves to LanceDB).
