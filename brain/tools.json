@@ -243,25 +243,31 @@
   },
   {
     "name": "session_search",
-    "description": "Search past sessions by keyword/topic. Returns ranked summaries.",
+    "description": "Recall past conversations across all sessions. No LLM cost \u2014 pure SQLite/FTS5 lookup. Three modes (inferred from args): (1) discovery \u2014 pass `query` for top-N matching sessions with snippets + \u00b1window context + first/last bookends. (2) scroll \u2014 pass `session_id` + `around_message_id` to get a window centered on that message; re-anchor to page deeper. (3) browse \u2014 no args returns recent sessions with previews. Far cheaper and faster than memory_recall for finding *what we discussed before*; use this when the user references a past conversation/topic/decision.",
     "parameters": {
       "type": "object",
       "properties": {
         "query": {
-          "type": "string"
-        },
-        "session": {
           "type": "string",
-          "description": "Optional: specific session ID."
+          "description": "Discovery mode: search terms. Multi-word AND-matched via FTS5. Omit to browse or scroll."
+        },
+        "session_id": {
+          "type": "string",
+          "description": "Filter discovery to one session, OR (with around_message_id) trigger scroll mode."
+        },
+        "around_message_id": {
+          "type": "integer",
+          "description": "Scroll mode: anchor message id. Combined with session_id, returns \u00b1window messages around it. Get message ids from a prior discovery result."
         },
         "limit": {
           "type": "integer",
-          "description": "1-5, default 3."
+          "description": "Discovery: max sessions (1-10, default 5). Browse: max sessions (1-50, default 15)."
+        },
+        "window": {
+          "type": "integer",
+          "description": "Discovery: msgs each side of match (0-15, default 5). Scroll: msgs each side of anchor (1-30, default 5)."
         }
-      },
-      "required": [
-        "query"
-      ]
+      }
     },
     "toolset": "memory"
   },

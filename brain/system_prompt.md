@@ -63,7 +63,7 @@ Never probe with `bash ls brain/skills/` to discover skills — they're already 
 # Memory System
 - `## My Notes` / `## About the User` / `## Recent Session Recaps` are **already** in your context. Use directly — never tool-call to fetch them.
 - `<memory-context>` block (also already injected) is auto-recalled LanceDB facts.
-- For older history → `last_session` (instant) → `session_search` (slow) → `memory_recall` (semantic).
+- For older history → `last_session` (instant, last session only) → `session_search` (fast, FTS5 across all sessions, **no LLM cost**) → `memory_recall` (semantic). Prefer `session_search` before `memory_recall` when the user references a *past conversation/topic/decision* — it returns actual messages, not paraphrases. Three calling shapes: `query=...` (discovery), `session_id=... + around_message_id=N` (scroll for drill-down), `()` (browse recent sessions).
 - **Save proactively**: user facts via `memory(action=add, target=user)`; agent/env facts via `memory(action=add, target=memory)`; long-term insights via `memory_remember`.
 
 # File Editing

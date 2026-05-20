@@ -244,6 +244,211 @@ def search_messages(query: str, limit: int = 10) -> list:
             """, (f"%{query}%", f"%{query}%", limit)).fetchall()
     return [dict(r) for r in rows]
 
+# ── Recall API (no-LLM, FTS5-backed; cc-oss/hermes session_search pattern) ────
+#
+# Three calling shapes for the model-facing `session_search` tool:
+#   1. discovery  — query → top sessions with snippets + ±window + bookends
+#   2. scroll     — session_id + around_message_id → ±window centered on anchor
+#   3. browse     — no args → recent sessions list
+# Everything returns DB-backed text. No model calls anywhere.
+
+
+def _sanitize_fts_query(q: str) -> str:
+    """FTS5 query sanitization. Wraps each non-empty token in double quotes
+    so dotted/underscored/hyphenated terms don't trip the parser, then joins
+    with implicit AND. Empty/punctuation-only input returns ''."""
+    tokens = [t for t in re.split(r"\s+", q.strip()) if t]
+    cleaned = []
+    for t in tokens:
+        # Strip leading/trailing punctuation, escape inner double quotes
+        t = t.strip(".,;:!?()[]{}'\"`")
+        if not t:
+            continue
+        t = t.replace('"', '""')
+        cleaned.append(f'"{t}"')
+    return " ".join(cleaned)
+
+
+def _resolve_to_root(conn, session_id: str) -> str:
+    """Walk parent_session_id chain to lineage root. Used to dedupe hits
+    that span a compression-lineage chain (post-compaction continuation
+    sessions point back to the pre-compaction session)."""
+    visited: set = set()
+    cur = session_id
+    while cur and cur not in visited:
+        visited.add(cur)
+        row = _retry_execute(conn, "SELECT parent_session_id FROM sessions WHERE id=?", (cur,)).fetchone()
+        if not row or not row["parent_session_id"]:
+            return cur
+        cur = row["parent_session_id"]
+    return cur
+
+
+def get_message_window(session_id: str, anchor_message_id: int, window: int = 5) -> list:
+    """Return up to `window` messages before and after the anchor (inclusive
+    of the anchor), all from the same session, ordered by id ASC."""
+    with _connect() as conn:
+        before = _retry_execute(conn, """
+            SELECT id, role, content, tool_calls, tool_name, timestamp
+            FROM messages WHERE session_id=? AND id <= ?
+            ORDER BY id DESC LIMIT ?
+        """, (session_id, int(anchor_message_id), int(window) + 1)).fetchall()
+        after = _retry_execute(conn, """
+            SELECT id, role, content, tool_calls, tool_name, timestamp
+            FROM messages WHERE session_id=? AND id > ?
+            ORDER BY id ASC LIMIT ?
+        """, (session_id, int(anchor_message_id), int(window))).fetchall()
+    # before is DESC and includes anchor; reverse to chronological
+    return [dict(r) for r in reversed(before)] + [dict(r) for r in after]
+
+
+def get_session_bookends(session_id: str, n: int = 3) -> dict:
+    """First n and last n meaningful messages: user msgs + assistant msgs that
+    actually have text content (tool-only assistant turns are excluded — they
+    look like empty rows to the model). Returns {head, tail}."""
+    with _connect() as conn:
+        head = _retry_execute(conn, """
+            SELECT id, role, content, timestamp FROM messages
+            WHERE session_id=? AND role IN ('user','assistant')
+              AND content IS NOT NULL AND TRIM(content) != ''
+            ORDER BY id ASC LIMIT ?
+        """, (session_id, int(n))).fetchall()
+        tail = _retry_execute(conn, """
+            SELECT id, role, content, timestamp FROM messages
+            WHERE session_id=? AND role IN ('user','assistant')
+              AND content IS NOT NULL AND TRIM(content) != ''
+            ORDER BY id DESC LIMIT ?
+        """, (session_id, int(n))).fetchall()
+    return {
+        "head": [dict(r) for r in head],
+        "tail": [dict(r) for r in reversed(tail)],
+    }
+
+
+def search_messages_with_context(
+    query: str,
+    limit: int = 5,
+    window: int = 5,
+    session_id: str = "",
+) -> list:
+    """Discovery mode: FTS5 search, then dedupe by lineage-root, then for each
+    surviving hit pull a ±window context block + bookends. Returns:
+        [
+          {
+            "session_id":   "<sid>",
+            "lineage_root": "<sid>",   # dedupe key
+            "title":        "...",
+            "model":        "...",
+            "message_id":   <int>,    # anchor — pass back as around_message_id
+            "snippet":      "...",    # the matching content trimmed
+            "rank":         <float>,
+            "timestamp":    <unix>,
+            "window":       [ {id, role, content, tool_name}, ... ],
+            "bookends":     {"head": [...], "tail": [...]},
+            "msg_count":    <int>,
+          },
+          ...
+        ]
+    """
+    safe = _sanitize_fts_query(query)
+    if not safe:
+        return []
+    with _connect() as conn:
+        # Pull up to 5x the requested limit so dedupe still leaves enough survivors.
+        sql = """
+            SELECT m.id AS message_id, m.session_id, m.role, m.content, m.tool_name,
+                   m.timestamp, s.title, s.model, s.message_count, rank
+            FROM messages_fts
+            JOIN messages m ON messages_fts.rowid = m.id
+            JOIN sessions s ON m.session_id = s.id
+            WHERE messages_fts MATCH ?
+        """
+        params: list = [safe]
+        if session_id:
+            sql += " AND m.session_id = ?"
+            params.append(session_id)
+        sql += " ORDER BY rank LIMIT ?"
+        params.append(int(limit) * 5)
+        try:
+            rows = _retry_execute(conn, sql, params).fetchall()
+        except sqlite3.OperationalError:
+            # FTS syntax error — fall back to LIKE on raw query (no fancy bookends)
+            like_sql = """
+                SELECT m.id AS message_id, m.session_id, m.role, m.content, m.tool_name,
+                       m.timestamp, s.title, s.model, s.message_count, 0 AS rank
+                FROM messages m JOIN sessions s ON m.session_id = s.id
+                WHERE m.content LIKE ?
+            """
+            like_params: list = [f"%{query}%"]
+            if session_id:
+                like_sql += " AND m.session_id = ?"
+                like_params.append(session_id)
+            like_sql += " ORDER BY m.timestamp DESC LIMIT ?"
+            like_params.append(int(limit) * 5)
+            rows = _retry_execute(conn, like_sql, like_params).fetchall()
+
+        # Dedupe by lineage-root, keep best (lowest) rank per root
+        seen_roots: set = set()
+        survivors: list = []
+        for r in rows:
+            root = _resolve_to_root(conn, r["session_id"])
+            if root in seen_roots:
+                continue
+            seen_roots.add(root)
+            survivors.append((dict(r), root))
+            if len(survivors) >= int(limit):
+                break
+
+    # Now expand each survivor with window + bookends (these open their own conns)
+    enriched: list = []
+    for r, root in survivors:
+        win = get_message_window(r["session_id"], r["message_id"], window)
+        bookends = get_session_bookends(r["session_id"], n=3)
+        snippet = (r.get("content") or "")[:240].replace("\n", " ").strip()
+        enriched.append({
+            "session_id":   r["session_id"],
+            "lineage_root": root,
+            "title":        r.get("title") or "",
+            "model":        r.get("model") or "",
+            "message_id":   r["message_id"],
+            "snippet":      snippet,
+            "rank":         r.get("rank"),
+            "timestamp":    r.get("timestamp"),
+            "window":       win,
+            "bookends":     bookends,
+            "msg_count":    r.get("message_count") or 0,
+        })
+    return enriched
+
+
+def list_recent_sessions(limit: int = 15, include_active: bool = True) -> list:
+    """Browse mode: recent sessions chronologically, each with a 1-line
+    'first user message' preview so the model can pick one to drill into."""
+    with _connect() as conn:
+        rows = _retry_execute(conn, """
+            SELECT id, title, model, message_count, started_at, updated_at,
+                   ended_at, end_reason
+            FROM sessions
+            WHERE message_count > 0
+            ORDER BY updated_at DESC LIMIT ?
+        """, (int(limit),)).fetchall()
+        result = []
+        for r in rows:
+            if not include_active and not r["ended_at"]:
+                continue
+            d = dict(r)
+            # First user message (skip tool/assistant) — cheap query
+            first = _retry_execute(conn, """
+                SELECT content FROM messages
+                WHERE session_id=? AND role='user' AND content != ''
+                ORDER BY id ASC LIMIT 1
+            """, (r["id"],)).fetchone()
+            d["preview"] = (first["content"][:160].replace("\n", " ").strip()
+                            if first and first["content"] else "")
+            result.append(d)
+    return result
+
+
 def db_stats() -> dict:
     with _connect() as conn:
         n_sessions  = _retry_execute(conn, "SELECT COUNT(*) FROM sessions").fetchone()[0]
@@ -354,6 +559,39 @@ def main():
             title = r.get("title") or session
             content = (r.get("content") or "")[:200].replace("\n", " ")
             print(f"[{ts}] {title} ({role}): {content}")
+
+    elif cmd == "recall":
+        # No-LLM discovery: recall <query> [--limit N] [--window W] [--session sid]
+        if len(sys.argv) < 3:
+            print("Usage: session_db.py recall <query> [--limit N] [--window W] [--session sid]")
+            sys.exit(1)
+        ap = argparse.ArgumentParser()
+        ap.add_argument("--limit", type=int, default=5)
+        ap.add_argument("--window", type=int, default=5)
+        ap.add_argument("--session", default="")
+        args, _ = ap.parse_known_args(sys.argv[3:])
+        results = search_messages_with_context(
+            sys.argv[2], limit=args.limit, window=args.window, session_id=args.session,
+        )
+        print(json.dumps(results, indent=2, default=str))
+
+    elif cmd == "scroll":
+        # Drill-down: scroll <session_id> <anchor_id> [--window W]
+        if len(sys.argv) < 4:
+            print("Usage: session_db.py scroll <session_id> <anchor_message_id> [--window W]")
+            sys.exit(1)
+        ap = argparse.ArgumentParser()
+        ap.add_argument("--window", type=int, default=5)
+        args, _ = ap.parse_known_args(sys.argv[4:])
+        msgs = get_message_window(sys.argv[2], int(sys.argv[3]), window=args.window)
+        print(json.dumps(msgs, indent=2, default=str))
+
+    elif cmd == "browse":
+        ap = argparse.ArgumentParser()
+        ap.add_argument("--limit", type=int, default=15)
+        args, _ = ap.parse_known_args(sys.argv[2:])
+        rows = list_recent_sessions(args.limit)
+        print(json.dumps(rows, indent=2, default=str))
 
     elif cmd == "stats":
         s = db_stats()

@@ -1,203 +1,164 @@
 #!/bin/bash
-# Tool: session_search
-# Search past conversation history (hermes-style): multi-term match, context windows, LLM summary.
+# Tool: session_search — long-term conversation recall (no LLM).
+#
+# Three calling shapes (inferred from args, no explicit `mode` parameter):
+#
+#   1. discovery — pass TOOL_query[, TOOL_session, TOOL_limit, TOOL_window]
+#      Returns top N sessions each with snippet, ±window msgs around the
+#      match, plus first-3 + last-3 user/assistant bookends.
+#
+#   2. scroll — pass TOOL_session + TOOL_around_message_id[, TOOL_window]
+#      Returns a window of messages centered on the anchor. To page further,
+#      re-anchor on the first or last id returned.
+#
+#   3. browse — no args → recent sessions with 1-line previews.
+#
+# All three are SQLite/FTS5-backed. No model calls anywhere — replaces the
+# previous LLM-summarization path (was 1-5 call_api invocations per search).
+# cc-oss / hermes-agent session_search_tool parity.
 
-query="${TOOL_query}"
-session="${TOOL_session:-}"
-limit="${TOOL_limit:-3}"
+set -e
 
-if [[ -z "$query" ]]; then
-    echo "Error: 'query' is required."
-    exit 1
-fi
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$DIR"
 
-# Load env for LLM summary call
-SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+# Mode dispatch via env vars so we can hand off bytes-with-quotes to python
+# without bash-escape hell.
+export _SS_QUERY="${TOOL_query:-}"
+export _SS_SESSION="${TOOL_session:-${TOOL_session_id:-}}"
+export _SS_ANCHOR="${TOOL_around_message_id:-}"
+export _SS_LIMIT="${TOOL_limit:-5}"
+export _SS_WINDOW="${TOOL_window:-5}"
+export _SS_BROWSE_LIMIT="${TOOL_limit:-15}"
 
-python3 - <<PYEOF
-import json, os, sys, re, subprocess, glob, tempfile
+python3 - <<'PYEOF'
+import os, sys, json, datetime
 
-query = os.environ.get("TOOL_query", "")
-session_filter = os.environ.get("TOOL_session", "")
-limit = int(os.environ.get("TOOL_limit", "3"))
-limit = max(1, min(limit, 5))
-script_dir = "$SCRIPT_DIR"
+# Import the helpers from tools/session_db.py — tools/ isn't a package,
+# so add it to sys.path and import by module name.
+sys.path.insert(0, "tools")
+from session_db import (  # type: ignore
+    search_messages_with_context, get_message_window,
+    get_session_bookends, list_recent_sessions,
+)
 
-state_dir = os.path.join(script_dir, "brain", "state")
+q = os.environ.get("_SS_QUERY", "").strip()
+sid = os.environ.get("_SS_SESSION", "").strip()
+anchor = os.environ.get("_SS_ANCHOR", "").strip()
 
-# ── Find history files ─────────────────────────────────────────────────
-if session_filter:
-    files = [os.path.join(state_dir, f"history_{session_filter}.json")]
-else:
-    # Search both active sessions and archived ones (post-/new). Newest first
-    # for the active set, then everything in sessions/ (order doesn't matter
-    # for ranking because we score-then-sort below).
-    files = sorted(
-        glob.glob(os.path.join(state_dir, "history_*.json")),
-        key=os.path.getmtime, reverse=True,
-    )
-    files += sorted(glob.glob(os.path.join(state_dir, "sessions", "history_*.json")))
 
-if not files:
-    print("No session history found.")
-    sys.exit(0)
-
-# ── Search & rank ──────────────────────────────────────────────────────
-terms = [t.strip().lower() for t in query.lower().split() if t.strip()]
-
-def score_and_extract(path):
+def fmt_ts(ts):
     try:
-        with open(path) as f:
-            history = json.load(f)
+        return datetime.datetime.fromtimestamp(float(ts)).strftime("%Y-%m-%d %H:%M")
     except Exception:
-        return None
+        return "?"
 
-    full_parts = []
-    match_count = 0
-    for msg in history:
-        role = msg.get("role", "?")
-        content = msg.get("content", "")
-        if isinstance(content, list):
-            content = " ".join(p.get("text", "") for p in content if isinstance(p, dict))
-        if not content:
-            continue
-        lo = content.lower()
-        hits = sum(lo.count(t) for t in terms)
-        if hits:
-            match_count += hits
-        full_parts.append(f"[{role.upper()}]: {content}")
 
-    if match_count == 0:
-        return None
+def fmt_msg(m, max_chars=200):
+    role = (m.get("role") or "?").upper()
+    content = (m.get("content") or "").strip()
+    if not content and m.get("tool_calls"):
+        content = f"[tool_call]"
+    if len(content) > max_chars:
+        content = content[:max_chars] + "…"
+    content = content.replace("\n", " ⏎ ")
+    tn = m.get("tool_name") or ""
+    tag = f" ({tn})" if tn and role == "TOOL" else ""
+    return f"  [#{m.get('id','?')}] {role}{tag}: {content}"
 
-    full_text = "\n\n".join(full_parts)
-    session_id = os.path.basename(path).replace("history_", "").replace(".json", "")
-    return {"session_id": session_id, "score": match_count, "text": full_text, "msg_count": len(history)}
 
-scored = []
-for f in files:
-    r = score_and_extract(f)
-    if r:
-        scored.append(r)
-
-scored.sort(key=lambda x: x["score"], reverse=True)
-top = scored[:limit]
-
-if not top:
-    print(f"No matches found for '{query}' in session history.")
-    sys.exit(0)
-
-# ── Truncate around match positions (hermes strategy) ─────────────────
-MAX_CHARS = 8000
-
-def truncate_around_matches(text, query_terms, max_chars=MAX_CHARS):
-    if len(text) <= max_chars:
-        return text
-    tl = text.lower()
-    positions = []
-    for t in query_terms:
-        for m in re.finditer(re.escape(t), tl):
-            positions.append(m.start())
-    if not positions:
-        return text[:max_chars] + "\n...[truncated]..."
-    positions.sort()
-    best_start, best_count = 0, 0
-    for pos in positions:
-        ws = max(0, pos - max_chars // 4)
-        we = ws + max_chars
-        if we > len(text):
-            ws = max(0, len(text) - max_chars)
-        count = sum(1 for p in positions if ws <= p < ws + max_chars)
-        if count > best_count:
-            best_count, best_start = count, ws
-    start = best_start
-    end = min(len(text), start + max_chars)
-    prefix = "...[earlier turns truncated]...\n\n" if start > 0 else ""
-    suffix = "\n\n...[later turns truncated]..." if end < len(text) else ""
-    return prefix + text[start:end] + suffix
-
-# ── LLM summarization (optional, uses call_api via subprocess) ────────
-def summarize_session(session_id, conversation_text, score, msg_count):
-    summary_prompt = f"""You are reviewing a past conversation transcript to help recall what happened.
-Search topic: {query}
-Session: {session_id} ({msg_count} messages, {score} keyword hits)
-
-Summarize the session focusing on the search topic. Include:
-1. What was asked or worked on
-2. Actions taken and outcomes
-3. Key decisions, solutions, or conclusions
-4. Specific commands, paths, URLs, or technical details
-5. Anything left unresolved
-
-CONVERSATION (may be truncated around relevant sections):
-{conversation_text}
-
-Write a concise factual recap in past tense. Preserve specific technical details."""
-
-    env = dict(os.environ)
-    prompt_file = None
+# ── Mode 2: SCROLL (session_id + around_message_id) ───────────────────────
+if sid and anchor:
     try:
-        # Write prompt to tempfile — avoids $@ empty-args bug and ARG_MAX limits
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as tf:
-            tf.write(summary_prompt)
-            prompt_file = tf.name
-
-        result = subprocess.run(
-            ["bash", "-c", f"""
-cd '{script_dir}'
-# Silence source-time provider activation banners — they would otherwise be
-# concatenated onto call_api's stdout and corrupt the summary text.
-source core/mix/init.sh >/dev/null 2>&1
-HISTORY=$(python3 -c 'import json,sys; prompt=open(sys.argv[1]).read(); print(json.dumps([{{"role":"user","content":prompt}}]))' '{prompt_file}' 2>/dev/null)
-export HISTORY
-call_api "You are a conversation summarizer. Respond with a focused, factual summary." 2>/dev/null | python3 -c '
-import sys,json
-try:
-    r=json.load(sys.stdin)
-    t=r.get("choices",[{{}}])[0].get("message",{{}}).get("content","")
-    if not t:
-        t=r.get("candidates",[{{}}])[0].get("content",{{}}).get("parts",[{{}}])[0].get("text","")
-    print(t.strip(),end="")
-except: pass
-'
-"""],
-            capture_output=True, text=True, timeout=90, env=env
-        )
-        return result.stdout.strip() if result.stdout.strip() else None
-    except Exception:
-        return None
-    finally:
-        if prompt_file:
-            try:
-                os.unlink(prompt_file)
-            except OSError:
-                pass
-
-# ── Output results ────────────────────────────────────────────────────
-print(f"Session search: '{query}' — found {len(top)} matching session(s)\n")
-print("=" * 60)
-
-for item in top:
-    sid = item["session_id"]
-    print(f"\n## Session: {sid}  ({item['score']} match{'es' if item['score'] != 1 else ''}, {item['msg_count']} messages)")
-    print("-" * 40)
-
-    trunc = truncate_around_matches(item["text"], terms)
-
-    # Try LLM summary; fall back to raw snippets
-    summary = summarize_session(sid, trunc, item["score"], item["msg_count"])
-    if summary:
-        print(summary)
-    else:
-        # Fallback: show context snippets
-        lines = trunc.split("\n")
-        shown = 0
-        for line in lines:
-            if any(t in line.lower() for t in terms):
-                print(line[:200])
-                shown += 1
-                if shown >= 10:
-                    break
+        anchor_id = int(anchor)
+    except ValueError:
+        print(f"Error: around_message_id must be an integer, got {anchor!r}")
+        sys.exit(1)
+    try:
+        window = max(1, min(int(os.environ.get("_SS_WINDOW", "5")), 30))
+    except ValueError:
+        window = 5
+    msgs = get_message_window(sid, anchor_id, window=window)
+    if not msgs:
+        print(f"No messages near #{anchor_id} in session {sid}.")
+        sys.exit(0)
+    first_id = msgs[0]["id"]
+    last_id = msgs[-1]["id"]
+    print(f"## Window in session `{sid}` — ±{window} around #{anchor_id}")
+    print(f"({len(msgs)} msgs, range #{first_id}–#{last_id})\n")
+    for m in msgs:
+        print(fmt_msg(m, max_chars=300))
     print()
+    print(f"_To scroll back: around_message_id={first_id}. Forward: around_message_id={last_id}._")
+    sys.exit(0)
 
+
+# ── Mode 1: DISCOVERY (query) ─────────────────────────────────────────────
+if q:
+    try:
+        limit = max(1, min(int(os.environ.get("_SS_LIMIT", "5")), 10))
+    except ValueError:
+        limit = 5
+    try:
+        window = max(0, min(int(os.environ.get("_SS_WINDOW", "5")), 15))
+    except ValueError:
+        window = 5
+    results = search_messages_with_context(q, limit=limit, window=window, session_id=sid)
+    if not results:
+        print(f"No matches for `{q}`" + (f" in session {sid}" if sid else "") + ".")
+        sys.exit(0)
+
+    print(f"# Session search: `{q}` — {len(results)} match(es)\n")
+    for i, r in enumerate(results, 1):
+        title = r.get("title") or "(untitled)"
+        model = r.get("model") or "?"
+        ts = fmt_ts(r.get("timestamp"))
+        print(f"## {i}. `{r['session_id']}` — {title} · {model} · {ts}")
+        if r.get("lineage_root") and r["lineage_root"] != r["session_id"]:
+            print(f"_(post-compaction continuation of `{r['lineage_root']}`)_")
+        print(f"**Snippet** (msg #{r['message_id']}): {r['snippet']}")
+        print(f"**Session size**: {r['msg_count']} msgs")
+        # Bookends
+        he = r["bookends"]["head"]
+        ta = r["bookends"]["tail"]
+        if he:
+            print("\n**First few:**")
+            for m in he:
+                print(fmt_msg(m, max_chars=160))
+        # Window around match — skip if it overlaps with bookends entirely
+        win = r["window"]
+        if win:
+            print("\n**Around the match:**")
+            for m in win:
+                print(fmt_msg(m, max_chars=260))
+        if ta and not (he and ta[0]["id"] == he[0]["id"]):
+            print("\n**Last few:**")
+            for m in ta:
+                print(fmt_msg(m, max_chars=160))
+        print()
+        print(f"_To drill deeper: session_search(session_id=\"{r['session_id']}\", around_message_id={r['message_id']})._")
+        print()
+        print("---")
+        print()
+    sys.exit(0)
+
+
+# ── Mode 3: BROWSE (no args) ──────────────────────────────────────────────
+try:
+    limit = max(1, min(int(os.environ.get("_SS_BROWSE_LIMIT", "15")), 50))
+except ValueError:
+    limit = 15
+rows = list_recent_sessions(limit=limit)
+if not rows:
+    print("No sessions found.")
+    sys.exit(0)
+print(f"# Recent sessions ({len(rows)})\n")
+for r in rows:
+    status = r.get("end_reason") or ("active" if not r.get("ended_at") else "ended")
+    print(f"- `{r['id']}` — {r.get('title') or '(untitled)'} · {r.get('model') or '?'} · "
+          f"{r.get('message_count', 0)} msgs · {fmt_ts(r.get('updated_at'))} · {status}")
+    if r.get("preview"):
+        print(f"    > {r['preview']}")
+print()
+print("_To search: session_search(query=\"...\"). To open one: session_search(session_id=\"...\", around_message_id=<msg_id>)._")
 PYEOF
