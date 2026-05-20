@@ -92,7 +92,7 @@ Never probe with `bash ls brain/skills/` to discover skills — they're already 
 |---|---|
 | current whitelist | `brain/config.json` → `whitelist` array |
 | **who was last whitelisted/revoked** | `access_control(action=log)` (or `tail brain/state/access_control.log`) — NEVER trawl session history for this |
-| provider/model | `.env` |
+| provider/model | `.env` — `PROVIDER=` must be one of: **google, anthropic, openrouter, deepseek, copilot, groq, kconsole, minimax, mistral, ollama, xai, zai** (these are the `.sh` filenames in `core/mix/providers/`). For Google Vertex AI: `PROVIDER="google"` + `GOOGLE_MODE="vertex"` (NOT `PROVIDER="vertex"` — that's not a valid provider name; vertex is a *mode* of the google provider). |
 | tools | `brain/tools.json` |
 | running agents | `brain/state/run_*.pid` |
 | queue/stop | `brain/state/queue_<sid>` / `stop_<sid>` |
