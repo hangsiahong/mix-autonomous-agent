@@ -1,6 +1,6 @@
 # AMA — Autonomous Mix Agent
 
-Telegram bot backed by a bash harness, running Google Vertex AI (Gemini 3 Flash Preview). Branch: `improve`.
+Telegram bot backed by a bash harness, running Google Vertex AI (Gemini 3 Flash Preview). Default branch: `master`. Valid `PROVIDER=` values (from `core/mix/providers/`): **google, anthropic, openrouter, deepseek, copilot, groq, kconsole, minimax, mistral, ollama, xai, zai**. For Vertex AI: `PROVIDER="google"` + `GOOGLE_MODE="vertex"` (NOT `PROVIDER="vertex"`).
 
 ## Architecture
 
@@ -65,9 +65,15 @@ Python scripts called from bash history filters must read from `sys.stdin`, not 
 | `core/mix/30_compression.sh` | Hermes-style 7-section summary compression |
 | `tools/delegate.py` | Sub-agent delegation (Claude Code CLI / Codex / self backends) |
 | `tools/ast_edit.py` | Python AST-based structural editing |
-| `tools/session_db.py` | SQLite session manager |
+| `tools/session_db.py` | SQLite session manager + FTS5 helpers (`search_messages_with_context`, `get_message_window`, `get_session_bookends`, `list_recent_sessions`) |
+| `tools/session_search.sh` | No-LLM recall — three modes (discovery / scroll / browse) over FTS5 |
 | `tools/error_analyzer.py` | Error pattern detection, heal_request creation |
-| `brain/tools.json` | Tool declarations (toolsets: core/search/memory/meta/inspect/media) |
+| `tools/token_budget.py` | Self-throttle parser. User says `+500k` / `spend 50k tokens` → budget enforced on this session |
+| `tools/tool_search.py` + `.sh` | Deferred-tool loader. 14 deferred tools surface by name only; `tool_search(query=…)` loads schemas |
+| `tools/task.sh` + `task_manager.py` | Cross-session task list (SQLite at `brain/state/tasks.db`); statuses: pending/in_progress/completed/failed/deleted |
+| `tools/clarify.sh` | Asks the user. With `options=[...]` renders Telegram inline-keyboard buttons (qid-protected against stale taps) |
+| `tools/file_mutation_check.py` | Post-batch verifier — stats every write-tool target path, footer appended to last tool result |
+| `brain/tools.json` | Tool declarations (toolsets: core/search/memory/meta/inspect/media + `defer: true` flag) |
 | `brain/system_prompt.md` | Agent system prompt |
 | `extensions/cron/run.sh` | Cron jobs: health check, memory consolidation |
 
@@ -79,12 +85,17 @@ Python scripts called from bash history filters must read from `sys.stdin`, not 
 - Config: `PROVIDER=google`, `BASE_URL=...`, `MODEL=gemini-3-flash-preview` (or similar).
 
 ## Toolsets (default loaded each turn)
-- `core`: bash, edit_code, patch, write_file, clarify
+- `core`: bash, edit_code, patch, write_file, clarify, **tool_search**
 - `search`: web_search, fetch_url, search_files, browser
 - `memory`: memory, memory_remember, memory_recall, session_search
-- `meta`: todo, process, custom_tool_manager, skill_manager, **repo_map**, **last_session**, **delegate**
+- `meta`: todo, process, custom_tool_manager, skill_manager, **task**, repo_map, last_session, delegate
 - `inspect` (on-demand): repo_map, sys_info, read_error_log, insights
 - `media` (on-demand): image_generate
+
+## Deferred tools (marked `"defer": true` in brain/tools.json)
+14 tools surface in the per-turn context as **`## Deferred Tools`** by NAME ONLY — their schemas are NOT in the payload. To call one, the agent must first run `tool_search(query="...")` (exact: `select:name1,name2`; keyword: `query="image"`). Activated tool stays loaded for the rest of the session via `brain/state/active_tools_<sid>.json`.
+
+Currently deferred: `image_generate`, `kanban_show/create/complete/block`, `sys_info`, `read_error_log`, `insights`, `ast_edit`, `skill_install`, `custom_tool_manager`, `browser`, `scheduler`, `delegate`. Roughly ~1755 tokens saved per turn vs all-loaded.
 
 ## State Files (brain/state/)
 
@@ -97,6 +108,11 @@ Python scripts called from bash history filters must read from `sys.stdin`, not 
 | `model_<sid>` | Per-session model override |
 | `prefetch_<sid>` | Pre-warmed memory context for next turn |
 | `history_<sid>.json` | Conversation history |
+| `budget_<sid>.json` | Token budget — set/spent/limit when user declared `+500k` |
+| `active_tools_<sid>.json` | Deferred tools currently activated for this session |
+| `clarify_<sid>.json` | Pending clarify question with options + qid (for button taps) |
+| `tasks.db` | SQLite — cross-session structured task list (table `tasks`) |
+| `sessions.db` | SQLite — sessions + messages + FTS5 index (`messages_fts`) for session_search |
 
 ## Common Tasks
 
@@ -107,3 +123,15 @@ Python scripts called from bash history filters must read from `sys.stdin`, not 
 **Test without Telegram:** `AMA_DIR=. python3 tools/session_db.py stats` or `bash tools/repo_map.sh`.
 
 **Check logs:** `tail -f logs/bot.log` (if running under pm2: `pm2 logs ama-bot`).
+
+## Per-turn context blocks (injected by 16_api.sh)
+The agent sees these as additional `[SYSTEM: Context Updated]` content each turn:
+- `## Current Session Context` — date, model, vision status, working dir
+- `## My Notes` / `## About the User` / `## Recent Session Recaps` — from `brain/state/MEMORY.md`, `USER.md`, `session_recaps.jsonl`
+- `## Available Skills` — auto-bound + bindable
+- `## Active Tasks` — open `task` entries for this session
+- `## Deferred Tools` — names-only list of tools requiring `tool_search` to activate
+- `Active budget: ... | ... used | ...% of cap` — if a token budget is set
+
+## Post-batch hooks (in 24_agent_loop.sh, after tool execution)
+Order: file-mutation verifier footer → steer drain → fingerprint-circuit-breaker. All three mutate the last tool result in HISTORY before the next API call.
