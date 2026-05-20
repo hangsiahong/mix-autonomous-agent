@@ -386,15 +386,42 @@ except: print(); print(); print()" "$_override_file" 2>/dev/null)
         # Persistent step log for the whole agent turn (Claude-Code-style cumulative pane).
         # Lines separated by \x1e (RS); each line = "<emoji>|<name>|<key_arg>|<duration_s>"
         local _steps_log=""
+        # Persistent narration log — each entry is the assistant's "I'm doing X" sentence
+        # for one tool batch, separated by \x1e. Renders as 📝 blockquote in the between-turn
+        # pane and in the final message so the user can follow the agent's reasoning trail.
+        local _narration_log=""
         local _RS=$'\x1e'
+        # Tracks whether the user explicitly stopped this turn (/stop, Stop
+        # button, or Interrupt). Set inside the loop when stop_flag is observed;
+        # consumed by the render branches below to emit a "🛑 Stopped" message
+        # instead of treating the abort as a max-turns failure.
+        local _user_stopped=false
         while [ "$turn" -lt "$MAX_TURNS" ]; do
+            # Cooperative stop check (top of every turn). The hard-kill path
+            # (kill_tree_hard in router.sh) is the primary mechanism — this
+            # polling exists so that a stop also lands cleanly when SIGTERM is
+            # wedged behind a syscall (e.g. requests.post on a slow socket).
+            # Whichever fires first wins; the other becomes a no-op.
+            if [[ -f "$stop_flag" ]]; then
+                _user_stopped=true
+                break
+            fi
             turn=$((turn + 1))
             [[ "$turn" -gt 1 ]] && tg_send_action "$chat_id" "typing" "$thread_id"
             export _AMA_REASONING_HTML="${_AMA_REASONING_HTML:-}"
 
             local result
             result=$(call_api_stream "$chat_id" "$msg_id" "$skill")
-            
+
+            # If kill_tree_hard fired during the stream, call_api_stream's
+            # python child was killed and `result` is empty/partial. Check
+            # stop_flag now so we render "Stopped" instead of "Failed".
+            if [[ -f "$stop_flag" ]]; then
+                _user_stopped=true
+                break
+            fi
+
+
             if [[ -z "$result" || "$result" == "FAIL:"* ]]; then
                 local err_info="${result#FAIL:}"
                 tg_edit "$chat_id" "$msg_id" "Error: Failed to get response from AI. ${err_info:-'Please try again later.'}" > /dev/null 2>&1
@@ -447,6 +474,14 @@ if m:
 
             if [[ -n "$tool_calls" && "$tool_calls" != "[]" && "$tool_calls" != "null" ]]; then
                 if [[ -n "$text" && "$text" != "null" ]]; then
+                    # Accumulate narration for the cumulative pane + final render.
+                    # Single-line, capped at 240 chars; the pane keeps only the last N entries.
+                    local _narr_line
+                    _narr_line=$(printf '%s' "$text" | tr '\n' ' ' | sed 's/  */ /g; s/^ //; s/ $//')
+                    if [[ ${#_narr_line} -gt 240 ]]; then
+                        _narr_line="${_narr_line:0:240}…"
+                    fi
+                    [[ -n "$_narr_line" ]] && _narration_log+="${_narration_log:+$_RS}${_narr_line}"
                     local _esc_reason=$(printf '%s' "$text" | head -c 500 | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
                     [[ ${#text} -gt 480 ]] && _esc_reason="${_esc_reason}..."
                     export _AMA_REASONING_HTML="$_esc_reason"
@@ -558,6 +593,7 @@ print(json.dumps(h, separators=(',',':')))
                 # with status emoji, key arg, and elapsed duration.
                 local _between_msg
                 _between_msg=$(STEPS_LOG="$_steps_log" \
+                               NARRATION_LOG="$_narration_log" \
                                STATUS_WORD="$_status_pick" \
                                REASONING_SNIPPET="$_thought_snippet" \
                                python3 -c "
@@ -571,6 +607,13 @@ EMOJI = {'bash':'🛠️','web_search':'🔍','fetch_url':'🌐','read_file':'�
          'delegate':'🤖','ast_edit':'🔬','last_session':'🗓️','send_file':'📤','clarify':'❓'}
 def esc(s):
     return s.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+def md_light(t):
+    t = esc(t)
+    t = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', t)
+    t = re.sub(r'\`([^\`]+)\`', r'<code>\1</code>', t)
+    t = re.sub(r'(?<![A-Za-z0-9])_([^_]+)_(?![A-Za-z0-9])', r'<i>\1</i>', t)
+    return t
+
 raw = os.environ.get('STEPS_LOG','')
 lines = []
 if raw:
@@ -591,16 +634,22 @@ if raw:
         key_s = f' <i>{esc(key)[:60]}</i>' if key else ''
         lines.append(f'{sym} <code>{em} {name}</code>{key_s}{dur_s}')
 
+# Cumulative narration — last 6 'I'm doing X' sentences from the model, one per tool batch.
+# Renders as a single blockquote at the top so the user sees the agent's reasoning trail.
+narr_raw = os.environ.get('NARRATION_LOG','')
+narr_lines = []
+if narr_raw:
+    for entry in narr_raw.split(chr(0x1e))[-6:]:
+        entry = entry.strip()
+        if entry:
+            narr_lines.append(f'📝 {md_light(entry)}')
+
 snippet = os.environ.get('REASONING_SNIPPET','').strip()
 word = os.environ.get('STATUS_WORD','Thinking')
 
-def md_light(t):
-    t = esc(t)
-    t = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', t)
-    t = re.sub(r'_([^_]+)_', r'<i>\1</i>', t)
-    return t
-
 out = []
+if narr_lines:
+    out.append('<blockquote>' + '\n'.join(narr_lines) + '</blockquote>')
 if snippet:
     out.append(f'<blockquote>💭 {md_light(snippet)}</blockquote>')
 if lines:
@@ -610,6 +659,13 @@ print('\n'.join(out))
 " 2>/dev/null || echo "⏳ <i>Thinking…</i>")
                 tg_edit "$chat_id" "$msg_id" "$_between_msg" "HTML" > /dev/null 2>&1
                 export _AMA_REASONING_HTML=""
+                # Final stop_flag check before going back for another model call —
+                # catches a Stop click that landed while tools were executing. Without
+                # this, we'd issue one more (potentially slow) API call before noticing.
+                if [[ -f "$stop_flag" ]]; then
+                    _user_stopped=true
+                    break
+                fi
                 continue
             fi
             # Steer arrived but no tools were called this turn — inject into next turn
@@ -632,7 +688,49 @@ print('\n'.join(out))
         tg_remove_buttons "$chat_id" "$msg_id" > /dev/null 2>&1 || true
         rm -f "$stop_btn_file"  # legacy: clean up any leftover marker from old code path
 
-        if [[ "$loop_completed" == true ]]; then
+        if [[ "$_user_stopped" == true ]]; then
+            # User clicked Stop/Interrupt or sent /stop. Show the narration trail +
+            # step list so they can see where the agent was when they stopped it.
+            local _stopped_pane
+            _stopped_pane=$(STEPS_LOG="$_steps_log" NARRATION_LOG="$_narration_log" python3 -c "
+import os, re
+EMOJI = {'bash':'🛠️','web_search':'🔍','fetch_url':'🌐','read_file':'📖','write_file':'✍️',
+         'edit_code':'📝','search_files':'🔎','todo':'📋','memory':'🧠','memory_remember':'🧠',
+         'memory_recall':'🧠','process':'⚙️','browser':'🌍','image_generate':'🎨','patch':'🩹',
+         'repo_map':'🗺️','clarify':'❓','session_search':'🗂️','sys_info':'📊','recap':'📝',
+         'custom_tool_manager':'🔧','skill_manager':'🎯','skill_install':'📦','insights':'📈',
+         'delegate':'🤖','ast_edit':'🔬','last_session':'🗓️','send_file':'📤'}
+def esc(s): return s.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+def md_light(t):
+    t = esc(t)
+    t = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', t)
+    t = re.sub(r'\`([^\`]+)\`', r'<code>\1</code>', t)
+    t = re.sub(r'(?<![A-Za-z0-9])_([^_]+)_(?![A-Za-z0-9])', r'<i>\1</i>', t)
+    return t
+out = []
+narr_raw = os.environ.get('NARRATION_LOG','')
+if narr_raw:
+    narr_out = [f'📝 {md_light(e.strip())}' for e in narr_raw.split(chr(0x1e))[-6:] if e.strip()]
+    if narr_out:
+        out.append('<blockquote>' + '\n'.join(narr_out) + '</blockquote>')
+raw = os.environ.get('STEPS_LOG','')
+if raw:
+    for e in raw.split(chr(0x1e))[-8:]:
+        p = e.split('|')
+        if len(p) < 4: continue
+        st, name, key, dur = p[0], p[1], p[2], p[3]
+        em = EMOJI.get(name, '🧩')
+        try: dur_s = f' <i>{int(dur)}s</i>' if int(dur) >= 1 else ''
+        except: dur_s = ''
+        key_s = f' <i>{esc(key)[:60]}</i>' if key else ''
+        out.append(f'✓ <code>{em} {name}</code>{key_s}{dur_s}')
+print('\n'.join(out))
+" 2>/dev/null)
+            local _stop_full="🛑 <i>Stopped by user.</i>"
+            [[ -n "$_stopped_pane" ]] && _stop_full="${_stopped_pane}"$'\n\n'"${_stop_full}"
+            tg_edit_safe "$chat_id" "$msg_id" "$_stop_full" "HTML" "$thread_id" || true
+            [[ -n "$user_msg_id" && "$user_msg_id" != "0" ]] && tg_react "$chat_id" "$user_msg_id" "👎" || true
+        elif [[ "$loop_completed" == true ]]; then
             local _elapsed_total=$(( $(date +%s) - _turn_start ))
             local _elapsed_str=""
             [[ $_elapsed_total -ge 10 ]] && _elapsed_str=" ⏱ ${_elapsed_total}s"
@@ -648,8 +746,8 @@ print('\n'.join(out))
                 local _rendered_text; _rendered_text=$(md_to_tg_html "$text")
                 # Build the step pane (separate from rendered markdown to avoid HTML escaping the icons)
                 local _step_pane
-                _step_pane=$(STEPS_LOG="$_steps_log" python3 -c "
-import os
+                _step_pane=$(STEPS_LOG="$_steps_log" NARRATION_LOG="$_narration_log" python3 -c "
+import os, re
 EMOJI = {'bash':'🛠️','web_search':'🔍','fetch_url':'🌐','read_file':'📖','write_file':'✍️',
          'edit_code':'📝','search_files':'🔎','todo':'📋','memory':'🧠','memory_remember':'🧠',
          'memory_recall':'🧠','process':'⚙️','browser':'🌍','image_generate':'🎨','patch':'🩹',
@@ -657,8 +755,27 @@ EMOJI = {'bash':'🛠️','web_search':'🔍','fetch_url':'🌐','read_file':'�
          'custom_tool_manager':'🔧','skill_manager':'🎯','skill_install':'📦','insights':'📈',
          'delegate':'🤖','ast_edit':'🔬','last_session':'🗓️','send_file':'📤'}
 def esc(s): return s.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
-raw = os.environ.get('STEPS_LOG','')
+def md_light(t):
+    t = esc(t)
+    t = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', t)
+    t = re.sub(r'\`([^\`]+)\`', r'<code>\1</code>', t)
+    t = re.sub(r'(?<![A-Za-z0-9])_([^_]+)_(?![A-Za-z0-9])', r'<i>\1</i>', t)
+    return t
+
 out = []
+# Narration trail (📝 lines) — the post-mortem of what the agent was thinking
+# at each tool batch. Rendered above the tool list, below the final answer body.
+narr_raw = os.environ.get('NARRATION_LOG','')
+if narr_raw:
+    narr_out = []
+    for e in narr_raw.split(chr(0x1e))[-6:]:
+        e = e.strip()
+        if e:
+            narr_out.append(f'📝 {md_light(e)}')
+    if narr_out:
+        out.append('<blockquote>' + '\n'.join(narr_out) + '</blockquote>')
+
+raw = os.environ.get('STEPS_LOG','')
 if raw:
     for e in raw.split(chr(0x1e))[-8:]:
         p = e.split('|')
@@ -691,8 +808,48 @@ print('\n'.join(out))
             # React ✅ on the user's original message (hermes: done signal)
             [[ -z "$text" ]] || { [[ -n "$user_msg_id" && "$user_msg_id" != "0" ]] && tg_react "$chat_id" "$user_msg_id" "✅"; }
         else
-            # Loop hit max turns without clean exit
-            tg_edit_safe "$chat_id" "$msg_id" "$(md_to_tg_html "${text:-}")\n\n⚠️ _Max turns reached. Use /retry to continue or /new for fresh session._" "HTML" "$thread_id" || true
+            # Loop hit max turns without clean exit — show the narration trail + steps
+            # so the user can see where the agent got stuck (most useful failure mode for debugging).
+            local _stuck_pane
+            _stuck_pane=$(STEPS_LOG="$_steps_log" NARRATION_LOG="$_narration_log" python3 -c "
+import os, re
+EMOJI = {'bash':'🛠️','web_search':'🔍','fetch_url':'🌐','read_file':'📖','write_file':'✍️',
+         'edit_code':'📝','search_files':'🔎','todo':'📋','memory':'🧠','memory_remember':'🧠',
+         'memory_recall':'🧠','process':'⚙️','browser':'🌍','image_generate':'🎨','patch':'🩹',
+         'repo_map':'🗺️','clarify':'❓','session_search':'🗂️','sys_info':'📊','recap':'📝',
+         'custom_tool_manager':'🔧','skill_manager':'🎯','skill_install':'📦','insights':'📈',
+         'delegate':'🤖','ast_edit':'🔬','last_session':'🗓️','send_file':'📤'}
+def esc(s): return s.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+def md_light(t):
+    t = esc(t)
+    t = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', t)
+    t = re.sub(r'\`([^\`]+)\`', r'<code>\1</code>', t)
+    t = re.sub(r'(?<![A-Za-z0-9])_([^_]+)_(?![A-Za-z0-9])', r'<i>\1</i>', t)
+    return t
+out = []
+narr_raw = os.environ.get('NARRATION_LOG','')
+if narr_raw:
+    narr_out = [f'📝 {md_light(e.strip())}' for e in narr_raw.split(chr(0x1e))[-6:] if e.strip()]
+    if narr_out:
+        out.append('<blockquote>' + '\n'.join(narr_out) + '</blockquote>')
+raw = os.environ.get('STEPS_LOG','')
+if raw:
+    for e in raw.split(chr(0x1e))[-8:]:
+        p = e.split('|')
+        if len(p) < 4: continue
+        st, name, key, dur = p[0], p[1], p[2], p[3]
+        em = EMOJI.get(name, '🧩')
+        try: dur_s = f' <i>{int(dur)}s</i>' if int(dur) >= 1 else ''
+        except: dur_s = ''
+        key_s = f' <i>{esc(key)[:60]}</i>' if key else ''
+        out.append(f'✓ <code>{em} {name}</code>{key_s}{dur_s}')
+print('\n'.join(out))
+" 2>/dev/null)
+            local _stuck_body; _stuck_body="$(md_to_tg_html "${text:-}")"
+            local _stuck_full="${_stuck_body}"
+            [[ -n "$_stuck_pane" ]] && _stuck_full="${_stuck_pane}"$'\n\n'"${_stuck_full}"
+            _stuck_full="${_stuck_full}"$'\n\n'"⚠️ <i>Max turns reached. Use /retry to continue or /new for fresh session.</i>"
+            tg_edit_safe "$chat_id" "$msg_id" "$_stuck_full" "HTML" "$thread_id" || true
             [[ -n "$user_msg_id" && "$user_msg_id" != "0" ]] && tg_react "$chat_id" "$user_msg_id" "👎"
         fi
 
@@ -708,7 +865,10 @@ print('\n'.join(out))
         # init → survives the run_agent EXIT trap's `pkill -TERM -P $BASHPID`).
         # A plain `( ... ) &` would keep the chain as a child of run_agent and
         # get TERMed the moment the turn finishes.
-        if [[ $total_tool_calls -gt 0 ]]; then
+        # Skip post-turn background work entirely on user-initiated stop —
+        # the turn was aborted, reflection would be partial/misleading, and
+        # the curator would burn tokens analysing an incomplete trajectory.
+        if [[ $total_tool_calls -gt 0 && "$_user_stopped" != true ]]; then
             (
                 (
                     # Reflection (read-only inspection, saves to LanceDB).

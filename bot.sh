@@ -126,6 +126,14 @@ if [[ -n "$_DRAIN_LAST" ]]; then
 fi
 unset _DRAIN _DRAIN_LAST _DRAIN_COUNT
 
+# Enable job control so every backgrounded `( run_agent ... ) &` (both the
+# autonomy-job dispatch below and the per-update dispatch inside the pipe
+# subshell further down) becomes a process-group leader. Tested: bash's `set
+# -m` does NOT propagate the PGID-splitting behavior into child subshells via
+# inheritance alone — each subshell that backgrounds work needs its own
+# `set -m`. See the duplicate `set -m` inside the `while read -r update` loop.
+set -m
+
 while true; do
     # Check for background autonomy jobs
     mkdir -p "${DIR}/brain/jobs"
@@ -164,6 +172,14 @@ import json, sys
 for u in json.load(sys.stdin).get('result', []):
     print(json.dumps(u))
 " | while read -r update; do
+        # Job control on inside this pipe subshell — makes every backgrounded
+        # `( run_agent ... ) &` a process-group leader (PGID == PID). Required
+        # for kill_tree's group-kill fast path in router.sh to safely target
+        # a single agent's tree without hitting bot.sh's group. Tested: without
+        # this, sibling agents dispatched from this same loop iteration share
+        # the pipe-subshell's PGID, making group-kill a foot-gun.
+        # Setting once persists across iterations (it's a shell option).
+        set -m
         if [[ -z "$update" || "$update" == "null" ]]; then continue; fi
         UPDATE_ID=$(echo "$update" | python3 -c "import json,sys; print(json.load(sys.stdin).get('update_id',''))" 2>/dev/null)
         if [[ -z "$UPDATE_ID" || "$UPDATE_ID" == "null" ]]; then

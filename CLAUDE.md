@@ -31,15 +31,19 @@ local _agent_pid=$BASHPID        # correct: actual process PID
 ) 200>"$lock_file"
 ```
 
-### Killing agents — never use negative PID
-`kill -TERM "-PID"` sends SIGTERM to the entire **process group** — this kills bot.sh.
+### Killing agents — use `kill_tree_hard`, never raw `kill`
+`router.sh` defines `kill_tree` and `kill_tree_hard` at the top — single source of truth for terminating an agent and everything it spawned. **Use them. Never hand-roll `kill -TERM` + `pkill -P`** (depth-1, misses grandchildren like `bash tool.sh → python3 → curl`).
 
-**Always use positive PID + pkill for children:**
 ```bash
-kill -TERM "$run_pid" 2>/dev/null || true
-sleep 0.3
-pkill -TERM -P "$run_pid" 2>/dev/null || true
+[[ -n "$run_pid" ]] && kill_tree_hard "$run_pid"   # TERM → 1s grace → KILL survivors
 ```
+
+How it works:
+1. **Group-kill fast path**: bot.sh enables `set -m` at the outer scope AND inside the `while read -r update` pipe subshell, so every `( run_agent ... ) &` becomes its own process-group leader (PID == PGID). `kill_tree` detects this and signals the whole group with one `kill -- -$PGID` (verified safe: refuses to signal bot.sh's own PGID).
+2. **Recursive walk fallback**: anything that escaped its group (rare: tools that `setsid`) is caught by depth-N `pgrep -P` recursion.
+3. **SIGKILL escalation**: `kill_tree_hard` polls `kill -0` for up to 1s after TERM, then SIGKILLs survivors. Fixes the "stop does nothing for 60s" case caused by curl wedged on a socket.
+
+Negative PID kill is now safe in this codebase precisely because of (1) — the PGID will never equal bot.sh's own group. Outside of `kill_tree`, still prefer positive PIDs to keep the explicit safety check in one place.
 
 ### History filters — use stdin not argv
 Python scripts called from bash history filters must read from `sys.stdin`, not `sys.argv[1]`.

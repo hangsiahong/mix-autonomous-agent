@@ -1,6 +1,78 @@
 #!/bin/bash
 # core/telegram/router.sh - Command routing
 
+# ── Reliable process-tree termination ─────────────────────────────────────────
+# Single source of truth for killing an agent and everything it spawned. Used by:
+#   • Stop button callback              (this file, stop:*)
+#   • Interrupt button callback         (this file, interrupt:*)
+#   • /stop slash command (single)      (this file, /stop case)
+#   • /stop all slash command           (this file, /stop all case)
+#
+# Strategy:
+#   1. If the target is a process group leader (PID == PGID), group-kill is
+#      atomic and one-shot — try it first. Safety: refuses to group-kill any
+#      group whose leader is bot.sh itself (would self-terminate the harness).
+#   2. Recursive pgrep walk catches anything that escaped its group (tool
+#      processes that called setsid/setpgid, or processes whose parent was
+#      reaped). Walks depth-N — the old `pkill -P` was depth-1 and missed
+#      grandchildren like `bash tool.sh → python3 → curl`.
+#   3. Two passes: TERM, then up to 1s of polling, then KILL on survivors.
+#      Fixes the previous "stop button does nothing for 60s" failure mode
+#      caused by curl wedged on a socket — SIGTERM is queued but the syscall
+#      blocks it; SIGKILL bypasses that.
+_kt_collect() {
+    # Walk the process tree rooted at $1, appending each PID into $_KT_PIDS.
+    # Uses pgrep -P (children-of) recursively. Caller initialises _KT_PIDS.
+    local _parent="$1"
+    local _child
+    for _child in $(pgrep -P "$_parent" 2>/dev/null); do
+        _KT_PIDS="$_KT_PIDS $_child"
+        _kt_collect "$_child"
+    done
+}
+
+kill_tree() {
+    # kill_tree <pid> [signal]      — one-shot signal to the whole tree
+    # Default signal is TERM. Returns 0 even if some PIDs were already dead.
+    local _root="$1"
+    local _sig="${2:-TERM}"
+    [[ -z "$_root" ]] && return 1
+
+    # Fast path: if root is a process group leader (PID == PGID) and that PGID
+    # is NOT bot.sh's group, signal the whole group atomically.
+    local _pgid _bot_pgid
+    _pgid=$(ps -o pgid= -p "$_root" 2>/dev/null | tr -d ' ')
+    _bot_pgid=$(ps -o pgid= -p "$$" 2>/dev/null | tr -d ' ')
+    if [[ -n "$_pgid" && "$_pgid" == "$_root" && "$_pgid" != "$_bot_pgid" ]]; then
+        kill -"$_sig" -- "-$_pgid" 2>/dev/null || true
+    fi
+
+    # Belt-and-suspenders: recursive walk catches anything not in that group
+    # (tool processes that set their own session, reparented orphans, etc.)
+    local _KT_PIDS="$_root"
+    _kt_collect "$_root"
+    # shellcheck disable=SC2086
+    kill -"$_sig" $_KT_PIDS 2>/dev/null || true
+    return 0
+}
+
+kill_tree_hard() {
+    # kill_tree_hard <pid>  — TERM, poll for up to 1.0s, then KILL survivors.
+    # Use this whenever the user expects "stopped" to mean "stopped now".
+    local _root="$1"
+    [[ -z "$_root" ]] && return 1
+    kill_tree "$_root" TERM
+    local _i=0
+    while [[ $_i -lt 10 ]]; do
+        kill -0 "$_root" 2>/dev/null || return 0
+        sleep 0.1
+        _i=$((_i + 1))
+    done
+    # Anything still alive after 1s is wedged in a syscall — SIGKILL bypasses it.
+    kill_tree "$_root" KILL
+    return 0
+}
+
 _ama_handle_callback() {
     local cbq_id="$1"
     local data="$2"
@@ -20,6 +92,8 @@ _ama_handle_callback() {
             local _stop_flag="${DIR}/brain/state/stop_${_sid}"
             local _stop_btn_file="${DIR}/brain/state/stopbtn_${_sid}"  # legacy
 
+            # Cooperative stop flag — turn loop polls this and exits cleanly
+            # without needing signals to land. Belt + suspenders with kill_tree below.
             touch "$_stop_flag"
             rm -f "${DIR}/brain/state/queue_${_sid}" \
                   "${DIR}/brain/state/interrupt_input_${_sid}" 2>/dev/null || true
@@ -28,11 +102,13 @@ _ama_handle_callback() {
                 local _pid_data; _pid_data=$(cat "$_pid_file" 2>/dev/null)
                 local _run_pid _agent_msg_id _orig_chat _orig_thread _uid _worker_pid
                 IFS='|' read -r _run_pid _agent_msg_id _orig_chat _orig_thread _uid _worker_pid <<< "$_pid_data"
-                kill -TERM "$_run_pid" 2>/dev/null || true
-                [[ -n "$_worker_pid" ]] && kill -TERM "$_worker_pid" 2>/dev/null || true
-                sleep 0.3
-                pkill -TERM -P "$_run_pid" 2>/dev/null || true
-                [[ -n "$_worker_pid" ]] && pkill -TERM -P "$_worker_pid" 2>/dev/null || true
+                # kill_tree_hard: TERM → up to 1s grace → KILL survivors. Walks the
+                # full descendant tree (was depth-1 pkill -P before, which missed
+                # grandchildren like `bash tool.sh → python3 → curl`).
+                [[ -n "$_run_pid" ]] && kill_tree_hard "$_run_pid"
+                # Worker subshell is normally a child of run_pid (so already handled),
+                # but kill it explicitly in case PID file lineage drifted.
+                [[ -n "$_worker_pid" ]] && kill -0 "$_worker_pid" 2>/dev/null && kill_tree_hard "$_worker_pid"
                 rm -f "$_pid_file"
                 [[ -n "$_agent_msg_id" && -n "$_orig_chat" ]] && \
                     tg_edit "$_orig_chat" "$_agent_msg_id" "🛑 <i>Stopped.</i>" "HTML" > /dev/null 2>&1 || true
@@ -46,17 +122,21 @@ _ama_handle_callback() {
         interrupt:*)
             local _sid="${data#interrupt:}"
             local _pending_file="${DIR}/brain/state/interrupt_input_${_sid}"
-            local _run_marker="${DIR}/brain/state/interrupt_run_${_sid}"
 
-            # Read but do NOT delete pending file yet — the queued agent (B) needs it
-            # to detect this is an interrupt (not a genuine /stop) and take over directly.
+            # The Interrupt button is ONLY shown on a queued message — meaning agent
+            # B already exists, waiting on the flock. When A dies, B acquires the
+            # lock, sees stop_flag + interrupt_input_file, and takes over (handled
+            # in 24_agent_loop.sh:89-95). We do NOT spawn a C fallback anymore:
+            # the old 2-second timer raced with B's wake-up and could fire the same
+            # message twice. If B somehow died before this point, the user just
+            # resends — far less harmful than a double-fire.
             local _pending_text; _pending_text=$(cat "$_pending_file" 2>/dev/null)
             [[ -z "$_pending_text" ]] && return  # stale button, already answered
 
             # Remove Interrupt button from the queued message
             [[ -n "$btn_msg_id" ]] && tg_remove_buttons "$chat_id" "$btn_msg_id" 2>/dev/null || true
 
-            # Stop the running agent A
+            # Stop the running agent A (cooperative flag + hard kill)
             local _pid_file="${DIR}/brain/state/run_${_sid}.pid"
             local _stop_flag="${DIR}/brain/state/stop_${_sid}"
             local _stop_btn_file="${DIR}/brain/state/stopbtn_${_sid}"
@@ -64,33 +144,20 @@ _ama_handle_callback() {
             touch "$_stop_flag"
             if [[ -f "$_pid_file" ]]; then
                 local _pid_data; _pid_data=$(cat "$_pid_file" 2>/dev/null)
-                local _run_pid _agent_msg_id _orig_chat _orig_thread
-                IFS='|' read -r _run_pid _agent_msg_id _orig_chat _orig_thread <<< "$_pid_data"
-                kill -TERM "$_run_pid" 2>/dev/null || true
-                sleep 0.3
-                pkill -TERM -P "$_run_pid" 2>/dev/null || true
+                local _run_pid _agent_msg_id _orig_chat _orig_thread _uid _worker_pid
+                IFS='|' read -r _run_pid _agent_msg_id _orig_chat _orig_thread _uid _worker_pid <<< "$_pid_data"
+                [[ -n "$_run_pid" ]] && kill_tree_hard "$_run_pid"
+                [[ -n "$_worker_pid" ]] && kill -0 "$_worker_pid" 2>/dev/null && kill_tree_hard "$_worker_pid"
                 rm -f "$_pid_file"
                 [[ -n "$_agent_msg_id" && -n "$_orig_chat" ]] && \
-                    tg_edit "$_orig_chat" "$_agent_msg_id" "🛑 <i>Stopped.</i>" "HTML" > /dev/null 2>&1 || true
+                    tg_edit "$_orig_chat" "$_agent_msg_id" "🛑 <i>Stopped — interrupted.</i>" "HTML" > /dev/null 2>&1 || true
             fi
             _sbid=$(cat "$_stop_btn_file" 2>/dev/null)
             [[ -n "$_sbid" ]] && tg_delete "$chat_id" "$_sbid" > /dev/null 2>&1 || true
             rm -f "$_stop_btn_file"
-
-            # Mark that a C fallback is planned.
-            # If queued agent B exists: B detects interrupt_input_file, deletes this marker,
-            # and runs the message directly without needing C.
-            # If no B exists: C starts after lock clears as the sole runner.
-            touch "$_run_marker"
-            (
-                sleep 2
-                rm -f "$_stop_flag"
-                if [[ -f "$_run_marker" ]]; then
-                    rm -f "$_run_marker" "$_pending_file"
-                    ( set -m; run_agent "$chat_id" "$_pending_text" "$user_id" "[]" \
-                        "$thread_id" "$_sid" "" "${username:-}" "" "$btn_msg_id" ) &
-                fi
-            ) &
+            # B (the queued agent) is now the runner — it will pick up the lock,
+            # detect stop_flag + interrupt_input_file, clear both, and process
+            # _pending_text. No further action needed here.
             ;;
     esac
 }
@@ -1075,19 +1142,8 @@ Use <code>/skill &lt;name&gt;</code> to bind a skill." "$thread_id" "HTML"
                 fi
                 ;;
             /stop)
-                kill_tree() {
-                    local _pid=$1
-                    local _pids="$_pid"
-                    get_children() {
-                        local _parent=$1
-                        for _child in $(pgrep -P "$_parent" 2>/dev/null); do
-                            _pids="$_pids $_child"
-                            get_children "$_child"
-                        done
-                    }
-                    get_children "$_pid"
-                    kill -TERM $_pids 2>/dev/null || true
-                }
+                # kill_tree / kill_tree_hard are defined at the top of this file
+                # (single source of truth for process-tree termination).
                 # Wipe orphan per-session state files. These accumulate forever otherwise:
                 # passive/active_skill/interrupt/prefetch/steer/stopbtn have no other cleanup path.
                 # Sticky preferences (model_<sid>) are deliberately preserved.
@@ -1118,7 +1174,8 @@ Use <code>/skill &lt;name&gt;</code> to bind a skill." "$thread_id" "HTML"
                             local _ppid _pmsg _pchat _pthread
                             IFS='|' read -r _ppid _pmsg _pchat _pthread <<< "$_pf_data"
                             if [[ -n "$_ppid" ]] && kill -0 "$_ppid" 2>/dev/null; then
-                                kill_tree "$_ppid"
+                                # kill_tree_hard: TERM → 1s grace → KILL survivors
+                                kill_tree_hard "$_ppid"
                                 if [[ -n "$_pmsg" && "$_pmsg" != "pending" && -n "$_pchat" ]]; then
                                     tg_edit "$_pchat" "$_pmsg" "🛑 <i>Stopped.</i>" "HTML" > /dev/null 2>&1 || true
                                 fi
@@ -1147,10 +1204,9 @@ Use <code>/skill &lt;name&gt;</code> to bind a skill." "$thread_id" "HTML"
                         local run_pid _msg_id _orig_chat _orig_thread _uid2 _worker_pid2
                         IFS='|' read -r run_pid _msg_id _orig_chat _orig_thread _uid2 _worker_pid2 <<< "$_pid_data"
                         echo "AMA: Stopping session $session_id (PID ${run_pid:-?} worker ${_worker_pid2:-?})"
-                        # Kill worker subshell directly (holds streaming child), then full tree
-                        [[ -n "$_worker_pid2" ]] && kill -TERM "$_worker_pid2" 2>/dev/null || true
-                        [[ -n "$_worker_pid2" ]] && pkill -TERM -P "$_worker_pid2" 2>/dev/null || true
-                        [[ -n "$run_pid" ]] && kill_tree "$run_pid"
+                        # Full tree: TERM → 1s grace → KILL survivors. Single source of truth.
+                        [[ -n "$run_pid" ]] && kill_tree_hard "$run_pid"
+                        [[ -n "$_worker_pid2" ]] && kill -0 "$_worker_pid2" 2>/dev/null && kill_tree_hard "$_worker_pid2"
                         rm -f "$pid_file"
                         # Edit the dangling "Thinking…" or "Working…" bot message
                         if [[ -n "$_msg_id" && "$_msg_id" != "pending" ]]; then
