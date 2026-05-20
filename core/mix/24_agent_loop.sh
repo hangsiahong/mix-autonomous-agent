@@ -253,6 +253,16 @@ print(line)
             context_prompt+="${_deferred_list}\n"
         fi
 
+        # Active tasks (persistent, SQLite-backed via `task` tool). Shows up to
+        # 5 pending+in_progress tasks for THIS session so the model sees its
+        # own open work each turn. Empty when no tasks → no header rendered.
+        local _tasks_context
+        _tasks_context=$(python3 tools/task_manager.py context "$session_id" 2>/dev/null)
+        if [[ -n "$_tasks_context" ]]; then
+            context_prompt+="\n## Active Tasks (cross-session, see \`task\` tool to manage)\n"
+            context_prompt+="${_tasks_context}\n"
+        fi
+
         # Status-query circuit breaker. When the user asks a count/list/status
         # question, the right answer is "one authoritative tool call, then
         # reply" — not an investigation. Today's 96-second scheduler-list

@@ -978,5 +978,74 @@
       ]
     },
     "toolset": "core"
+  },
+  {
+    "name": "task",
+    "description": "Persistent, cross-session structured task list. SQLite-backed, survives /new and bot restarts. Use for genuinely multi-step work (3+ distinct sub-tasks) \u2014 skip for trivial single-step requests. Differs from `todo` (simpler, per-session checklist).\n\nActions:\n- `create`: needs subject; optional description, active_form, metadata\n- `list`: optional filter_status. Default lists open tasks.\n- `get`: needs task_id, returns full details\n- `update`: needs task_id + at least one field. Status workflow: pending \u2192 in_progress \u2192 completed (or failed/deleted)\n- `delete`: needs task_id (soft-delete \u2014 sets status=deleted)\n\nWhen you start a task, mark it in_progress IMMEDIATELY so the user sees progress. When you complete or fail it, update status before moving on. Never leave a task at in_progress after the turn ends.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "create",
+            "list",
+            "get",
+            "update",
+            "delete"
+          ]
+        },
+        "subject": {
+          "type": "string",
+          "description": "Imperative title (create / update). E.g. 'Fix auth bug'."
+        },
+        "description": {
+          "type": "string",
+          "description": "What needs to be done."
+        },
+        "active_form": {
+          "type": "string",
+          "description": "Present-continuous form shown while in_progress, e.g. 'Fixing auth bug'."
+        },
+        "task_id": {
+          "type": "integer",
+          "description": "Required for get / update / delete."
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "in_progress",
+            "completed",
+            "failed",
+            "deleted"
+          ],
+          "description": "Update only."
+        },
+        "owner": {
+          "type": "string",
+          "description": "Agent/subagent assigned. Update only."
+        },
+        "metadata": {
+          "type": "object",
+          "description": "Arbitrary JSON object. On update, merged in (key=null deletes)."
+        },
+        "filter_status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "in_progress",
+            "completed",
+            "failed",
+            "deleted"
+          ],
+          "description": "List only: filter by status."
+        }
+      },
+      "required": [
+        "action"
+      ]
+    },
+    "toolset": "meta"
   }
 ]

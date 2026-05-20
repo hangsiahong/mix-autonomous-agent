@@ -463,6 +463,7 @@ open(sys.argv[1],'w').write(json.dumps(d, separators=(',',':')))" "$_gfile" 2>/d
 /schedule add every=12h "..." [model=X] — recurring task; /schedule list|remove|pause|resume
 
 <b>Config</b>
+/tasks [status|all] — list persistent tasks for this session (pending|in_progress|completed|failed|deleted|all)
 /budget — set token budget (e.g. <code>/budget 500k</code>) or include <code>+500k</code> in any message; /budget clear to remove
 /model &lt;name&gt; — switch model this session
 /skill &lt;name&gt; — activate a skill • /skill off to clear
@@ -639,6 +640,53 @@ else:
                         local _preview; _preview=$(echo "$_undo_result" | cut -d: -f3-)
                         tg_send "$chat_id" "↩️ Removed $_removed_count message(s). Last prompt was: <i>${_preview}</i>" "$thread_id" "HTML"
                     fi
+                fi
+                ;;
+
+            /tasks)
+                # List tasks for this session (Telegram-facing wrapper around
+                # the `task` tool). Optional first arg filters by status:
+                #   /tasks                 → all open (pending + in_progress + failed)
+                #   /tasks all             → include completed and deleted too
+                #   /tasks pending         → filter to that status
+                local _tasks_arg=$(echo "$args" | awk '{print $1}')
+                local _tasks_html
+                _tasks_html=$(SID="$session_id" ARG="$_tasks_arg" python3 -c "
+import os, sys
+sys.path.insert(0, 'tools')
+from task_manager import list_tasks, _STATUS_EMOJI
+sid = os.environ['SID']
+arg = os.environ['ARG']
+if arg == 'all':
+    tasks = list_tasks(session_id=sid, include_deleted=True)
+elif arg in ('pending','in_progress','completed','failed','deleted'):
+    tasks = list_tasks(session_id=sid, status=arg)
+else:
+    tasks = list_tasks(session_id=sid)
+if not tasks:
+    print('<i>No tasks for this session.</i>')
+    sys.exit(0)
+# Group by status; open ones first
+groups = {}
+for t in tasks:
+    groups.setdefault(t['status'], []).append(t)
+lines = []
+for status in ('in_progress','pending','failed','completed','deleted'):
+    rows = groups.get(status, [])
+    if not rows: continue
+    label = status.replace('_',' ').title()
+    lines.append(f'<b>{label} ({len(rows)})</b>')
+    for t in rows:
+        em = _STATUS_EMOJI.get(t.get('status','?'),'·')
+        sub = (t.get('subject') or '').replace('<','&lt;').replace('>','&gt;')
+        lines.append(f'  {em} #{t[\"id\"]} {sub}')
+    lines.append('')
+print('\n'.join(lines).rstrip())
+" 2>/dev/null)
+                if [[ -z "$_tasks_html" ]]; then
+                    tg_send "$chat_id" "<i>Couldn't load tasks.</i>" "$thread_id" "HTML"
+                else
+                    tg_send "$chat_id" "$_tasks_html" "$thread_id" "HTML"
                 fi
                 ;;
 
