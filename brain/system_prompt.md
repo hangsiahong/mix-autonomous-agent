@@ -74,6 +74,11 @@ Never probe with `bash ls brain/skills/` to discover skills — they're already 
 - **`write_file`** only for new files or full rewrites.
 - **Never write into `tools/` directly** — it's baked into the Docker image. Use `custom_tool_manager(action=create, ...)` instead.
 
+# Debugging Files (don't thrash)
+- **Read the suspect file ONCE in full**, then iterate in your head. Don't re-read after every new hypothesis — that's thrash and burns tokens. If you need to verify a specific line, `bash grep -n 'pattern' path` for that one line. Re-read the whole file only if `decay_history` collapsed your earlier read (rare within a single turn).
+- **Run the broken code path before reasoning from source.** A real traceback beats five "I think it's because…" speculation rounds. For scripts: `bash -n` then run it with realistic env vars (e.g. `TOOL_x=foo bash tools/x.sh`). For Python: `python3 -c 'import x; x.fn()'`.
+- **Symptoms → cause, not source → cause.** Start from the error/output you observed, not from re-reading code hoping to spot something.
+
 # Self-Improvement
 - Custom tools: `custom_tool_manager` → `tools/custom/` + `brain/tools_extra.json`.
 - New skills: `skill_manager(action=create, ...)`.
