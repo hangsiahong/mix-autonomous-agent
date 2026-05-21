@@ -263,6 +263,99 @@ print(line)
             context_prompt+="${_tasks_context}\n"
         fi
 
+        # Prior corrections: if the current input semantically matches a
+        # past mistake by this user, surface the lesson. Uses the existing
+        # Vertex text-embedding-004 path (tools/memory_helper.get_embedding).
+        # Strict similarity threshold (0.82) so we only surface real matches.
+        # Bounded timeout — never block a turn on this.
+        if [[ -n "$input" && -n "${user_id:-}" ]]; then
+            local _mistakes
+            _mistakes=$(timeout 6 python3 tools/mistake_db.py recall \
+                --user-id "${user_id}" \
+                --query "${input}" \
+                --top-k 2 \
+                --min-sim 0.82 \
+                2>/dev/null)
+            if [[ -n "$_mistakes" && "$_mistakes" != "[]" ]]; then
+                local _mistakes_block
+                _mistakes_block=$(printf '%s' "$_mistakes" | python3 -c "
+import json, sys
+try:
+    hits = json.load(sys.stdin)
+    if not hits: sys.exit(0)
+    lines = ['Past corrections for similar phrasings — apply the lesson, do not repeat the misread:']
+    for h in hits[:2]:
+        lesson = str(h.get('lesson','')).strip()
+        want = str(h.get('actual_want','')).strip()
+        sim = h.get('similarity', 0)
+        if not lesson and not want: continue
+        bits = []
+        if lesson: bits.append(f'lesson: {lesson}')
+        if want:   bits.append(f'wanted: {want}')
+        lines.append(f'- ({sim:.2f}) ' + ' | '.join(bits))
+    if len(lines) > 1:
+        print('\\n'.join(lines))
+except Exception:
+    pass
+" 2>/dev/null)
+                if [[ -n "$_mistakes_block" ]]; then
+                    context_prompt+="\n## Prior Corrections (semantic match on this input)\n${_mistakes_block}\n"
+                fi
+            fi
+        fi
+
+        # Citation warnings: hallucination flags raised by tools/citation_check.py
+        # against the previous turn's reply. Render the most recent batch only
+        # — keeps the context block bounded. Persisted file holds last 3 turns.
+        local _cw_file="${DIR}/brain/state/citation_warnings_${session_id}.json"
+        if [[ -f "$_cw_file" ]]; then
+            local _cw_block
+            _cw_block=$(python3 -c "
+import json, sys
+try:
+    arr = json.load(open(sys.argv[1]))
+    if isinstance(arr, list) and arr:
+        last = arr[-1]
+        viols = last.get('violations') or []
+        if viols:
+            lines = ['Your previous turn flagged these unsourced specific claims — do NOT repeat the pattern:']
+            for v in viols[:5]:
+                claim = str(v.get('claim',''))[:140]
+                reason = str(v.get('reason',''))[:140]
+                lines.append(f'- \"{claim}\" — {reason}')
+            print('\\n'.join(lines))
+except Exception:
+    pass
+" "$_cw_file" 2>/dev/null)
+            if [[ -n "$_cw_block" ]]; then
+                context_prompt+="\n## Citation Warnings (from previous turn)\n${_cw_block}\n"
+            fi
+        fi
+
+        # Voice drift hint from previous turn (only when USER.md has voice prefs).
+        local _vw_file="${DIR}/brain/state/voice_warnings_${session_id}.json"
+        if [[ -f "$_vw_file" ]]; then
+            local _vw_block
+            _vw_block=$(python3 -c "
+import json, sys
+try:
+    arr = json.load(open(sys.argv[1]))
+    if isinstance(arr, list) and arr:
+        e = arr[-1]
+        reason = str(e.get('reason','')).strip()
+        sugg   = str(e.get('suggestion','')).strip()
+        if reason:
+            line = f'Previous reply drifted from established voice: {reason}'
+            if sugg: line += f' Suggestion: {sugg}'
+            print(line)
+except Exception:
+    pass
+" "$_vw_file" 2>/dev/null)
+            if [[ -n "$_vw_block" ]]; then
+                context_prompt+="\n## Voice Reminder\n${_vw_block}\n"
+            fi
+        fi
+
         # Status-query circuit breaker. When the user asks a count/list/status
         # question, the right answer is "one authoritative tool call, then
         # reply" — not an investigation. Today's 96-second scheduler-list
@@ -1023,6 +1116,35 @@ print('\n'.join(out))
                     # just-archived history file, so each recap covers a full
                     # session instead of a single turn.
                     reflect_turn "$chat_id" "$thread_id" "$session_id"
+
+                    # Citation check: event-driven hallucination scan on the
+                    # final assistant reply. Cheap pre-filter skips most turns;
+                    # only fires the LLM call when specific-fact patterns appear.
+                    # Writes warnings to brain/state/citation_warnings_<sid>.json
+                    # for next turn's context block. Always fail-silent.
+                    timeout 30 python3 tools/citation_check.py \
+                        --session-id "$session_id" \
+                        --history "${DIR}/brain/state/history_${session_id}.json" \
+                        > /dev/null 2>&1 || true
+
+                    # Mistake detection: regex pre-filter on the user's latest
+                    # message; if it looks like a correction, run extraction
+                    # via cheap model and record to brain/state/mistakes.db.
+                    # Recalled on future turns when similar phrasings appear.
+                    timeout 30 python3 tools/mistake_detect.py \
+                        --session-id "$session_id" \
+                        --user-id "${user_id:-}" \
+                        --history "${DIR}/brain/state/history_${session_id}.json" \
+                        > /dev/null 2>&1 || true
+
+                    # Voice drift check: skips immediately if USER.md has no
+                    # voice/style entries, so most users pay zero cost. When
+                    # voice prefs exist, scans the last reply for drift and
+                    # persists a single warning for next turn.
+                    timeout 30 python3 tools/voice_check.py \
+                        --session-id "$session_id" \
+                        --history "${DIR}/brain/state/history_${session_id}.json" \
+                        > /dev/null 2>&1 || true
 
                     # Curator: edits MEMORY.md / USER.md / skill prompts. Only on
                     # tool-heavy turns where learning is likely.

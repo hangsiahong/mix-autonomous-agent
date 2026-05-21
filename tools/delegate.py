@@ -664,6 +664,28 @@ if __name__ == "__main__":
     else:  # mode == "sync"
         if backend == "auto":
             backend = detect_backend()
+
+        # Handoff hygiene: critique + revise the prompt, cache lookup. Fail-open.
+        # Disabled via AMA_DELEGATE_PREP_DISABLED=1 or TOOL_skip_prep=1.
+        prep_note = ""
+        if os.environ.get("TOOL_skip_prep", "").strip() not in ("1", "true", "yes"):
+            try:
+                from delegate_prep import prep_handoff, cache_save, cache_key, verify_result
+                prepped = prep_handoff(goal=goal, context=context, backend=backend)
+                if prepped.get("goal"): goal = prepped["goal"]
+                if prepped.get("context") is not None: context = prepped["context"]
+                prep_note = prepped.get("prep_note", "")
+                if prep_note:
+                    print(f"[delegate/prep] {prep_note}")
+                if prepped.get("cached"):
+                    cached = prepped["cached"]
+                    print(f"[delegate → {backend}] CACHE HIT — returning prior result")
+                    print(format_result(cached, goal))
+                    sys.stderr.write(f"DELEGATE_RESULT:{json.dumps(cached)}\n")
+                    sys.exit(0)
+            except Exception as _e:
+                print(f"[delegate/prep] skipped: {_e}", file=sys.stderr)
+
         print(f"[delegate → {backend}] {goal[:80]}...")
 
         if backend == "claude":
@@ -675,6 +697,20 @@ if __name__ == "__main__":
         else:
             print(f"Unknown backend '{backend}'. Use: claude | codex | self | auto")
             sys.exit(1)
+
+        # Post-run: sanity check + cache save. Both fail-open.
+        if os.environ.get("TOOL_skip_prep", "").strip() not in ("1", "true", "yes"):
+            try:
+                from delegate_prep import verify_result, cache_save, cache_key
+                result_text = str(result.get("result", "") or "")
+                if result.get("status") in ("ok", "success") or (result_text and not result_text.startswith("Error")):
+                    verdict = verify_result(goal, result_text)
+                    if not verdict.get("satisfied", True):
+                        print(f"[delegate/verify] flagged: {verdict.get('reason','')}", file=sys.stderr)
+                        result["verify_warning"] = verdict.get("reason", "")
+                    cache_save(cache_key(goal, context, backend), result)
+            except Exception as _e:
+                print(f"[delegate/verify] skipped: {_e}", file=sys.stderr)
 
     print(format_result(result, goal))
     sys.stderr.write(f"DELEGATE_RESULT:{json.dumps(result)}\n")

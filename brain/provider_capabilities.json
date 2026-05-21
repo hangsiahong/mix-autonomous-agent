@@ -1,0 +1,132 @@
+{
+  "_comment": "Per-(provider,model) capability map. Codepaths that consider using a feature (thinking, prompt caching, JSON mode, native tool calls, long context) should look up the capability here and gracefully downgrade if unsupported, rather than erroring or sending bad payloads. Use tools/provider_caps.py to read.",
+
+  "_schema": {
+    "tools":             "native | openai | regex_only | none",
+    "thinking":          "yes | no — provider supports a thinking-config block",
+    "thought_signature": "yes | no — must round-trip thoughtSignature across turns (Gemini 3+)",
+    "cache":             "yes | no — supports prompt caching (cache_control, cachedContents, etc)",
+    "structured_output": "yes | partial | no — supports response_format json_object reliably",
+    "vision":            "yes | no",
+    "max_context":       "approximate context window in tokens (int)"
+  },
+
+  "providers": {
+    "google": {
+      "_note": "Native Vertex AI (PROVIDER=google, GOOGLE_MODE=vertex). Main user-facing turn lives here.",
+      "default": {
+        "tools": "native", "thinking": "yes", "thought_signature": "yes",
+        "cache": "yes", "structured_output": "yes", "vision": "yes", "max_context": 1000000
+      },
+      "models": {
+        "gemini-3-flash-preview":      {"thinking": "yes", "thought_signature": "yes"},
+        "gemini-3-pro-preview":        {"thinking": "yes", "thought_signature": "yes"},
+        "gemini-2.5-flash":            {"thinking": "yes", "thought_signature": "no"},
+        "gemini-2.5-pro":              {"thinking": "yes", "thought_signature": "no"},
+        "gemini-2.0-flash":            {"thinking": "no",  "thought_signature": "no"},
+        "gemini-2.0-flash-lite":       {"thinking": "no",  "thought_signature": "no"}
+      }
+    },
+
+    "kconsole": {
+      "_note": "OpenAI-compatible gateway to Gemini. Used for background tiers (distill/critic/classify/research/citation/delegate-prep). Tool-calling NOT used by tier callers — chat-completions only.",
+      "default": {
+        "tools": "openai", "thinking": "no", "thought_signature": "no",
+        "cache": "no", "structured_output": "yes", "vision": "yes", "max_context": 1000000
+      },
+      "models": {
+        "gemini-3.1-pro-preview":          {"thinking": "yes", "structured_output": "yes"},
+        "gemini-3-flash-preview":          {"thinking": "yes", "structured_output": "yes"},
+        "gemini-3.1-flash-lite-preview":   {"thinking": "no",  "structured_output": "yes"},
+        "gemini-2.5-pro":                  {"thinking": "yes", "structured_output": "yes"},
+        "gemini-2.5-flash":                {"thinking": "yes", "structured_output": "yes"},
+        "gemini-2.0-flash":                {"thinking": "no",  "structured_output": "yes"},
+        "gemini-2.0-flash-lite":           {"thinking": "no",  "structured_output": "yes"}
+      }
+    },
+
+    "anthropic": {
+      "default": {
+        "tools": "native", "thinking": "yes", "thought_signature": "no",
+        "cache": "yes", "structured_output": "partial", "vision": "yes", "max_context": 200000
+      },
+      "models": {
+        "claude-opus-4-7":     {"thinking": "yes", "cache": "yes", "max_context": 1000000},
+        "claude-sonnet-4-6":   {"thinking": "yes", "cache": "yes", "max_context": 1000000},
+        "claude-haiku-4-5":    {"thinking": "yes", "cache": "yes"}
+      }
+    },
+
+    "openrouter": {
+      "default": {
+        "tools": "openai", "thinking": "no", "thought_signature": "no",
+        "cache": "no", "structured_output": "partial", "vision": "yes", "max_context": 128000
+      }
+    },
+
+    "deepseek": {
+      "default": {
+        "tools": "openai", "thinking": "no", "thought_signature": "no",
+        "cache": "no", "structured_output": "yes", "vision": "no", "max_context": 64000
+      },
+      "models": {
+        "deepseek-reasoner": {"thinking": "yes"},
+        "deepseek-chat":     {"thinking": "no"}
+      }
+    },
+
+    "groq": {
+      "default": {
+        "tools": "openai", "thinking": "no", "thought_signature": "no",
+        "cache": "no", "structured_output": "partial", "vision": "no", "max_context": 32000
+      }
+    },
+
+    "ollama": {
+      "_note": "Local — capability varies per model; defaults assume a modern instruct model.",
+      "default": {
+        "tools": "regex_only", "thinking": "no", "thought_signature": "no",
+        "cache": "no", "structured_output": "no", "vision": "no", "max_context": 32000
+      },
+      "models": {
+        "llama3.2-vision":   {"vision": "yes"},
+        "qwen2.5-vl":        {"vision": "yes"}
+      }
+    },
+
+    "xai": {
+      "default": {
+        "tools": "openai", "thinking": "no", "thought_signature": "no",
+        "cache": "no", "structured_output": "yes", "vision": "yes", "max_context": 128000
+      }
+    },
+
+    "zai": {
+      "default": {
+        "tools": "openai", "thinking": "no", "thought_signature": "no",
+        "cache": "no", "structured_output": "partial", "vision": "no", "max_context": 128000
+      }
+    },
+
+    "mistral": {
+      "default": {
+        "tools": "openai", "thinking": "no", "thought_signature": "no",
+        "cache": "no", "structured_output": "partial", "vision": "no", "max_context": 32000
+      }
+    },
+
+    "minimax": {
+      "default": {
+        "tools": "openai", "thinking": "no", "thought_signature": "no",
+        "cache": "no", "structured_output": "partial", "vision": "no", "max_context": 256000
+      }
+    },
+
+    "copilot": {
+      "default": {
+        "tools": "none", "thinking": "no", "thought_signature": "no",
+        "cache": "no", "structured_output": "no", "vision": "no", "max_context": 32000
+      }
+    }
+  }
+}

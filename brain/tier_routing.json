@@ -10,6 +10,7 @@
   "research_subq": { "provider": "kconsole", "model": "gemini-3.1-flash-lite-preview" },
   "delegate_prep": { "provider": "kconsole", "model": "gemini-3-flash-preview" },
   "voice_check":   { "provider": "kconsole", "model": "gemini-2.5-flash" },
+  "citation":      { "provider": "kconsole", "model": "gemini-3.1-flash-lite-preview" },
 
   "heavy":         { "provider": "kconsole", "model": "gemini-3.1-pro-preview" },
 
