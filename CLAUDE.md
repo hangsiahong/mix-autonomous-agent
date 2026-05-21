@@ -73,8 +73,19 @@ Python scripts called from bash history filters must read from `sys.stdin`, not 
 | `tools/task.sh` + `task_manager.py` | Cross-session task list (SQLite at `brain/state/tasks.db`); statuses: pending/in_progress/completed/failed/deleted |
 | `tools/clarify.sh` | Asks the user. With `options=[...]` renders Telegram inline-keyboard buttons (qid-protected against stale taps) |
 | `tools/file_mutation_check.py` | Post-batch verifier — stats every write-tool target path, footer appended to last tool result |
+| `tools/mix_call.py` | OpenAI-compat helper for background tasks. Reads `brain/tier_routing.json`; main user-facing turn does NOT use this — it stays on Vertex |
+| `tools/memory_critic.py` | Cheap-model gatekeeper for memory writes. Wired into `memory.sh` (add/replace) and `memory_remember.sh`. Killswitch: `AMA_MEM_CRITIC_DISABLED=1` |
+| `tools/citation_check.py` | Event-driven hallucination scanner. Cheap regex pre-filter; only invokes LLM when fact patterns appear in the reply. Writes `brain/state/citation_warnings_<sid>.json` |
+| `tools/delegate_prep.py` | Wraps `delegate.py` sync path: prompt critique + 24h result cache + post-run sanity check. Per-call opt-out: `TOOL_skip_prep=1` |
+| `tools/provider_caps.py` + `brain/provider_capabilities.json` | Per-(provider,model) capability map (tools/thinking/cache/structured_output/vision/max_context) |
+| `tools/mistake_db.py` + `tools/mistake_detect.py` | Per-user correction recall — regex pre-filter + cheap-model extraction; embedded via Vertex `text-embedding-004`; SQLite at `brain/state/mistakes.db` |
+| `tools/voice_check.py` | Style drift detector — only runs when USER.md has voice-related entries |
+| `tools/md_to_html.py` | Markdown→Telegram-HTML renderer. Includes `_auto_wrap_tables()` pre-pass that fences raw `| col \| col |` lines so they render as monospace `<pre>` |
+| `core/mix/14_tool_distill.sh` | Semantic distill for whitelisted info tools (web_search/fetch_url/memory_recall/session_search/browser). Called from `append_tool_result`. Audit at `brain/state/distill_audit/` |
+| `brain/tier_routing.json` | Per-tier provider+model for background tasks (distill / memory_critic / memory_writer / classify / research_subq / delegate_prep / citation / voice_check / heavy). Main turn config lives in `.env`, NOT here |
+| `brain/skills/research/` | Multi-source research protocol skill (auto-binds on "research/investigate/look into") |
 | `brain/tools.json` | Tool declarations (toolsets: core/search/memory/meta/inspect/media + `defer: true` flag) |
-| `brain/system_prompt.md` | Agent system prompt |
+| `brain/system_prompt.md` | Agent system prompt — includes Honesty & Citation rules + Telegram Formatting Cookbook |
 | `extensions/cron/run.sh` | Cron jobs: health check, memory consolidation |
 
 ## Provider: Google Vertex AI
@@ -113,6 +124,13 @@ Currently deferred: `image_generate`, `kanban_show/create/complete/block`, `sys_
 | `clarify_<sid>.json` | Pending clarify question with options + qid (for button taps) |
 | `tasks.db` | SQLite — cross-session structured task list (table `tasks`) |
 | `sessions.db` | SQLite — sessions + messages + FTS5 index (`messages_fts`) for session_search |
+| `mistakes.db` | SQLite — per-user correction recall (table `mistakes`); embedded via Vertex `text-embedding-004` |
+| `citation_warnings_<sid>.json` | Last ≤3 hallucination flags from `citation_check.py`; injected as `## Citation Warnings` block next turn |
+| `voice_warnings_<sid>.json` | Last voice-drift flag from `voice_check.py`; injected as `## Voice Reminder` next turn |
+| `mix_call_usage.jsonl` | One line per background-tier call (tier, model, ok, tokens, ms) — audit for cheap-model spend |
+| `memory_critic.log` | JSONL log of every accept/reject verdict from the memory critic |
+| `distill_audit/<sid>_<ts>_<tcid>.txt` | Raw tool output before distillation; referenced from the distilled footer |
+| `delegate_cache/<hash>.json` | 24h-TTL cache of delegate sync results, keyed by SHA256(backend + goal + context) |
 
 ## Common Tasks
 
@@ -131,7 +149,24 @@ The agent sees these as additional `[SYSTEM: Context Updated]` content each turn
 - `## Available Skills` — auto-bound + bindable
 - `## Active Tasks` — open `task` entries for this session
 - `## Deferred Tools` — names-only list of tools requiring `tool_search` to activate
+- `## Prior Corrections` — fired when current input semantically matches a stored mistake for this user (cosine ≥ 0.82 via Vertex embeddings)
+- `## Citation Warnings` — hallucinated claims flagged by `citation_check.py` on the previous turn
+- `## Voice Reminder` — voice/style drift flagged by `voice_check.py` (only fires when USER.md has voice prefs)
 - `Active budget: ... | ... used | ...% of cap` — if a token budget is set
+
+## Post-turn background passes (24_agent_loop.sh)
+Fired in a detached subshell after the agent loop completes (uses `( ( cmd & ) )` so it survives the EXIT trap). Order: `reflect_turn` → `citation_check` → `mistake_detect` → `voice_check` → optional `curator`. Each writes a per-session state file consumed by the NEXT turn's context block. Every pass fails open — kconsole rate limits or transient errors never block the next turn.
+
+## Background-tier model routing (brain/tier_routing.json)
+All background helpers route through **kconsole**, NOT Vertex. The user-facing main turn stays on Vertex (paid credits). Tier → model:
+- `distill` / `memory_writer` / `research_subq` / `citation` → `gemini-3.1-flash-lite-preview` (no thinking overhead)
+- `memory_critic` / `classify` / `voice_check` → `gemini-2.5-flash` (different family than writers — disagreement catches drift)
+- `delegate_prep` → `gemini-3-flash-preview`
+- `heavy` → `gemini-3.1-pro-preview`
+- Embeddings stay on Vertex via `tools/memory_helper.py:get_embedding()` — do NOT route through kconsole
+
+## Killswitches (for the fidelity passes)
+All fail-open env vars: `AMA_DISTILL_DISABLED` · `AMA_MEM_CRITIC_DISABLED` · `AMA_CITATION_CHECK_DISABLED` · `AMA_MISTAKE_DETECT_DISABLED` · `AMA_VOICE_CHECK_DISABLED` · `AMA_DELEGATE_PREP_DISABLED`. Per-call: `TOOL_skip_prep=1` on `delegate`.
 
 ## Post-batch hooks (in 24_agent_loop.sh, after tool execution)
 Order: file-mutation verifier footer → steer drain → fingerprint-circuit-breaker. All three mutate the last tool result in HISTORY before the next API call.
