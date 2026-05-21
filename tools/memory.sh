@@ -107,6 +107,29 @@ elif action == "add":
     if content in entries:
         print(json.dumps({"success": True, "message": "Entry already exists (no duplicate added).", "usage": f"{char_count(entries)}/{limit}"}))
         sys.exit(0)
+
+    # ── Critic pass — gate the write through a cheap second model.
+    # Killswitch + critic-unreachable both fail open. Rejects logged.
+    import subprocess
+    try:
+        _proc = subprocess.run(
+            ["python3", "tools/memory_critic.py", "--mode", "curated"],
+            input=json.dumps({"text": content, "existing": entries, "target": target}),
+            capture_output=True, text=True, timeout=25,
+        )
+        _verdict = json.loads((_proc.stdout or "").strip() or '{"accept":true}')
+    except Exception:
+        _verdict = {"accept": True, "reason": "critic invoke failed, fail open", "revised": None}
+    if not _verdict.get("accept", True):
+        print(json.dumps({
+            "success": False,
+            "error": f"Critic rejected entry: {_verdict.get('reason', 'no reason given')}",
+            "hint": "Make the entry more specific or check for redundancy with existing entries.",
+        }))
+        sys.exit(0)
+    if _verdict.get("revised"):
+        content = _verdict["revised"]
+
     new_entries = entries + [content]
     new_total = char_count(new_entries)
     if new_total > limit:
@@ -139,6 +162,30 @@ elif action == "replace":
         print(json.dumps({"success": False, "error": f"Multiple entries matched '{old_text}'. Be more specific.", "matches": previews}))
         sys.exit(0)
     idx, _ = matches[0]
+
+    # ── Critic pass — same gate as add, evaluated against entries minus the
+    # one being replaced (so the critic doesn't see the new entry as a dup of
+    # its predecessor). Fail-open on critic errors.
+    import subprocess
+    _others = [e for i, e in enumerate(entries) if i != idx]
+    try:
+        _proc = subprocess.run(
+            ["python3", "tools/memory_critic.py", "--mode", "curated"],
+            input=json.dumps({"text": new_content_env, "existing": _others, "target": target}),
+            capture_output=True, text=True, timeout=25,
+        )
+        _verdict = json.loads((_proc.stdout or "").strip() or '{"accept":true}')
+    except Exception:
+        _verdict = {"accept": True, "reason": "critic invoke failed, fail open", "revised": None}
+    if not _verdict.get("accept", True):
+        print(json.dumps({
+            "success": False,
+            "error": f"Critic rejected replacement: {_verdict.get('reason', 'no reason given')}",
+        }))
+        sys.exit(0)
+    if _verdict.get("revised"):
+        new_content_env = _verdict["revised"]
+
     entries[idx] = new_content_env
     new_total = char_count(entries)
     if new_total > limit:

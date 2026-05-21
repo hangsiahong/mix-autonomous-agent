@@ -1,0 +1,24 @@
+{
+  "_comment": "Tier-routing for BACKGROUND tasks only. Main user-facing turn is handled by core/mix and stays on Vertex AI (Google) — we have credit there, do not move it. Every tier below is consumed by tools/mix_call.py.",
+
+  "_main_turn_note": "Main turn = Vertex AI Gemini via PROVIDER=google + GOOGLE_MODE=vertex. Configured in .env, not here. Do not change.",
+
+  "distill":       { "provider": "kconsole", "model": "gemini-3.1-flash-lite-preview" },
+  "memory_writer": { "provider": "kconsole", "model": "gemini-3.1-flash-lite-preview" },
+  "memory_critic": { "provider": "kconsole", "model": "gemini-2.5-flash" },
+  "classify":      { "provider": "kconsole", "model": "gemini-2.5-flash" },
+  "research_subq": { "provider": "kconsole", "model": "gemini-3.1-flash-lite-preview" },
+  "delegate_prep": { "provider": "kconsole", "model": "gemini-3-flash-preview" },
+  "voice_check":   { "provider": "kconsole", "model": "gemini-2.5-flash" },
+
+  "heavy":         { "provider": "kconsole", "model": "gemini-3.1-pro-preview" },
+
+  "_embedding_note": "Embeddings are NOT routed here. tools/memory_helper.py:get_embedding() already handles Vertex AI text-embedding-004 via the main Google provider config. Do not duplicate.",
+
+  "providers": {
+    "kconsole": {
+      "base_url": "https://ai.koompi.cloud/v1",
+      "api_key_env": "KCONSOLE_AI_KEY"
+    }
+  }
+}

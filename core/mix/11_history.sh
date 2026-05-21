@@ -68,6 +68,20 @@ append_tool_result() {
     local id="$1"
     local name="$2"
     local output="$3"
+
+    # Semantic distillation: for whitelisted info-tools with long output,
+    # extract the slice relevant to the user's last message via cheap model.
+    # No-op for action tools, short output, errors, or when killswitched.
+    # Falls through to the original output on any failure.
+    if declare -F distill_tool_output >/dev/null 2>&1; then
+        local _sid="${AMA_SESSION_ID:-default}"
+        local _distilled
+        _distilled=$(distill_tool_output "$name" "$output" "$_sid" "$id")
+        if [[ -n "$_distilled" ]]; then
+            output="$_distilled"
+        fi
+    fi
+
     # Smart folding: keep signal-dense head+tail, summarize discarded middle
     # (AMA Level-4 improvement: reduce cognitive load by removing noise, not just chars)
     local _MAX_LINES=80
