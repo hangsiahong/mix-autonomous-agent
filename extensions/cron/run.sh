@@ -36,6 +36,12 @@ if [[ -f "${DIR}/brain/state/learning_examples.jsonl" ]]; then
     python3 "${DIR}/tools/distill_examples.py" >> "$_log" 2>&1 || true
 fi
 
+# ── Janitor: rotate logs, prune stale state ───────────────────────────────────
+# Idempotent — runs every tick. Conservative TTL defaults (see tools/janitor.py
+# top-of-file). Quiet by default so we don't spam cron.log on no-op ticks.
+# Failures are absorbed; cleanup is best-effort.
+python3 "${DIR}/tools/janitor.py" sweep --quiet >> "$_log" 2>&1 || true
+
 # ── Scheduled task firing ─────────────────────────────────────────────────────
 # scheduler.sh run_due emits records separated by \x1f (ASCII RS). Field order:
 #   FIRE \x1f id \x1f chat_id \x1f thread_id \x1f skill \x1f model \x1f provider \x1f prompt
