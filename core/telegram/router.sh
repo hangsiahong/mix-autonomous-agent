@@ -227,6 +227,52 @@ except Exception:
 tg_handle_update() {
     local update="$1"
 
+    # Reaction events on the bot's own messages — short-circuit before the
+    # message-routing path. Capture is fully detached: no session lock taken,
+    # no agent run, just log to learning_examples.jsonl and react 📚 back.
+    # Telegram only delivers message_reaction updates when allowed_updates
+    # includes it (see core/telegram/polling.sh).
+    local _react_info
+    _react_info=$(UPDATE="$update" python3 -c "
+import json, os, sys
+try:
+    u = json.loads(os.environ['UPDATE'])
+    mr = u.get('message_reaction')
+    if not mr:
+        sys.exit(0)
+    chat_id = str((mr.get('chat') or {}).get('id', ''))
+    message_id = str(mr.get('message_id', ''))
+    user_id = str((mr.get('user') or {}).get('id', ''))
+    new_reactions = mr.get('new_reaction') or []
+    # Take the first emoji-type reaction (custom emojis are rare)
+    emoji = ''
+    for r in new_reactions:
+        if r.get('type') == 'emoji':
+            emoji = r.get('emoji', '')
+            break
+    # Only fire on ADDED reactions (new non-empty); ignore clears/removals
+    if not emoji or not chat_id or not message_id:
+        sys.exit(0)
+    print(f'{chat_id}|{message_id}|{user_id}|{emoji}')
+except Exception:
+    sys.exit(0)
+" 2>/dev/null)
+    if [[ -n "$_react_info" ]]; then
+        local _r_chat _r_msg _r_user _r_emoji
+        IFS='|' read -r _r_chat _r_msg _r_user _r_emoji <<< "$_react_info"
+        # Capture in background — never block the poll loop on this.
+        ( python3 "${DIR}/tools/learning_capture.py" react \
+            --chat-id "$_r_chat" --message-id "$_r_msg" \
+            --user-id "$_r_user" --emoji "$_r_emoji" 2>/dev/null
+          # Light-touch confirmation: bot reacts 📚 to its own message.
+          # Only sends if learning_capture reported a successful capture
+          # (else we silently absorb to avoid noise on irrelevant reactions).
+          # tg_react no-ops when TG_REACTIONS is unset/false.
+          tg_react "$_r_chat" "$_r_msg" "📚" 2>/dev/null
+        ) &
+        return
+    fi
+
     # Parse all update fields in one Python call (avoids 7+ jq invocations).
     # shlex.quote is used so eval is safe regardless of message content.
     local _vars

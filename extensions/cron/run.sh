@@ -28,6 +28,14 @@ fi
 _log="${DIR}/brain/state/cron.log"
 echo "[$(date)] Cron tick" >> "$_log"
 
+# ── Learned-examples distillation ─────────────────────────────────────────────
+# Regenerates brain/learned_examples.md from brain/state/learning_examples.jsonl
+# (user reactions on bot messages). Cheap, no LLM call. Skips when source is
+# absent. Runs every cron tick — file write is idempotent and fast.
+if [[ -f "${DIR}/brain/state/learning_examples.jsonl" ]]; then
+    python3 "${DIR}/tools/distill_examples.py" >> "$_log" 2>&1 || true
+fi
+
 # ── Scheduled task firing ─────────────────────────────────────────────────────
 # scheduler.sh run_due emits records separated by \x1f (ASCII RS). Field order:
 #   FIRE \x1f id \x1f chat_id \x1f thread_id \x1f skill \x1f model \x1f provider \x1f prompt

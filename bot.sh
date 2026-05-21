@@ -116,8 +116,11 @@ for _stale in "${DIR}/brain/state"/run_*.pid; do
 done
 unset _stale _spid
 
-# Drain stale Telegram messages accumulated while bot was offline
-_DRAIN=$(curl -s "https://api.telegram.org/bot${TG_TOKEN}/getUpdates?timeout=0&limit=100&offset=$(cat "$OFFSET_FILE")")
+# Drain stale Telegram messages accumulated while bot was offline.
+# Include the same allowed_updates as tg_poll so we don't accidentally
+# leave message_reaction updates queued (they'd fail to drain otherwise).
+_DRAIN_ALLOWED=$(python3 -c "import urllib.parse;print(urllib.parse.quote('[\"message\",\"edited_message\",\"callback_query\",\"message_reaction\"]'))")
+_DRAIN=$(curl -s "https://api.telegram.org/bot${TG_TOKEN}/getUpdates?timeout=0&limit=100&offset=$(cat "$OFFSET_FILE")&allowed_updates=${_DRAIN_ALLOWED}")
 _DRAIN_LAST=$(echo "$_DRAIN" | python3 -c "import json,sys; r=json.load(sys.stdin); res=r.get('result',[]); print(res[-1].get('update_id','') if res else '')" 2>/dev/null)
 if [[ -n "$_DRAIN_LAST" ]]; then
     _DRAIN_COUNT=$(echo "$_DRAIN" | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('result',[])))" 2>/dev/null || echo 0)

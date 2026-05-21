@@ -380,6 +380,42 @@ except Exception:
             MAX_TURNS=2
             context_prompt+="- **STATUS QUERY** (detected from input pattern): answer in **1 tool call** and reply. Do NOT verify with bash/ls/cat after the authoritative tool returns. Trust the result. MAX_TURNS clamped to 2 — second turn must produce final answer.\n"
         fi
+
+        # Heavy-query router: questions that need real reasoning depth (opinion,
+        # evaluation, architectural choice, "is X a mistake", "what do you
+        # think", rating) get routed to a pro model for this turn only. Cheap
+        # models reflexively agree with leading premises and serve up generic
+        # industry wisdom; pro models actually push back. Cost: ~5× flash for
+        # a small fraction of turns. Override resolution:
+        #   1. $HEAVY_MODEL env var if set (e.g. gemini-3-pro-preview)
+        #   2. else, swap "flash" → "pro" in current MODEL if pattern matches
+        #   3. else, no-op (user stays on whatever they configured)
+        # Status-query and heavy-query are mutually exclusive in practice; if
+        # both somehow fire, status takes precedence (already set above).
+        if [[ "$_status_query" -eq 0 && "${AMA_HEAVY_ROUTER_DISABLED:-0}" != "1" ]]; then
+            local _heavy_query=0
+            if [[ "$input" =~ [Ww]hat\ (do|would)\ you\ think ]] || \
+               [[ "$input" =~ [Yy]our\ (thoughts?|opinion|take|view|verdict|assessment) ]] || \
+               [[ "$input" =~ [Hh]ow\ would\ you\ rate ]] || \
+               [[ "$input" =~ [Rr]ate\ (this|it|yourself|your|the) ]] || \
+               [[ "$input" =~ [Ss]hould\ (we|I)\ (rewrite|migrate|switch|adopt|drop|move|refactor|redesign) ]] || \
+               [[ "$input" =~ [Ii]s\ .+\ (a\ mistake|the\ right\ call|the\ best|worth\ it) ]] || \
+               [[ "$input" =~ ([Ee]valuate|[Aa]ssess|[Cc]ritique|[Cc]ritic)\  ]] || \
+               [[ "$input" =~ [Aa]ny\ way\ (we|I)\ can\ (improve|do\ better) ]] || \
+               [[ "$input" =~ [Dd]o\ you\ (think|believe)\  ]] || \
+               [[ "$input" =~ [Aa]rchitect(ure|ural)\ (decision|choice|review) ]]; then
+                _heavy_query=1
+                local _heavy_model="${HEAVY_MODEL:-}"
+                if [[ -z "$_heavy_model" && "$MODEL" == *flash* ]]; then
+                    _heavy_model="${MODEL//flash/pro}"
+                fi
+                if [[ -n "$_heavy_model" && "$_heavy_model" != "$MODEL" ]]; then
+                    echo "AMA: Heavy query — MODEL=$MODEL → $_heavy_model for this turn" >&2
+                    MODEL="$_heavy_model"
+                    context_prompt+="- **HEAVY QUERY** (detected): pro model active for this turn (escalated from flash). The user wants real reasoning depth — audit premises before answering, push back on bad framings, cite specifics, do not reflexively agree. Apply the **Critical Reasoning Discipline** section of the system prompt.\n"
+                fi
+            fi
+        fi
         
         if [[ -z "$skill" ]]; then
             local topic_config=$(get_topic_config "$chat_id" "$thread_id")
@@ -1032,6 +1068,14 @@ print('\n'.join(out))
                 _full_html="${_full_html}"$'\n\n'"${_footer}"
                 [[ -n "$_ctx_warn" ]] && _full_html+=$'\n'"${_ctx_warn}"
                 tg_edit_safe "$chat_id" "$msg_id" "$_full_html" "HTML" "$thread_id"
+                # Log the final-answer message_id for reaction-capture lookup later.
+                # Fully detached so it never blocks the user-visible response.
+                ( python3 "${DIR}/tools/learning_capture.py" log \
+                    --chat-id "$chat_id" --message-id "$msg_id" \
+                    --session-id "$session_id" --user-id "${user_id:-}" \
+                    --user-text "${input:0:2000}" \
+                    --assistant-text "${text:0:4000}" \
+                    --model "${MODEL:-}" >/dev/null 2>&1 ) &
             elif [[ -n "$text" && "$text" != "null" && $total_tool_calls -eq 0 ]]; then
                 local _final_html; _final_html="$(md_to_tg_html "$text")"
                 [[ -n "$_ctx_warn" ]] && _final_html+=$'\n'"${_ctx_warn}"
@@ -1046,6 +1090,13 @@ print('\n'.join(out))
                 fi
                 [[ -n "$_meta" ]] && _final_html+=$'\n'"<i>╴ ${_meta}</i>"
                 tg_edit_safe "$chat_id" "$msg_id" "$_final_html" "HTML" "$thread_id"
+                # Log the final-answer message_id for reaction-capture lookup later.
+                ( python3 "${DIR}/tools/learning_capture.py" log \
+                    --chat-id "$chat_id" --message-id "$msg_id" \
+                    --session-id "$session_id" --user-id "${user_id:-}" \
+                    --user-text "${input:0:2000}" \
+                    --assistant-text "${text:0:4000}" \
+                    --model "${MODEL:-}" >/dev/null 2>&1 ) &
             else
                 # Empty response — Gemini thinking-only output or scrubbed content.
                 # The ⏳ placeholder is still showing. Replace it with a retry prompt.
