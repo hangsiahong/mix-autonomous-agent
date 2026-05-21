@@ -405,14 +405,28 @@ except Exception:
                [[ "$input" =~ [Dd]o\ you\ (think|believe)\  ]] || \
                [[ "$input" =~ [Aa]rchitect(ure|ural)\ (decision|choice|review) ]]; then
                 _heavy_query=1
+                # Resolve heavy model: (1) $HEAVY_MODEL env override > (2) explicit
+                # map in brain/tier_routing.json. NEVER fall back to mechanical
+                # "flash→pro" substitution — produces non-existent model names
+                # (e.g. gemini-3-flash-preview's real pro counterpart is
+                # gemini-3.1-pro-preview, NOT gemini-3-pro-preview which 404s).
                 local _heavy_model="${HEAVY_MODEL:-}"
-                if [[ -z "$_heavy_model" && "$MODEL" == *flash* ]]; then
-                    _heavy_model="${MODEL//flash/pro}"
+                if [[ -z "$_heavy_model" ]]; then
+                    _heavy_model=$(MODEL_LOOKUP="$MODEL" python3 -c "
+import json, os
+try:
+    d = json.load(open('brain/tier_routing.json'))
+    print(d.get('heavy_upgrade_map', {}).get(os.environ['MODEL_LOOKUP'], ''))
+except Exception:
+    pass
+" 2>/dev/null)
                 fi
                 if [[ -n "$_heavy_model" && "$_heavy_model" != "$MODEL" ]]; then
                     echo "AMA: Heavy query — MODEL=$MODEL → $_heavy_model for this turn" >&2
                     MODEL="$_heavy_model"
                     context_prompt+="- **HEAVY QUERY** (detected): pro model active for this turn (escalated from flash). The user wants real reasoning depth — audit premises before answering, push back on bad framings, cite specifics, do not reflexively agree. Apply the **Critical Reasoning Discipline** section of the system prompt.\n"
+                elif [[ -z "$_heavy_model" ]]; then
+                    echo "AMA: Heavy query detected but no upgrade mapping for MODEL=$MODEL (set HEAVY_MODEL in .env or add to heavy_upgrade_map in tier_routing.json). Staying on $MODEL." >&2
                 fi
             fi
         fi

@@ -16,6 +16,17 @@
 
   "_embedding_note": "Embeddings are NOT routed here. tools/memory_helper.py:get_embedding() already handles Vertex AI text-embedding-004 via the main Google provider config. Do not duplicate.",
 
+  "_heavy_upgrade_note": "Explicit map for the heavy-query router (core/mix/24_agent_loop.sh). Mechanical 'flash→pro' substitution is wrong because the real model names are asymmetric (e.g. gemini-3-flash-preview's actual pro counterpart is gemini-3.1-pro-preview, NOT gemini-3-pro-preview which doesn't exist). If the current MODEL isn't in this map and $HEAVY_MODEL isn't set in .env, the router skips the swap rather than guessing.",
+  "heavy_upgrade_map": {
+    "gemini-3-flash-preview":         "gemini-3.1-pro-preview",
+    "gemini-3.1-flash-preview":       "gemini-3.1-pro-preview",
+    "gemini-3.1-flash-lite-preview":  "gemini-3.1-pro-preview",
+    "gemini-2.5-flash":               "gemini-2.5-pro",
+    "gemini-2.5-flash-lite":          "gemini-2.5-pro",
+    "gemini-2.0-flash":               "gemini-2.5-pro",
+    "gemini-2.0-flash-lite":          "gemini-2.5-pro"
+  },
+
   "providers": {
     "kconsole": {
       "base_url": "https://ai.koompi.cloud/v1",
