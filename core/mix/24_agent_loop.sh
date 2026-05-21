@@ -1035,7 +1035,16 @@ print('\n'.join(out))
             elif [[ -n "$text" && "$text" != "null" && $total_tool_calls -eq 0 ]]; then
                 local _final_html; _final_html="$(md_to_tg_html "$text")"
                 [[ -n "$_ctx_warn" ]] && _final_html+=$'\n'"${_ctx_warn}"
-                [[ -n "$_elapsed_str" ]] && _final_html+=$'\n'"<i>${_elapsed_str:1}</i>"
+                # No-tool footer: tokens (always when >0) + elapsed (≥10s).
+                # _tok_str is " | 1.2k tok"; _elapsed_str is " ⏱ 25s". Strip
+                # the leading separator and stitch with " · " between parts.
+                local _meta=""
+                [[ -n "$_tok_str" ]] && _meta="${_tok_str# | }"
+                if [[ -n "$_elapsed_str" ]]; then
+                    [[ -n "$_meta" ]] && _meta+=" · "
+                    _meta+="${_elapsed_str# }"
+                fi
+                [[ -n "$_meta" ]] && _final_html+=$'\n'"<i>╴ ${_meta}</i>"
                 tg_edit_safe "$chat_id" "$msg_id" "$_final_html" "HTML" "$thread_id"
             else
                 # Empty response — Gemini thinking-only output or scrubbed content.
