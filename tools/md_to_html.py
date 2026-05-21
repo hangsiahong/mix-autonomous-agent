@@ -30,6 +30,48 @@ import sys
 DEFAULT_MAX_CHARS = 4000
 
 FENCE_RE = re.compile(r"(```[\w-]*\n?[\s\S]*?```|`[^`\n]+`)")
+
+# Lines that look like a markdown table row: optional whitespace, leading pipe,
+# at least one more pipe somewhere on the line. Tight enough to avoid matching
+# prose with inline `|` (which doesn't start with pipe).
+_TABLE_LINE = re.compile(r"^\s*\|.*\|")
+
+
+def _auto_wrap_tables(text: str) -> str:
+    """
+    Wrap runs of ≥2 consecutive markdown-table-looking lines (outside existing
+    code fences) in a ``` block, so they render as monospace `<pre>` in
+    Telegram instead of broken raw pipes. Idempotent: lines already inside a
+    fence are left alone.
+    """
+    if "|" not in text:
+        return text
+    parts = FENCE_RE.split(text)
+    for i, part in enumerate(parts):
+        if i % 2 == 1:
+            continue  # already fenced — leave alone
+        lines = part.split("\n")
+        new_lines: list[str] = []
+        run: list[str] = []
+
+        def flush():
+            if len(run) >= 2:
+                new_lines.append("```")
+                new_lines.extend(run)
+                new_lines.append("```")
+            elif run:
+                new_lines.extend(run)
+            run.clear()
+
+        for ln in lines:
+            if _TABLE_LINE.match(ln):
+                run.append(ln)
+            else:
+                flush()
+                new_lines.append(ln)
+        flush()
+        parts[i] = "\n".join(new_lines)
+    return "".join(parts)
 _HEADING_RE = re.compile(r"^#{1,6} +(.+)$", re.MULTILINE)
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*", re.DOTALL)
 _BOLD_UND_RE = re.compile(r"__(.+?)__", re.DOTALL)
@@ -62,6 +104,10 @@ def md_to_html(text: str, max_chars: int = DEFAULT_MAX_CHARS) -> str:
     """Render Markdown → Telegram-compatible HTML, with safe escaping."""
     if not text:
         return ""
+    # Pre-pass: auto-wrap raw markdown tables (lines starting with `|`) in
+    # ``` fences so they render as monospace <pre> instead of broken pipes.
+    # Idempotent — lines already inside a fence are untouched.
+    text = _auto_wrap_tables(text)
     result: list[str] = []
     parts = FENCE_RE.split(text)
     for i, part in enumerate(parts):
