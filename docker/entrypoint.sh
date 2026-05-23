@@ -51,7 +51,7 @@ if [[ -f requirements.txt ]]; then
     prev_hash=$(cat "$REQS_HASH_FILE" 2>/dev/null || echo "")
     if [[ "$cur_hash" != "$prev_hash" ]]; then
         echo "[entrypoint] requirements.txt changed — installing --user"
-        if pip install --user --no-warn-script-location -r requirements.txt; then
+        if pip install --user --no-warn-script-location --break-system-packages -r requirements.txt; then
             echo "$cur_hash" > "$REQS_HASH_FILE"
         else
             echo "[entrypoint] WARNING: pip install failed — continuing with stale deps"

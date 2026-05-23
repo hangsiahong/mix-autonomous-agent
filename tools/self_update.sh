@@ -171,7 +171,7 @@ _files_changed=$(git diff --name-only "$_cur_sha" "$_new_sha" 2>/dev/null | wc -
 # Reinstall deps if requirements.txt changed
 if [[ "$_deps_changed" == "1" ]]; then
     echo "requirements.txt changed — running pip install --user..."
-    pip install --user -r requirements.txt --quiet 2>&1 | tail -3
+    pip install --user --break-system-packages -r requirements.txt --quiet 2>&1 | tail -3
 fi
 
 # Summary
