@@ -157,6 +157,51 @@ def cmd_route(msg, current_skill):
     return best[0]
 
 
+_IMPERATIVE_VERBS = (
+    r"load|use|bind|activate|enable|enable\s+the|switch\s+to|"
+    r"switch\s+over\s+to"
+)
+_IMPERATIVE_RE = re.compile(
+    rf"\b(?:{_IMPERATIVE_VERBS})\s+(?:the\s+)?([a-z0-9_\-]+)\b",
+    re.IGNORECASE,
+)
+
+
+def cmd_intent(msg):
+    """Detect explicit user imperatives like 'load riverbase skill' →
+    return matching installed skill name (or '' if no match).
+
+    Stricter than cmd_route: only fires on explicit verb + noun, not on
+    topical mentions, so 'I love research papers' does NOT trigger but
+    'use the research skill' does. Verified against the installed skill
+    set so 'load my custom shop' won't bind a random word.
+    """
+    text = msg.lower()
+    installed = {name for name, _, _, _ in _all_skills()}
+    # Aliases: 'riverbase-skill' is bindable as 'riverbase' or 'riverbase-skill';
+    # 'research' is bindable as 'research' or 'research-skill'.
+    aliases = {}
+    for n in installed:
+        aliases[n] = n
+        if n.endswith("-skill"):
+            aliases[n[:-6]] = n
+        else:
+            aliases[n + "-skill"] = n
+    for m in _IMPERATIVE_RE.finditer(text):
+        candidate = m.group(1).strip()
+        # The regex stops at \b so 'riverbase' in 'load riverbase skill' is
+        # captured without the trailing word. Also accept 'load riverbase-skill'
+        # which captures the full hyphenated form.
+        if candidate in aliases:
+            return aliases[candidate]
+        # Try with trailing 'skill' consumed (e.g. 'load X skill' where X is
+        # the bare name) — the regex grabs the verb+noun, then check if the
+        # next word is 'skill' and that 'X' alone is a known alias.
+        # Already covered by aliases dict (we added X + "-skill" / stripped form),
+        # so no extra logic needed here.
+    return ""
+
+
 def cmd_describe(name):
     for n, desc, triggers, _src in _all_skills():
         if n == name:
@@ -224,6 +269,11 @@ def main():
         current = sys.argv[2] if len(sys.argv) > 2 else ""
         msg = sys.stdin.read()
         out = cmd_route(msg, current)
+        if out:
+            print(out)
+    elif cmd == "intent":
+        msg = sys.stdin.read()
+        out = cmd_intent(msg)
         if out:
             print(out)
     elif cmd == "describe":

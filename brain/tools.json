@@ -508,7 +508,7 @@
   },
   {
     "name": "skill_manager",
-    "description": "Manage skills. list / create / bind / unbind (bind attaches to a Telegram topic).",
+    "description": "Manage skills. Actions: list (show installed), create (new skill from prompt), bind (activate a skill for this chat), unbind (clear binding). For bind, ONLY pass `skill` — chat_id and thread_id are auto-filled from the current session (works in DMs and topics alike). The binding takes effect on the next turn. Note: the user can also say 'load X skill' or 'use the X skill' in plain chat and the harness will bind it automatically — no tool call needed in that case.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -523,7 +523,7 @@
         },
         "skill": {
           "type": "string",
-          "description": "Required for create/bind/unbind."
+          "description": "Required for create/bind/unbind. The skill directory name under brain/skills/ or core/skills/."
         },
         "prompt": {
           "type": "string",
@@ -532,14 +532,6 @@
         "toolsets": {
           "type": "string",
           "description": "Space-separated extras, e.g. 'inspect media'."
-        },
-        "chat_id": {
-          "type": "string",
-          "description": "Required for bind/unbind."
-        },
-        "thread_id": {
-          "type": "string",
-          "description": "Required for bind/unbind."
         }
       },
       "required": [

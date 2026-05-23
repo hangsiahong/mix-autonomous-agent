@@ -6,15 +6,24 @@ _ROOT_DIR="$(cd "$_TOOLS_DIR/.." && pwd)"
 
 source "${_ROOT_DIR}/core/config.sh"
 
-action="${TOOL_action}" # bind, list, unbind
-chat_id="${TOOL_chat_id}"
-thread_id="${TOOL_thread_id}"
+action="${TOOL_action}" # bind, list, unbind, create
+# Auto-fill chat/thread from the per-call execution context that
+# 13_tool_execution.sh already exports. Agents do NOT need to pass these
+# manually — empty thread_id is the DM-root for 1-to-1 chats and is now
+# valid (was previously rejected, which made bind impossible in DMs).
+chat_id="${TOOL_chat_id:-${TOOL_CHAT_ID:-}}"
+thread_id="${TOOL_thread_id:-${TOOL_THREAD_ID:-}}"
+session_id="${TOOL_session_id:-${TOOL_SESSION_ID:-}}"
 skill="${TOOL_skill}"
 name="${TOOL_name:-$skill}"
 
 if [[ "$action" == "bind" ]]; then
-    if [[ -z "$chat_id" || -z "$thread_id" || -z "$skill" ]]; then
-        echo "Error: chat_id, thread_id and skill are required."
+    if [[ -z "$skill" ]]; then
+        echo "Error: 'skill' is required. (chat_id/thread_id are auto-filled from the session — you only need to pass the skill name.)"
+        exit 1
+    fi
+    if [[ -z "$chat_id" ]]; then
+        echo "Error: chat_id missing — tool was invoked outside an agent turn."
         exit 1
     fi
 
@@ -25,13 +34,31 @@ if [[ "$action" == "bind" ]]; then
         exit 1
     fi
 
-    topic_data=$(TID="$thread_id" SKILL="$skill" NAME="$name" python3 -c "
-import json, os
-print(json.dumps({'thread_id': os.environ['TID'], 'skill': os.environ['SKILL'], 'name': os.environ['NAME']}))
-")
-    
-    set_topic_config "$chat_id" "$thread_id" "$topic_data"
-    echo "Skill '$skill' bound to topic '$name' ($thread_id) in chat $chat_id."
+    # Long-term: topic config (brain/config.json group_topics) so the binding
+    # survives /restart and applies to future sessions in this chat/thread.
+    # set_topic_config takes (chat_id, thread_id, key, value) per-call — the
+    # old code passed a JSON blob as the 3rd arg, which the function rejected
+    # silently as "invalid key". Now writes the fields individually.
+    set_topic_config "$chat_id" "$thread_id" "skill" "$skill" 2>/dev/null
+    if [[ "$name" != "$skill" ]]; then
+        set_topic_config "$chat_id" "$thread_id" "name" "$name" 2>/dev/null
+    fi
+
+    # Per-session sticky sidecar so the binding takes effect on the NEXT turn
+    # in the current session. Without this, router.sh's active_skill_<sid>
+    # shadow check (router.sh:516) keeps reading the previously-active skill
+    # until the session ends — making bind feel like a no-op mid-conversation.
+    if [[ -n "$session_id" ]]; then
+        _active_skill_file="${_ROOT_DIR}/brain/state/active_skill_${session_id}"
+        mkdir -p "$(dirname "$_active_skill_file")"
+        printf '%s' "$skill" > "$_active_skill_file" 2>/dev/null || true
+    fi
+
+    if [[ -z "$thread_id" ]]; then
+        echo "Skill '$skill' bound to chat $chat_id (DM root). Active next turn."
+    else
+        echo "Skill '$skill' bound to topic '$name' (thread $thread_id) in chat $chat_id. Active next turn."
+    fi
 
 elif [[ "$action" == "unbind" ]]; then
      # Use a special value or filter out

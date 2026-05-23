@@ -528,6 +528,20 @@ print(json.dumps(combined))
         fi
     fi
 
+    # User-imperative override (highest precedence). When the user explicitly
+    # types "load X skill", "use the X skill", "switch to X", etc., honour
+    # that mechanically — no LLM round-trip, no agent reasoning required.
+    # Saves a confused model from inventing tool calls to "discover" what
+    # the user already told us. Verified against installed skills so random
+    # words ("load my custom shop") don't false-positive.
+    if [[ "$text" != /* ]] && [[ -n "$text" ]]; then
+        local _intent_skill
+        _intent_skill=$(printf '%s' "$text" | python3 "${DIR}/tools/skill_router.py" intent 2>/dev/null)
+        if [[ -n "$_intent_skill" ]]; then
+            skill="$_intent_skill"
+        fi
+    fi
+
     # Persist the chosen skill for the next turn (only if non-empty and not a slash command)
     if [[ "$text" != /* ]] && [[ -n "$skill" ]]; then
         mkdir -p "$(dirname "$_active_skill_file")"
