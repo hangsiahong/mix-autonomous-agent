@@ -334,6 +334,7 @@ tg_set_commands() {
         {"command": "insights", "description": "Token and tool usage statistics"},
         {"command": "whitelist","description": "Whitelist a user or chat ID (admin)"},
         {"command": "restart",  "description": "Restart the bot (admin)"},
+        {"command": "update",   "description": "Pull latest code + reload: /update [branch] [force] [rollback] (admin)"},
         {"command": "shutdown", "description": "Shut down the bot (admin)"}
     ]'
     tg_api "setMyCommands" "$(CMDS="$commands" python3 -c "import json,os; print(json.dumps({'commands':json.loads(os.environ['CMDS'])}))")" > /dev/null

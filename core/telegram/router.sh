@@ -598,6 +598,7 @@ open(sys.argv[1],'w').write(json.dumps(d, separators=(',',':')))" "$_gfile" 2>/d
 /whitelist &lt;id&gt; — add user/chat
 /reload — hot-reload core files (no restart, in-place)
 /restart — full restart via pm2
+/update [branch] [force] [rollback] — git pull + auto-reload
 /shutdown — shut down bot" "$thread_id" "HTML"
                 ;;
             /whitelist)
@@ -1584,6 +1585,38 @@ Core files will be re-sourced between the current long-poll iteration.
                     fi
                     kill -TERM "$$" 2>/dev/null
                     exit 0
+                else
+                    tg_send "$chat_id" "Admin only." "$thread_id"
+                fi
+                ;;
+            /update)
+                # Thin wrapper around tools/self_update.sh — same engine as the
+                # agent-callable `self_update` tool, so behavior never drifts.
+                # Forms:
+                #   /update                     pull current branch
+                #   /update <branch>            switch branch + pull
+                #   /update force               stash dirty tree + pull
+                #   /update <branch> force      switch + stash + pull
+                #   /update rollback            revert to pre-last-update SHA
+                if [[ "$user_id" == "${TG_ADMIN}" ]]; then
+                    local _u_branch="" _u_force="" _u_rollback=""
+                    # Tokens are either keywords (force/rollback) or a branch name
+                    for _tok in $args; do
+                        case "$_tok" in
+                            force)    _u_force="1" ;;
+                            rollback) _u_rollback="1" ;;
+                            *)        [[ -z "$_u_branch" ]] && _u_branch="$_tok" ;;
+                        esac
+                    done
+                    tg_send "$chat_id" "🔄 <i>Updating...</i>" "$thread_id" "HTML"
+                    local _u_out
+                    _u_out=$(TOOL_branch="$_u_branch" TOOL_force="$_u_force" TOOL_rollback="$_u_rollback" \
+                             bash "${DIR}/tools/self_update.sh" 2>&1)
+                    # Truncate to fit Telegram message limits; HTML-escape for <pre>
+                    _u_out=$(printf '%s' "$_u_out" | head -c 3500 | python3 -c "
+import sys, html
+print(html.escape(sys.stdin.read()))")
+                    tg_send "$chat_id" "<pre>${_u_out}</pre>" "$thread_id" "HTML"
                 else
                     tg_send "$chat_id" "Admin only." "$thread_id"
                 fi

@@ -940,6 +940,30 @@
     "toolset": "core"
   },
   {
+    "name": "self_update",
+    "description": "Pull the latest AMA code from upstream and reload. Use when the user says 'update yourself', 'get the latest', 'switch to the X branch', or asks AMA to update. Preserves all user data (gitignored state, .env, custom skills). Auto-decides whether to SIGHUP-reload (code-only) or pm2-restart (deps/pm2 config changed). Pass branch='name' to switch branches; pass force=true to stash dirty files before pulling; pass rollback=true to revert to the SHA before the last update.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "branch": {
+          "type": "string",
+          "description": "Optional branch name to switch to and pull (e.g. 'master', 'general-fidelity'). Defaults to current branch."
+        },
+        "force": {
+          "type": "boolean",
+          "description": "Optional. If true and the working tree has uncommitted tracked-file changes, stash them before pulling. Stash ref is reported back."
+        },
+        "rollback": {
+          "type": "boolean",
+          "description": "Optional. If true, revert to the SHA recorded by the previous /update and restart. Single-shot — clears the marker after."
+        }
+      },
+      "required": []
+    },
+    "toolset": "meta",
+    "defer": true
+  },
+  {
     "name": "access_control",
     "description": "Manage whitelist. Actions: whitelist (add), revoke (remove), sethome (set home_chat), log (show last 20 changes). Every mutation auto-logged to brain/state/access_control.log \u2014 use action=log to find who was last added/removed instead of grepping session history.",
     "parameters": {
