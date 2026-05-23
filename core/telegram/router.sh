@@ -557,8 +557,11 @@ open(sys.argv[1],'w').write(json.dumps(d, separators=(',',':')))" "$_gfile" 2>/d
 
     # Handle Slash Commands
     if [[ "$text" == /* ]]; then
-        local cmd=$(echo "$text" | awk '{print $1}')
-        local args=$(echo "$text" | sed "s|^$cmd||" | sed 's|^[[:space:]]*||')
+        local _raw_cmd=$(echo "$text" | awk '{print $1}')
+        # Strip @bot_name suffix (Telegram group syntax: /cmd@my_bot args)
+        # so /help@my_bot matches /help in the case below.
+        local cmd="${_raw_cmd%@*}"
+        local args=$(echo "$text" | sed "s|^${_raw_cmd}||" | sed 's|^[[:space:]]*||')
         
         case "$cmd" in
             /start)
@@ -1629,8 +1632,17 @@ print(html.escape(sys.stdin.read()))")
                 fi
                 ;;
             *)
-                # Pass unknown commands to agent
-                ( set -m; run_agent "$chat_id" "$text" "$user_id" "$media_json" "$thread_id" "$session_id" "$chat_title" "$username" "$skill" "$message_id" ) &
+                # Reply "unknown command" only when the input LOOKS command-shaped
+                # (a short alphanumeric slug, no slashes or special chars after the
+                # leading /). Otherwise (e.g. someone typing "/etc/hosts is broken"
+                # or "/api/foo returns 500" in a normal message) fall through to
+                # the agent so we don't false-positive on filesystem paths or URLs.
+                if [[ "$cmd" =~ ^/[a-zA-Z][a-zA-Z0-9_]{0,30}$ ]]; then
+                    tg_send "$chat_id" "❓ Unknown command: <code>$cmd</code>
+Try <code>/help</code> for the full list." "$thread_id" "HTML"
+                else
+                    ( set -m; run_agent "$chat_id" "$text" "$user_id" "$media_json" "$thread_id" "$session_id" "$chat_title" "$username" "$skill" "$message_id" ) &
+                fi
                 ;;
         esac
     else
