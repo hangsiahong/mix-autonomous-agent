@@ -865,7 +865,7 @@
   },
   {
     "name": "scheduler",
-    "description": "Schedule recurring tasks. Actions: add (create), list (show all for this chat), remove (delete by id), pause, resume. For add: requires `prompt` + `every` (e.g. '12h', '30m', '1d'). Optional model/provider/skill override pins the task to a specific (e.g. cheap) backend instead of the default. The scheduled task fires via the existing queue mechanism \u2014 result lands in the same Telegram chat as a normal turn, tagged [SCHEDULED #N].",
+    "description": "Schedule recurring tasks. Actions: add (create), list (show all for this chat), remove (delete by id), pause, resume. For add: requires `prompt` + `every` (e.g. '12h', '30m', '1d'). Optional model/provider/skill override pins the task to a specific (e.g. cheap) backend instead of the default. When the interval elapses, cron spawns a fresh agent run (independent of any active chat) which delivers the result to the original Telegram chat tagged [SCHEDULED #N].",
     "parameters": {
       "type": "object",
       "properties": {
