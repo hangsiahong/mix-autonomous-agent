@@ -10,6 +10,12 @@ ddgs>=0.1.0
 # Vector memory (memory_helper.py)
 lancedb>=0.6.0
 
+# CPU-local embedding fallback (memory_helper.py EMBEDDING_PROVIDER=local).
+# Default backend when no cloud creds are present (PROVIDER != google) so
+# the memory tool works out of the box. ONNX-based, no torch dependency.
+# First memory call downloads ~130 MB model into ~/.cache/fastembed.
+fastembed>=0.3.0
+
 # Browser automation (browser.sh)
 playwright>=1.40.0
 

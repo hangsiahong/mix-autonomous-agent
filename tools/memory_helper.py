@@ -30,6 +30,34 @@ def _ollama_embed(text):
     return data["embeddings"][0]
 
 
+_LOCAL_EMBEDDER = None  # module-global lazy cache so we only load the model once
+
+
+def _local_embed(text):
+    """CPU-local fallback via fastembed (ONNX, no GPU, no cloud creds).
+
+    First call downloads ~130 MB model into ~/.cache/fastembed; persists
+    across container recreates when /home/ama is a named volume. Default
+    model is English-only (BAAI/bge-small-en-v1.5, 384 dims). For
+    multilingual contexts set LOCAL_EMBEDDING_MODEL=intfloat/multilingual-e5-small
+    (~471 MB, supports 100+ languages including Khmer).
+    """
+    global _LOCAL_EMBEDDER
+    if _LOCAL_EMBEDDER is None:
+        try:
+            from fastembed import TextEmbedding
+        except ImportError as e:
+            raise RuntimeError(
+                "EMBEDDING_PROVIDER=local needs fastembed. Install it with:\n"
+                "  pip install --user fastembed\n"
+                "Or set EMBEDDING_PROVIDER=google / ollama if you have cloud creds."
+            ) from e
+        model_name = os.environ.get("LOCAL_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
+        sys.stderr.write(f"[memory_helper] Loading local embedding model: {model_name} (one-time download on first run)\n")
+        _LOCAL_EMBEDDER = TextEmbedding(model_name=model_name)
+    return list(next(_LOCAL_EMBEDDER.embed([text])))
+
+
 def _google_embed(text):
     """Call Google Vertex AI or AI Studio embeddings API."""
     mode = "vertex"
@@ -96,15 +124,39 @@ def _google_embed(text):
         return resp.json()["embedding"]["values"]
 
 
-def get_embedding(text):
-    """Route to Ollama or Google based on EMBEDDING_PROVIDER env var.
+def _resolve_provider():
+    """Resolve the embedding provider with auto-fallback to local CPU.
 
-    Falls back to PROVIDER for backward compat, but EMBEDDING_PROVIDER lets
-    you use kconsole/openrouter/etc for LLM while keeping a separate embedding backend.
+    - Explicit EMBEDDING_PROVIDER wins.
+    - Else if main LLM PROVIDER is google → reuse google creds for free embedding.
+    - Else fall back to local (fastembed) so users on kconsole/openrouter/etc.
+      get working memory out of the box without needing a separate cloud account.
     """
-    provider = os.environ.get("EMBEDDING_PROVIDER") or os.environ.get("PROVIDER", "google")
-    if provider == "ollama":
+    p = os.environ.get("EMBEDDING_PROVIDER")
+    if p:
+        return p
+    return "google" if os.environ.get("PROVIDER", "google") == "google" else "local"
+
+
+def _current_model_id():
+    """Stable identifier of the active embedding model. Stored in the dim sidecar
+    so we can detect when the user switches embedding backends (different vector
+    spaces are not comparable — _ensure_table refuses to silently wipe the DB)."""
+    p = _resolve_provider()
+    if p == "ollama":
+        return os.environ.get("EMBEDDING_MODEL", "embeddinggemma")
+    if p == "local":
+        return "local:" + os.environ.get("LOCAL_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
+    return "google"
+
+
+def get_embedding(text):
+    """Route to local CPU / Ollama / Google based on resolved provider."""
+    p = _resolve_provider()
+    if p == "ollama":
         return _ollama_embed(text)
+    if p == "local":
+        return _local_embed(text)
     return _google_embed(text)
 
 
@@ -153,12 +205,7 @@ def _ensure_table(db, first_row):
     We now refuse the operation unless AMA_MEMORY_ALLOW_WIPE=1 is set, leaving
     the user's stored memories intact.
     """
-    provider = os.environ.get("EMBEDDING_PROVIDER") or os.environ.get("PROVIDER", "google")
-    cur_model = (
-        os.environ.get("EMBEDDING_MODEL", "embeddinggemma")
-        if provider == "ollama"
-        else "google"
-    )
+    cur_model = _current_model_id()
     meta = _load_dim_meta()
     stored_model = meta.get("model")
 
