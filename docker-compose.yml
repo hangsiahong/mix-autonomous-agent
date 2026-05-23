@@ -1,34 +1,46 @@
-version: "3.9"
+# Build-once, update-forever architecture:
+#   - Image (Dockerfile) holds OS + python + pm2 + system libs — no app code.
+#   - Code lives on the host and is bind-mounted at /opt/ama. `git pull` on the
+#     host OR `/update` from inside the bot both update the same files.
+#   - User-installed cruft (pip --user, npm cache, pm2 dump, Playwright browsers)
+#     lives in the ama_home named volume — survives container recreate, so the
+#     container feels like a long-lived VM.
+#   - LanceDB lives under /home/ama/ama_memory; the inner named-volume mount
+#     shadows the parent ama_home mount for that subdir (Docker handles
+#     nested mounts), keeping existing users' memory intact during the upgrade.
 
 services:
   ama-bot:
     build:
       context: .
       args:
-        # Match container UID/GID to host user so volume files are always
-        # owned by you — no more "Permission denied" on git diff or log reads.
-        # These default to 1000 (first user on most Linux systems).
+        # Match container UID/GID to host user — bind-mount writes stay owned by you.
         # Override in .env: UID=1000  GID=1000
         UID: ${UID:-1000}
         GID: ${GID:-1000}
     restart: unless-stopped
     env_file: .env
-    # Run as the same user as the build so mounted volume writes match host ownership
     user: "${UID:-1000}:${GID:-1000}"
     volumes:
-      # Persist all user data across image rebuilds and container restarts.
-      # Core code comes from the image; only these dirs are user-mutable.
-      - ./brain:/opt/ama/brain
-      - ./logs:/opt/ama/logs
-      # Agent-created custom tools (gitignored, excluded from image build)
-      - ./tools/custom:/opt/ama/tools/custom
-      # Skill repos cloned by the agent
-      - ./skills:/opt/ama/skills
-      # LanceDB vector memory — persists across rebuilds
+      # ── Code: whole repo bind-mounted ─────────────────────────────────────
+      # Host's working copy IS the container's code. /update runs `git pull`
+      # inside the container, which updates files on the host too — they're
+      # the same files.
+      - ./:/opt/ama
+      # ── Home: persistent install layer ────────────────────────────────────
+      # pip --user installs, npm cache, pm2 dump file, Playwright browsers,
+      # ssh keys the agent might generate — all stick across recreate.
+      - ama_home:/home/ama
+      # ── LanceDB memory ────────────────────────────────────────────────────
+      # Kept as a separate named volume so existing users' memory survives
+      # the migration from the per-subdir mounts. Nested under /home/ama;
+      # the inner mount wins for this subdir.
       - ama_memory:/home/ama/ama_memory
-      # Workspace for real projects the agent creates outside the harness.
+      # ── Workspace (optional) ──────────────────────────────────────────────
+      # For real projects the agent creates outside the harness.
       # Set WORKSPACE_DIR=/workspace in .env, then uncomment:
       # - ./workspace:/workspace
 
 volumes:
+  ama_home:
   ama_memory:
