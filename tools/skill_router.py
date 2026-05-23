@@ -99,8 +99,31 @@ def _all_skills():
 
 
 def cmd_route(msg, current_skill):
-    """Pick best skill by trigger match. Return name (or '' = keep current)."""
+    """Pick best skill by trigger match. Return name (or '' = keep current).
+
+    Matching is whitespace- and punctuation-insensitive: a trigger like
+    "onedegree" matches user input "one degree" or "one-degree" because we
+    also compare against concatenated token n-grams from the input. The
+    n-gram cap (4) plus the existing score threshold keeps false-positive
+    risk low — "transaction" trigger will NOT match "transactional" because
+    "transactional" is a single token and doesn't compact-merge into
+    "transaction".
+    """
     text = msg.lower()
+    # Build a set of concatenated-token variants from the input. Tokens are
+    # runs of alphanumerics; we join 1..4 consecutive tokens. So input
+    # "one degree how" yields {one, degree, how, onedegree, degreehow,
+    # howmuch, onedegreehow, ...}. A trigger matches if its compact form
+    # (non-alphanumerics stripped) is in this set OR the original raw form
+    # word-boundary-matches the raw text.
+    tokens = re.findall(r"[a-z0-9]+", text)
+    joined = set(tokens)
+    for i in range(len(tokens)):
+        acc = tokens[i]
+        for j in range(i + 1, min(i + 4, len(tokens))):
+            acc += tokens[j]
+            joined.add(acc)
+
     best = ("", 0)
     for name, _desc, triggers, _src in _all_skills():
         if not triggers:
@@ -109,9 +132,18 @@ def cmd_route(msg, current_skill):
         for kw in triggers:
             if not kw:
                 continue
-            # Phrase match (whitespace boundary either side)
-            pattern = r"(^|[\s\W])" + re.escape(kw.lower()) + r"($|[\s\W])"
-            if re.search(pattern, text):
+            kw_l = kw.lower()
+            # Path 1: word-boundary regex on raw text — handles single-word
+            # triggers and original phrase triggers (e.g. "today's sales").
+            pattern = r"(^|[\s\W])" + re.escape(kw_l) + r"($|[\s\W])"
+            matched = bool(re.search(pattern, text))
+            # Path 2: compact-form match against concatenated n-grams —
+            # catches "one degree" ↔ "onedegree", "one-degree" ↔ "onedegree".
+            if not matched:
+                kw_compact = re.sub(r"[^a-z0-9]", "", kw_l)
+                if kw_compact and kw_compact in joined:
+                    matched = True
+            if matched:
                 # Longer triggers (phrases) outweigh single short words
                 score += 2 if " " in kw or len(kw) > 6 else 1
         if score > best[1]:
