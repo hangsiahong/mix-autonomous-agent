@@ -498,12 +498,22 @@ print(json.dumps(combined))
         return  # Don't process immediately; let the batch flush handle it
     fi
 
+    # "Clean session" mode set by /new — skill resolution starts blank instead
+    # of inheriting from topic config or AMA auto-load. Cleared automatically
+    # the moment the user explicitly binds a skill (imperative or skill_manager).
+    local _clean_flag="${DIR}/brain/state/clean_${session_id}"
+    local _clean_mode=0
+    [[ -f "$_clean_flag" ]] && _clean_mode=1
+
     # Auto-load AMA skill if mentioning AMA or autonomous-agent
-    local topic_cfg=$(get_topic_config "$chat_id" "$thread_id")
-    local _topic_skill=$(python3 -c "import json,sys; d=json.loads(sys.argv[1]); print(d.get('skill','') or '')" "$topic_cfg" 2>/dev/null)
-    local skill="$_topic_skill"
-    if [[ -z "$skill" ]] && [[ "$text" =~ ([[:space:]]|^)[Aa][Mm][Aa]([[:space:]]|$) || "$text" =~ "autonomous-agent" ]]; then
-        skill="ama"
+    local skill=""
+    if [[ "$_clean_mode" -eq 0 ]]; then
+        local topic_cfg=$(get_topic_config "$chat_id" "$thread_id")
+        local _topic_skill=$(python3 -c "import json,sys; d=json.loads(sys.argv[1]); print(d.get('skill','') or '')" "$topic_cfg" 2>/dev/null)
+        skill="$_topic_skill"
+        if [[ -z "$skill" ]] && [[ "$text" =~ ([[:space:]]|^)[Aa][Mm][Aa]([[:space:]]|$) || "$text" =~ "autonomous-agent" ]]; then
+            skill="ama"
+        fi
     fi
 
     # Active-skill persistence: if a previous turn in this session routed to a
@@ -518,9 +528,9 @@ print(json.dumps(combined))
         skill="$_active_skill"
     fi
 
-    # Keyword-based skill auto-router (skip for slash commands).
-    # Only overrides when the new message strongly matches a DIFFERENT skill.
-    if [[ "$text" != /* ]] && [[ -n "$text" ]]; then
+    # Keyword-based skill auto-router (skip for slash commands AND clean mode).
+    # Clean mode wants ONLY explicit user choices, not topical inference.
+    if [[ "$text" != /* ]] && [[ -n "$text" ]] && [[ "$_clean_mode" -eq 0 ]]; then
         local _routed
         _routed=$(printf '%s' "$text" | python3 "${DIR}/tools/skill_router.py" route "$skill" 2>/dev/null)
         if [[ -n "$_routed" ]]; then
@@ -531,14 +541,15 @@ print(json.dumps(combined))
     # User-imperative override (highest precedence). When the user explicitly
     # types "load X skill", "use the X skill", "switch to X", etc., honour
     # that mechanically — no LLM round-trip, no agent reasoning required.
-    # Saves a confused model from inventing tool calls to "discover" what
-    # the user already told us. Verified against installed skills so random
-    # words ("load my custom shop") don't false-positive.
+    # Verified against installed skills so random words ("load my custom shop")
+    # don't false-positive. Clears the clean-mode flag once an imperative fires
+    # so subsequent turns inherit the skill normally.
     if [[ "$text" != /* ]] && [[ -n "$text" ]]; then
         local _intent_skill
         _intent_skill=$(printf '%s' "$text" | python3 "${DIR}/tools/skill_router.py" intent 2>/dev/null)
         if [[ -n "$_intent_skill" ]]; then
             skill="$_intent_skill"
+            rm -f "$_clean_flag" 2>/dev/null
         fi
     fi
 
@@ -585,7 +596,7 @@ open(sys.argv[1],'w').write(json.dumps(d, separators=(',',':')))" "$_gfile" 2>/d
                 tg_send "$chat_id" "<b>Commands</b>
 <b>Session</b>
 /stop — stop running task • /stop all — kill everything
-/new or /reset — fresh session (history archived)
+/new or /reset — fresh session, no auto-skill (say "load X skill" to bind)
 /retry — re-run last message
 /undo — remove last exchange from history
 /steer &lt;note&gt; — inject guidance mid-run (after next tool call)
@@ -657,6 +668,12 @@ open(sys.argv[1],'w').write(json.dumps(d, separators=(',',':')))" "$_gfile" 2>/d
                       "${DIR}/brain/state/active_tools_${session_id}.json" \
                       "${DIR}/brain/state/goal_${session_id}.json" \
                       "${DIR}/brain/state/clarify_${session_id}.json" 2>/dev/null || true
+                # "Clean session" flag — the skill resolver skips topic-config
+                # binding AND AMA auto-load while this exists, so the agent
+                # starts with no skill loaded and ASKS the user before assuming.
+                # Cleared automatically the moment the user explicitly binds a
+                # skill (via "load X skill" imperative or skill_manager bind).
+                touch "${DIR}/brain/state/clean_${session_id}"
                 # Generate the session recap in the background against the
                 # just-archived history file (uses `( cmd & )` detach idiom so
                 # the work survives the dispatcher's EXIT trap).

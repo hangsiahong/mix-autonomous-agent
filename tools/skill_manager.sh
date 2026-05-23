@@ -52,6 +52,8 @@ if [[ "$action" == "bind" ]]; then
         _active_skill_file="${_ROOT_DIR}/brain/state/active_skill_${session_id}"
         mkdir -p "$(dirname "$_active_skill_file")"
         printf '%s' "$skill" > "$_active_skill_file" 2>/dev/null || true
+        # Clean-mode (set by /new) is over once the user explicitly binds.
+        rm -f "${_ROOT_DIR}/brain/state/clean_${session_id}" 2>/dev/null
     fi
 
     if [[ -z "$thread_id" ]]; then
