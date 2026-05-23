@@ -28,6 +28,7 @@ _GOOGLE_THINKING_LEVEL=""  # empty = model default (high/dynamic for Gemini 3)
 # Known models (hardcoded — stable, small list)
 # Gemini 3.x models only available on Vertex AI via location=global
 _GOOGLE_MODELS=(
+  "gemini-3.5-flash"
   "gemini-3-flash-preview"
   "gemini-2.5-pro"
   "gemini-2.0-flash-exp"

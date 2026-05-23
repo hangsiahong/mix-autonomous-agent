@@ -19,6 +19,7 @@
         "cache": "yes", "structured_output": "yes", "vision": "yes", "max_context": 1000000
       },
       "models": {
+        "gemini-3.5-flash":            {"thinking": "yes", "thought_signature": "yes"},
         "gemini-3-flash-preview":      {"thinking": "yes", "thought_signature": "yes"},
         "gemini-3-pro-preview":        {"thinking": "yes", "thought_signature": "yes"},
         "gemini-2.5-flash":            {"thinking": "yes", "thought_signature": "no"},
