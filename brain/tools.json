@@ -920,6 +920,26 @@
     "defer": true
   },
   {
+    "name": "switch_provider",
+    "description": "Switch the LLM provider (and optionally model) for THIS session — no restart, no .env edit. Takes effect on the NEXT turn (the current reply is already committed to the in-flight provider). Use when the user says things like 'switch to deepseek', 'use kconsole for the rest of this chat', 'try claude instead'. If you omit model, a sensible per-provider default is chosen so model/provider stay in sync. Pass provider='default' to revert to the .env settings.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": ["google", "anthropic", "openrouter", "deepseek", "copilot", "groq", "kconsole", "minimax", "mistral", "ollama", "xai", "zai", "default"],
+          "description": "Target provider. 'default' reverts to .env."
+        },
+        "model": {
+          "type": "string",
+          "description": "Optional model name. Omit for the provider's sensible default. Pass 'default' to clear any prior /model override."
+        }
+      },
+      "required": ["provider"]
+    },
+    "toolset": "core"
+  },
+  {
     "name": "access_control",
     "description": "Manage whitelist. Actions: whitelist (add), revoke (remove), sethome (set home_chat), log (show last 20 changes). Every mutation auto-logged to brain/state/access_control.log \u2014 use action=log to find who was last added/removed instead of grepping session history.",
     "parameters": {

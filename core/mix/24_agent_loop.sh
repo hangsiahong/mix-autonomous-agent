@@ -33,6 +33,7 @@ run_agent() {
     local steer_file="${DIR}/brain/state/steer_${session_id}"
     local queue_file="${DIR}/brain/state/queue_${session_id}"
     local model_file="${DIR}/brain/state/model_${session_id}"
+    local provider_file="${DIR}/brain/state/provider_${session_id}"
     local stop_btn_file="${DIR}/brain/state/stopbtn_${session_id}"
     local interrupt_input_file="${DIR}/brain/state/interrupt_input_${session_id}"
 
@@ -476,6 +477,25 @@ else:
 print('enabled' if has_vision else 'disabled (model is text-only)')
 " 2>/dev/null)
         context_prompt+="- **Vision**: ${_vision_state:-enabled}\n"
+
+        # Apply per-session provider override BEFORE model — switching providers
+        # also switches BASE_URL/API_KEY via ${provider}_activate, and the
+        # model_file value should win over any default the activator might set.
+        # Written by tools/switch_provider.sh or /provider; cleared by writing
+        # the literal string "default".
+        if [[ -f "$provider_file" ]]; then
+            local _session_provider; _session_provider=$(cat "$provider_file" 2>/dev/null)
+            if [[ -n "$_session_provider" && "$_session_provider" != "$PROVIDER" ]]; then
+                PROVIDER="$_session_provider"
+                if type "${PROVIDER}_activate" >/dev/null 2>&1; then
+                    "${PROVIDER}_activate" >/dev/null 2>&1 || true
+                fi
+                # google_activate sets _GOOGLE_VERTEX_MODEL_PREFIX="google/" — leaks
+                # into non-google requests if we don't clear it. Same fix the
+                # scheduler override path uses.
+                [[ "$PROVIDER" != "google" ]] && unset _GOOGLE_VERTEX_MODEL_PREFIX
+            fi
+        fi
 
         # Apply per-session model override (/model command — hermes pattern)
         if [[ -f "$model_file" ]]; then
