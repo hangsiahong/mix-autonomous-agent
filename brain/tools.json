@@ -919,7 +919,7 @@
       "properties": {
         "provider": {
           "type": "string",
-          "enum": ["google", "anthropic", "openrouter", "deepseek", "copilot", "groq", "kconsole", "minimax", "mistral", "ollama", "xai", "zai", "default"],
+          "enum": ["google", "anthropic", "openrouter", "deepseek", "copilot", "groq", "kconsole", "mimo", "minimax", "mistral", "ollama", "xai", "zai", "default"],
           "description": "Target provider. 'default' reverts to .env."
         },
         "model": {

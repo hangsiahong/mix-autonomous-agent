@@ -5,7 +5,7 @@
 #
 # Args (via TOOL_ env vars):
 #   provider  — required. One of: google, anthropic, openrouter, deepseek,
-#               copilot, groq, kconsole, minimax, mistral, ollama, xai, zai.
+#               copilot, groq, kconsole, mimo, minimax, mistral, ollama, xai, zai.
 #               Pass "default" to clear the override and return to .env's PROVIDER.
 #   model     — optional. If omitted, a sensible per-provider default is picked
 #               so model/provider stay in sync (the common foot-gun otherwise).
@@ -24,11 +24,11 @@ provider="${TOOL_provider:-}"
 model="${TOOL_model:-}"
 
 if [[ -z "$provider" ]]; then
-    echo "Error: 'provider' is required. Try: google, anthropic, deepseek, kconsole, groq, openrouter, copilot, minimax, mistral, ollama, xai, zai. Use 'default' to revert."
+    echo "Error: 'provider' is required. Try: google, anthropic, deepseek, kconsole, mimo, groq, openrouter, copilot, minimax, mistral, ollama, xai, zai. Use 'default' to revert."
     exit 1
 fi
 
-_VALID="google anthropic openrouter deepseek copilot groq kconsole minimax mistral ollama xai zai default"
+_VALID="google anthropic openrouter deepseek copilot groq kconsole mimo minimax mistral ollama xai zai default"
 if ! grep -qw "$provider" <<< "$_VALID"; then
     echo "Error: unknown provider '$provider'. Valid: $_VALID"
     exit 1
@@ -57,6 +57,7 @@ if [[ -z "$model" ]]; then
         copilot)    model="gpt-4o" ;;
         groq)       model="llama-3.3-70b-versatile" ;;
         kconsole)   model="koompi-free" ;;
+        mimo)       model="mimo-v2.5-pro" ;;
         minimax)    model="MiniMax-Text-01" ;;
         mistral)    model="mistral-large-latest" ;;
         ollama)     model="llama3.2" ;;

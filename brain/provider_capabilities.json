@@ -46,6 +46,20 @@
       }
     },
 
+    "mimo": {
+      "_note": "Xiaomi MiMo — OpenAI-compatible. Thinking models return chain-of-thought in `reasoning_content` (R1-style) which AMA's parsers do NOT surface to UI; treat as silent thinking. Automatic server-side prompt caching (no headers); hits in usage.prompt_tokens_details.cached_tokens.",
+      "default": {
+        "tools": "openai", "thinking": "no", "thought_signature": "no",
+        "cache": "yes", "structured_output": "yes", "vision": "no", "max_context": 128000
+      },
+      "models": {
+        "mimo-v2.5-pro":   {"thinking": "yes"},
+        "mimo-v2.5":       {"thinking": "yes"},
+        "mimo-v2-pro":     {"thinking": "yes"},
+        "mimo-v2-omni":    {"thinking": "yes", "vision": "yes"}
+      }
+    },
+
     "anthropic": {
       "default": {
         "tools": "native", "thinking": "yes", "thought_signature": "no",

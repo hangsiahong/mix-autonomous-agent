@@ -70,6 +70,20 @@ MODEL=koompi-fast   # or koompi-free, gemini-3-flash-preview, glm-5-turbo, ...
 
 KConsole models routed through this provider also work as **per-task overrides** for the scheduler — see [`self_improvement.md#scheduler`](self_improvement.md#scheduler).
 
+## Xiaomi MiMo
+
+OpenAI-compatible API for Xiaomi's MiMo model family.
+
+```bash
+PROVIDER=mimo
+MIMO_API_KEY=tp-...
+MODEL=mimo-v2.5-pro   # or mimo-v2.5, mimo-v2-pro, mimo-v2-omni  (lowercase!)
+```
+
+Notes:
+- Thinking models return chain-of-thought in `reasoning_content` (R1-style), which AMA's parsers do not currently surface to the UI — treat it as silent thinking.
+- Automatic server-side prompt caching with no headers required. Cache hits appear in `usage.prompt_tokens_details.cached_tokens`.
+
 ## Other OpenAI-compatible providers
 
 `Groq`, `DeepSeek`, `Mistral`, `Z.AI`, `xAI`, `OpenRouter`, `Minimax`, `Ollama` — all use the standard OpenAI chat-completions shape. Set:

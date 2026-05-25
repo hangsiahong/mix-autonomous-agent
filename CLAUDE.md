@@ -1,6 +1,6 @@
 # AMA — Autonomous Mix Agent
 
-Telegram bot backed by a bash harness, running Google Vertex AI (Gemini 3 Flash Preview). Default branch: `master`. Valid `PROVIDER=` values (from `core/mix/providers/`): **google, anthropic, openrouter, deepseek, copilot, groq, kconsole, minimax, mistral, ollama, xai, zai**. For Vertex AI: `PROVIDER="google"` + `GOOGLE_MODE="vertex"` (NOT `PROVIDER="vertex"`).
+Telegram bot backed by a bash harness, running Google Vertex AI (Gemini 3 Flash Preview). Default branch: `master`. Valid `PROVIDER=` values (from `core/mix/providers/`): **google, anthropic, openrouter, deepseek, copilot, groq, kconsole, mimo, minimax, mistral, ollama, xai, zai**. For Vertex AI: `PROVIDER="google"` + `GOOGLE_MODE="vertex"` (NOT `PROVIDER="vertex"`).
 
 ## Architecture
 
