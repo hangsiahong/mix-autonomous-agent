@@ -197,8 +197,16 @@ try:
     # 1. Trim trailing orphaned user messages (no assistant reply yet)
     while h and h[-1].get('role') == 'user':
         h.pop()
-    # 2. Trim incomplete tool-call exchanges — Gemini 400s if N function_calls
-    #    in a model turn don't have exactly N function_responses in the next turn.
+    # 2. Repair incomplete tool-call exchanges. Gemini (and most OpenAI-compat
+    #    providers) 400s if N function_calls in an assistant turn aren't
+    #    followed by exactly N function_responses. The /stop case: the agent
+    #    emitted N tool_calls, K results landed before the kill, N-K didn't.
+    #    Old behaviour: drop the assistant turn AND everything after — loses
+    #    the K completed results plus any later queued/recovery work.
+    #    New behaviour: keep the assistant message + every result that did
+    #    land + synthesize cancellation placeholders for the missing
+    #    tool_call_ids. Provider sees N-for-N. Agent sees explicit
+    #    '[Cancelled]' markers next turn so it knows what happened.
     fixed = []
     i = 0
     while i < len(h):
@@ -206,12 +214,33 @@ try:
         if msg.get('role') == 'assistant' and msg.get('tool_calls'):
             n_calls = len(msg['tool_calls'])
             j = i + 1
+            existing_ids = set()
             while j < len(h) and h[j].get('role') == 'tool':
+                tcid = h[j].get('tool_call_id', '')
+                if tcid:
+                    existing_ids.add(tcid)
                 j += 1
-            if (j - i - 1) < n_calls:
-                break  # incomplete exchange — drop it and everything after
-        fixed.append(msg)
-        i += 1
+            # Append the assistant message + every tool result that landed.
+            fixed.append(msg)
+            for k in range(i + 1, j):
+                fixed.append(h[k])
+            # Synthesize a placeholder for every tool_call without a result.
+            for tc in msg['tool_calls']:
+                tcid = tc.get('id', '')
+                if tcid and tcid not in existing_ids:
+                    name = (tc.get('function', {}).get('name', '')
+                            or tc.get('name', '')
+                            or 'unknown')
+                    fixed.append({
+                        'role': 'tool',
+                        'tool_call_id': tcid,
+                        'name': name,
+                        'content': '[Cancelled by /stop or interrupt before this tool completed]',
+                    })
+            i = j
+        else:
+            fixed.append(msg)
+            i += 1
     print(json.dumps(fixed, separators=(',', ':')))
 except Exception as e:
     sys.stderr.write(f'AMA: load_history parse failed: {e} — resetting to []\n')

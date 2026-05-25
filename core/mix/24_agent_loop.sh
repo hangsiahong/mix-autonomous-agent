@@ -85,8 +85,14 @@ run_agent() {
         flock -x 200
         # Store worker PID (this subshell) alongside agent PID so /stop can target it directly
         echo "$_agent_pid|${msg_id}|${chat_id}|${thread_id}|${user_id}|${BASHPID}" > "$pid_file"
-        trap 'pkill -TERM -P $BASHPID 2>/dev/null; rm -f "$stop_btn_file" "$interrupt_input_file" "$pid_file"; exit 0' INT TERM
-        trap 'pkill -TERM -P $BASHPID 2>/dev/null; rm -f "$stop_btn_file" "$interrupt_input_file" "$pid_file"' EXIT
+        # Traps include save_history before pkilling children — defensive
+        # backstop for the SIGKILL-mid-turn race where the per-batch save in
+        # the tool-execution path didn't get to fire. save_history's
+        # empty-HISTORY guard (11_history.sh:147) means an early-trap fire
+        # before HISTORY is populated is a silent no-op, not corruption.
+        # `|| true` keeps the trap body resilient to any save failure.
+        trap 'save_history "$session_id" 2>/dev/null || true; pkill -TERM -P $BASHPID 2>/dev/null; rm -f "$stop_btn_file" "$interrupt_input_file" "$pid_file"; exit 0' INT TERM
+        trap 'save_history "$session_id" 2>/dev/null || true; pkill -TERM -P $BASHPID 2>/dev/null; rm -f "$stop_btn_file" "$interrupt_input_file" "$pid_file"' EXIT
 
         # Stop flag handling (before sending Stop button — avoids flash on immediate exit):
         # - Queued + stop_flag + interrupt_input: Interrupt clicked — B takes over directly
@@ -944,6 +950,16 @@ try:
 except Exception: pass
 " <(printf '%s' "$tool_calls") 2>/dev/null)
                 fi
+
+                # /stop resilience: persist HISTORY after every completed tool
+                # batch so an interrupt or kill mid-turn never costs the user
+                # the work that already finished. Without this, save_history
+                # only fires at line ~1299 (end of turn) — a /stop mid-loop
+                # loses every tool result accumulated this turn. Pair with
+                # the EXIT-trap save (defensive) and the load_history
+                # placeholder synth (which heals the orphaned tool_call from
+                # the in-flight tool that didn't get to land).
+                save_history "$session_id"
 
                 # Cumulative step-log pane (Claude-Code-style) — replaces the prior
                 # "last 4 tool names" block. Shows every completed step in this turn
