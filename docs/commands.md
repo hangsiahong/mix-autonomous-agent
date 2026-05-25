@@ -70,3 +70,24 @@ When your message matches a status-query shape (`how many X`, `list X`, `show me
 2. Has `MAX_TURNS` clamped to 2 for that turn — forces a final answer even if the model tries to over-investigate
 
 Lifted from a real incident where the agent burned 6 tool calls and 96 seconds to answer "how many scheduled tasks?" when 1 call would do.
+
+## Survey-query circuit breaker
+
+Sibling of status-query — for capability / "what can X do" questions where the answer lives in already-loaded context (system prompt, active skill body, MEMORY.md, recaps), not in the codebase.
+
+Matched shapes: `what can X do`, `what does X do`, `tell me about Y`, `how does Z work`, `what (are|is) the (capabilities|features|skills|abilities)`, `what's this <skill|tool|repo|project|file|script|module>`, `what can (you|we|i) do (with|using) X`.
+
+When fired, the agent:
+1. Receives a `SURVEY QUERY` bullet in `context_prompt` telling it to answer in **0 tool calls** when possible (1 if a single authoritative lookup is needed) and NOT to list_files / search_files / read_code to "enumerate capabilities"
+2. Has `MAX_TURNS` clamped to 2
+
+Lifted from a real incident where the agent ran 12 sequential tool calls / 174 seconds to answer "what can the koompi-biz-skill do?" — when the skill prompt was already in its system prompt.
+
+Status takes precedence (both can't fire); heavy-query router (pro-model escalation for opinion questions) only fires when neither status nor survey did.
+
+## Tool-call cascade guards
+
+Two layers protect against over-exploration patterns that survive the breakers above:
+
+- **Fingerprint circuit breaker** — detects the EXACT same tool batch (same tool, same args) repeating across turns. 3rd identical → injects a recovery nudge into the last tool result; 4th identical → hard-stops the loop with `Stuck loop detected`. Use `/retry` to resume.
+- **Idempotent-tool overuse guard** — catches DIFFERENT-arg cascades the fingerprint check misses (`read_code A`, then `read_code B`, then `read_code C` across N turns). Tracks per-agent-run how many TURNS each tracked read-only tool has appeared in; parallel batch in one turn = 1, sequential cascade = N. Soft nudge at 3 turns, strong nudge at 5. No hard-stop — agent keeps agency. Killswitch: `AMA_IDEMPOTENT_GUARD_DISABLED=1`. Tracked: `read_code`, `list_files`, `search_files`, `repo_map`, `fetch_url`, `web_search`, `session_search`, `memory_recall`.

@@ -165,8 +165,22 @@ All background helpers route through **kconsole**, NOT Vertex. The user-facing m
 - `heavy` → `gemini-3.1-pro-preview`
 - Embeddings stay on Vertex via `tools/memory_helper.py:get_embedding()` — do NOT route through kconsole
 
-## Killswitches (for the fidelity passes)
-All fail-open env vars: `AMA_DISTILL_DISABLED` · `AMA_MEM_CRITIC_DISABLED` · `AMA_CITATION_CHECK_DISABLED` · `AMA_MISTAKE_DETECT_DISABLED` · `AMA_VOICE_CHECK_DISABLED` · `AMA_DELEGATE_PREP_DISABLED`. Per-call: `TOOL_skip_prep=1` on `delegate`.
+## Killswitches (for the fidelity + guardrail passes)
+All fail-open env vars: `AMA_DISTILL_DISABLED` · `AMA_MEM_CRITIC_DISABLED` · `AMA_CITATION_CHECK_DISABLED` · `AMA_MISTAKE_DETECT_DISABLED` · `AMA_VOICE_CHECK_DISABLED` · `AMA_DELEGATE_PREP_DISABLED` · `AMA_IDEMPOTENT_GUARD_DISABLED` · `AMA_HEAVY_ROUTER_DISABLED`. Per-call: `TOOL_skip_prep=1` on `delegate`.
+
+## Per-turn input-pattern detectors (in 24_agent_loop.sh, before each turn)
+The user's input is regex-matched against three mutually-exclusive query shapes; whichever fires injects a bullet into `context_prompt` and may clamp `MAX_TURNS` or swap the model:
+- **STATUS QUERY** (`how many X`, `list X`, `show me X`, `what's my X`, `is X running`, `count X`) → `MAX_TURNS=2` + "1 tool call, trust the result" nudge.
+- **SURVEY QUERY** (`what can X do`, `what does X do`, `tell me about Y`, `how does Z work`, `what (are|is) the (capabilities|features|skills|abilities)`, `what's this <skill|tool|repo|...>`) → `MAX_TURNS=2` + "answer from already-loaded context, 0 tool calls expected" nudge.
+- **HEAVY QUERY** (opinion / rate / "is X a mistake" / "should we rewrite") → escalate to a pro model (per `brain/tier_routing.json` `heavy_upgrade_map`) + apply Critical Reasoning Discipline.
+
+Status takes precedence over survey; heavy only fires when neither status nor survey did.
 
 ## Post-batch hooks (in 24_agent_loop.sh, after tool execution)
-Order: file-mutation verifier footer → steer drain → fingerprint-circuit-breaker. All three mutate the last tool result in HISTORY before the next API call.
+Order: file-mutation verifier footer → steer drain → fingerprint-circuit-breaker → idempotent-tool overuse guard. All four mutate the last tool result in HISTORY before the next API call.
+
+- **fingerprint-circuit-breaker** is 2-stage: 3rd identical batch → recovery nudge into last tool result ("STOP retrying with identical args; try different approach / answer / clarify"); 4th identical → hard-stop the loop.
+- **idempotent-tool overuse guard** counts how many TURNS each tracked read-only tool (`read_code`, `list_files`, `search_files`, `repo_map`, `fetch_url`, `web_search`, `session_search`, `memory_recall`) has appeared in. Parallel batch in one turn counts as 1 (batching is rewarded); sequential cascade counts as N. Soft nudge at 3, strong nudge at 5, no hard-stop. Killswitch: `AMA_IDEMPOTENT_GUARD_DISABLED=1`.
+
+## Final render (24_agent_loop.sh, success branch)
+Composition: `answer body  →  <tg-spoiler>narration + step list</tg-spoiler>  →  1-line footer`. The 📝 narration and ✓ tool steps are preserved behind a Telegram spoiler so the answer reads clean by default and curious users can tap to drill down. Failure / stop / budget branches keep the trail visible (debugging needs context). The `<blockquote>` wrap around narration is stripped before spoiler-wrapping — block-inside-inline nesting is fragile in Telegram's HTML parser.

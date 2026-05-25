@@ -47,7 +47,7 @@ Full setup (Docker, pm2, OAuth providers, troubleshooting) → [docs/setup.md](d
 |---|---|
 | [docs/architecture.md](docs/architecture.md) | Turn flow, component map, state files, design choices |
 | [docs/setup.md](docs/setup.md) | Detailed install + config + Docker + pm2 + troubleshooting |
-| [docs/commands.md](docs/commands.md) | Every `/slash` command, reaction emojis, status-query circuit breaker |
+| [docs/commands.md](docs/commands.md) | Every `/slash` command, reaction emojis, query-pattern circuit breakers (status / survey / heavy), tool-call cascade guards |
 | [docs/providers.md](docs/providers.md) | Per-provider config, provider pool, error taxonomy |
 | [docs/skills.md](docs/skills.md) | Auto-router, frontmatter schema, authoring guide |
 | [docs/self_improvement.md](docs/self_improvement.md) | Curator, `/goal`, `/btw`, scheduler, self-healing |
