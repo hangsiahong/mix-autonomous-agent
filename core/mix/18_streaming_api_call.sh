@@ -214,7 +214,14 @@ while _stream_attempt < MAX_STREAM_ATTEMPTS:
             if "usage" in data:
                 usage = data["usage"]
 
-            delta = data.get("choices", [{}])[0].get("delta", {})
+            # Mimo emits a final usage-only chunk with `choices: []`. The
+            # `[{}]` default in .get() does NOT trigger when the key IS
+            # present, so [0] would throw IndexError and force a needless
+            # retry that doubled the API cost. Skip empty-choices frames.
+            choices = data.get("choices") or []
+            if not choices:
+                continue
+            delta = (choices[0] or {}).get("delta") or {}
 
             if "thought" in delta and delta["thought"]:
                 if not thought_active:
@@ -242,7 +249,11 @@ while _stream_attempt < MAX_STREAM_ATTEMPTS:
                     thought_active = False
                 content += delta["content"]
 
-            if "tool_calls" in delta:
+            # delta.get(): mimo sends "tool_calls": null in every chunk (even
+            # ones that just carry content/reasoning). Plain `in delta` would
+            # then crash on `for tc in None`, which is why mimo streams used to
+            # bail on the very first chunk and surface as "No response generated".
+            if delta.get("tool_calls"):
                 if thought_active:
                     content += "</think>"
                     thought_active = False
