@@ -1191,8 +1191,21 @@ if raw:
 print('\n'.join(out))
 " 2>/dev/null)
                 local _footer="<i>╴ ${total_tool_calls} tool$([[ $total_tool_calls -ne 1 ]] && echo 's') · ${footer_parts}${_tok_str}${_elapsed_str}</i>"
+                # Final-render order: ANSWER → collapsed trail spoiler → footer.
+                # The narration + step list is preserved (drill-down for the
+                # curious) but tucked behind <tg-spoiler> so the answer reads
+                # clean by default. During the run the trail is still visible
+                # in the between-turn pane; only the final edit collapses it.
+                # Strip the <blockquote> wrapper around narration before
+                # spoiler-wrapping — block-inside-inline nesting is fragile in
+                # Telegram's HTML parser, and the spoiler collapse already
+                # provides the visual containment blockquote was giving.
                 local _full_html="$_rendered_text"
-                [[ -n "$_step_pane" ]] && _full_html="${_step_pane}"$'\n\n'"${_full_html}"
+                if [[ -n "$_step_pane" ]]; then
+                    local _step_pane_flat="${_step_pane//<blockquote>/}"
+                    _step_pane_flat="${_step_pane_flat//<\/blockquote>/}"
+                    _full_html="${_full_html}"$'\n\n'"<tg-spoiler>${_step_pane_flat}</tg-spoiler>"
+                fi
                 _full_html="${_full_html}"$'\n\n'"${_footer}"
                 [[ -n "$_ctx_warn" ]] && _full_html+=$'\n'"${_ctx_warn}"
                 tg_edit_safe "$chat_id" "$msg_id" "$_full_html" "HTML" "$thread_id"
