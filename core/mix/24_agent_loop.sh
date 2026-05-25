@@ -91,8 +91,17 @@ run_agent() {
         # empty-HISTORY guard (11_history.sh:147) means an early-trap fire
         # before HISTORY is populated is a silent no-op, not corruption.
         # `|| true` keeps the trap body resilient to any save failure.
-        trap 'save_history "$session_id" 2>/dev/null || true; pkill -TERM -P $BASHPID 2>/dev/null; rm -f "$stop_btn_file" "$interrupt_input_file" "$pid_file"; exit 0' INT TERM
-        trap 'save_history "$session_id" 2>/dev/null || true; pkill -TERM -P $BASHPID 2>/dev/null; rm -f "$stop_btn_file" "$interrupt_input_file" "$pid_file"' EXIT
+        #
+        # CRITICAL: do NOT rm "$interrupt_input_file" here. That file is
+        # owned by the QUEUED agent B (which writes it at line 58 before
+        # blocking on the flock). When A dies via Interrupt, A's trap firing
+        # would wipe B's pending text before B can read it — B then wakes,
+        # sees stop_flag but no interrupt_input_file, and exits with
+        # "Stopped" instead of taking over. The file's lifecycle belongs
+        # to B's interrupt-detection path (cleared at line 104 after
+        # successful takeover) or to the next agent's overwrite at line 58.
+        trap 'save_history "$session_id" 2>/dev/null || true; pkill -TERM -P $BASHPID 2>/dev/null; rm -f "$stop_btn_file" "$pid_file"; exit 0' INT TERM
+        trap 'save_history "$session_id" 2>/dev/null || true; pkill -TERM -P $BASHPID 2>/dev/null; rm -f "$stop_btn_file" "$pid_file"' EXIT
 
         # Stop flag handling (before sending Stop button — avoids flash on immediate exit):
         # - Queued + stop_flag + interrupt_input: Interrupt clicked — B takes over directly
