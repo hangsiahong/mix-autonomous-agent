@@ -187,6 +187,7 @@ while _stream_attempt < MAX_STREAM_ATTEMPTS:
         tool_calls = {}
         usage = None
         last_update = time.time()
+        _think_text = ""
 
     try:
       with requests.post(url, json=payload, headers=headers, stream=True, timeout=60) as r:
@@ -221,6 +222,19 @@ while _stream_attempt < MAX_STREAM_ATTEMPTS:
                     thought_active = True
                 content += delta["thought"]
                 _think_text += delta["thought"]
+
+            # DeepSeek R1 / Xiaomi MiMo / Qwen thinking — chain-of-thought
+            # arrives in `reasoning_content`, not `thought` or `content`.
+            # Treat it like thinking for live display, and fall back to it as
+            # the visible reply at finalization if `content` ends up empty
+            # (mimo thinking models often emit reasoning-only with no
+            # final content, which used to render as "No response generated").
+            if "reasoning_content" in delta and delta["reasoning_content"]:
+                if not thought_active:
+                    content += "<think>"
+                    thought_active = True
+                content += delta["reasoning_content"]
+                _think_text += delta["reasoning_content"]
 
             if "content" in delta and delta["content"]:
                 if thought_active:
@@ -275,8 +289,60 @@ while _stream_attempt < MAX_STREAM_ATTEMPTS:
 
 _typing_stop.set()
 
+# Empty-stream non-stream fallback: when the upstream returns HTTP 200 but
+# delivers no useful tokens (mimo cluster rate-limiting symptoms — only SSE
+# keep-alive comments and a [DONE], or a silent close), retry the same
+# request with stream=false so the server queues it and replies in one shot
+# instead of dribbling tokens that never arrive. Without this the user sees
+# the misleading "No response generated (model may have only produced
+# internal reasoning)" even though the model never spoke.
+if _stream_success and not content.strip() and not tool_calls:
+    try:
+        ns_payload = dict(payload); ns_payload["stream"] = False
+        nr = requests.post(url, json=ns_payload, headers=headers, timeout=120)
+        if nr.status_code == 200:
+            nd = nr.json()
+            choices = nd.get("choices") or []
+            if choices:
+                msg = choices[0].get("message") or {}
+                nc  = msg.get("content") or ""
+                nrc = msg.get("reasoning_content") or ""
+                ntc = msg.get("tool_calls") or []
+                if nc.strip():
+                    content = nc
+                elif nrc.strip():
+                    # Treat as silent thinking — the reasoning-only fallback
+                    # below will then surface it as the visible reply.
+                    content = ""
+                    _think_text = nrc
+                for i, tc in enumerate(ntc):
+                    fn = tc.get("function") or {}
+                    tool_calls[i] = {
+                        "id": tc.get("id", ""),
+                        "type": tc.get("type", "function"),
+                        "function": {"name": fn.get("name",""), "arguments": fn.get("arguments","")},
+                        "thought_signature": "",
+                    }
+                if nd.get("usage"):
+                    usage = nd["usage"]
+                sys.stderr.write(f"DBG18: stream-empty → no-stream fallback ok: content_len={len(content)} reason_len={len(_think_text)} tcs={len(tool_calls)}\n")
+            else:
+                sys.stderr.write(f"DBG18: no-stream fallback: response had no choices\n")
+        else:
+            sys.stderr.write(f"DBG18: no-stream fallback HTTP {nr.status_code}: {nr.text[:300]}\n")
+    except Exception as e:
+        sys.stderr.write(f"DBG18: no-stream fallback exception: {e}\n")
+
 # Final update
 clean_final = re.sub(r"<(think|thinking|reasoning|thought|memory-context)>.*?(</\1>|$)", "", content, flags=re.DOTALL | re.IGNORECASE)
+# Reasoning-only fallback: providers like Xiaomi MiMo and DeepSeek R1 often
+# return a long chain-of-thought in `reasoning_content` and then close the
+# response with no `content` at all. Without this fallback the user sees
+# "No response generated" even though the model produced plenty of useful
+# text — surface the reasoning as the reply when there is nothing else.
+if not clean_final.strip() and not tool_calls and _think_text.strip():
+    clean_final = _think_text
+    content = _think_text  # so the TEXT: line below carries the reply into history
 sys.stderr.write(f"DBG18: content_len={len(content)} clean_final_len={len(clean_final.strip())} msg_id={message_id} chat_id={chat_id}\n")
 if tool_calls:
     update_tg(_build_display(clean_final, tool_calls))

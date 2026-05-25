@@ -658,8 +658,13 @@ open(sys.argv[1],'w').write(json.dumps(d, separators=(',',':')))" "$_gfile" 2>/d
                 fi
                 # End session in SQLite DB (hermes: end_reason="reset")
                 ( python3 tools/session_db.py end "$session_id" "reset" > /dev/null 2>&1 & )
-                # Clear session-level overrides on reset
-                rm -f "${DIR}/brain/state/model_${session_id}" \
+                # Clear session-level overrides on reset. provider_<sid> and
+                # model_<sid> must be cleared together — leaving one without
+                # the other desyncs the next turn (e.g. provider=mimo but
+                # MODEL still pointing at the Gemini default from .env, which
+                # mimo's endpoint rejects with "Not supported model …").
+                rm -f "${DIR}/brain/state/provider_${session_id}" \
+                      "${DIR}/brain/state/model_${session_id}" \
                       "${DIR}/brain/state/steer_${session_id}" \
                       "${DIR}/brain/state/queue_${session_id}" \
                       "${DIR}/brain/state/active_skill_${session_id}" \

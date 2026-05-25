@@ -80,6 +80,9 @@ SESSION_LEFTOVERS = [
     ("clarify_*.json",            r"clarify_(.+)\.json"),
     ("active_tools_*.json",       r"active_tools_(.+)\.json"),
     ("prefetch_*",                r"prefetch_(.+)"),
+    # provider_<sid> and model_<sid> are paired — sweep together so we never
+    # leave one without the other (the desync rejects every turn at the API).
+    ("provider_*",                r"provider_(.+)"),
     ("model_*",                   r"model_(.+)"),
     ("queue_*",                   r"queue_(.+)"),
     ("steer_*",                   r"steer_(.+)"),
@@ -201,19 +204,40 @@ def sweep_state(rep: Report, dry: bool) -> None:
         return
     cutoff = time.time() - TTL_STATE_DAYS * 86400
 
-    # Build session activity index: sid → most-recent mtime across history files
+    # Build session activity index: sid → most-recent mtime across history
+    # files. Two locations:
+    #   brain/state/history_<sid>.json           — the LIVE file (exists only
+    #                                              while the session has not
+    #                                              been /reset since last use)
+    #   brain/state/sessions/history_<sid>_<ts>.json — archives written by
+    #                                              /reset|/new (router.sh)
+    # Without scanning the archive dir, sessions that were /new'd at least
+    # once look orphaned and every per-session sidecar gets nuked on the next
+    # cron tick — which is exactly how mimo lost its model override.
     sid_mtime: dict[str, float] = {}
-    for hf in state_dir.glob("history_*.json"):
-        m = re.match(r"history_(.+)\.json$", hf.name)
-        if not m:
-            continue
-        sid = m.group(1)
+
+    def _note_mtime(sid: str, path: Path) -> None:
         try:
-            mt = hf.stat().st_mtime
+            mt = path.stat().st_mtime
             if mt > sid_mtime.get(sid, 0):
                 sid_mtime[sid] = mt
         except Exception:
             pass
+
+    for hf in state_dir.glob("history_*.json"):
+        m = re.match(r"history_(.+)\.json$", hf.name)
+        if m:
+            _note_mtime(m.group(1), hf)
+
+    archive_dir = state_dir / "sessions"
+    if archive_dir.is_dir():
+        # archived names look like history_<sid>_<unix_ts>.json — strip the ts
+        # so a /new'd session still counts as activity for its base sid.
+        archive_re = re.compile(r"history_(.+)_\d+\.json$")
+        for hf in archive_dir.glob("history_*.json"):
+            m = archive_re.match(hf.name)
+            if m:
+                _note_mtime(m.group(1), hf)
 
     removed = 0
     bytes_freed = 0
