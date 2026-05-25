@@ -861,14 +861,32 @@ print(json.dumps(h, separators=(',',':')))
                     fi
                 fi
 
-                # Circuit breaker: if the exact same tool-call batch repeats 3× in a row,
-                # the LLM is stuck — stop early instead of burning the rest of MAX_TURNS.
+                # Circuit breaker: identical tool-call batch repeats.
+                # Two-stage: nudge at 3rd identical call (give the model one
+                # turn to recover), hard-stop at 4th. Previously hard-stopped
+                # at 3rd, which killed transient stuck patterns the model
+                # would have recovered from on its own with a hint.
                 local _tc_fp; _tc_fp=$(printf '%s' "$tool_calls" | md5sum 2>/dev/null | cut -c1-8)
                 if [[ "$_tc_fp" == "$_last_tc_fingerprint" && -n "$_tc_fp" ]]; then
                     _tc_repeat_count=$((_tc_repeat_count + 1))
-                    if [[ $_tc_repeat_count -ge 2 ]]; then
+                    if [[ $_tc_repeat_count -eq 2 ]]; then
+                        # 3rd identical call — nudge into the last tool result.
+                        # The next API call sees it and (usually) changes course.
+                        local _fp_nudge=$'\n[SYSTEM: You just made the EXACT same tool call as the previous turn (same tool, same args). The result has not changed. STOP retrying with identical args. Either (a) try a DIFFERENT approach — different tool, different args, different angle, (b) answer from what you already have, or (c) call `clarify` to ask the user. One more identical call will hard-stop this turn.]'
+                        HISTORY=$(NUDGE_TEXT="$_fp_nudge" python3 -c "
+import json, os, sys
+h = json.loads(open(sys.argv[1]).read())
+nudge = os.environ['NUDGE_TEXT']
+for i in range(len(h)-1, -1, -1):
+    if h[i].get('role') == 'tool':
+        h[i]['content'] = str(h[i].get('content','')) + nudge
+        break
+print(json.dumps(h, separators=(',',':')))
+" <(printf '%s' "$HISTORY") 2>/dev/null || printf '%s' "$HISTORY")
+                    elif [[ $_tc_repeat_count -ge 3 ]]; then
+                        # 4th identical call — ignored the nudge. Hard-stop.
                         tg_edit "$chat_id" "$msg_id" \
-                            "⚠️ <i>Stuck loop detected — same tool call repeated 3× in a row. Stopping early to save tokens. Use /retry if needed.</i>" \
+                            "⚠️ <i>Stuck loop detected — same tool call repeated 4× in a row, including after a recovery nudge. Stopping early to save tokens. Use /retry if needed.</i>" \
                             "HTML" > /dev/null 2>&1 || true
                         loop_completed=false
                         break
