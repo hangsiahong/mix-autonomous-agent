@@ -609,6 +609,12 @@ except: print(); print(); print()" "$_override_file" 2>/dev/null)
         local _thought_snippet=""  # persists across turns — shows last known reasoning
         local _last_tc_fingerprint=""
         local _tc_repeat_count=0
+        # Per-run tally of how many TURNS each read-only tool appeared in.
+        # A parallel batch of 8 reads in one turn = 1 (good — batching).
+        # Sequential 8-turn cascade = 8 (bad — what we're nudging against).
+        # Used by the idempotent-tool overuse guard below the fingerprint
+        # circuit breaker. Killswitch: AMA_IDEMPOTENT_GUARD_DISABLED=1.
+        local -A _ro_turn_counts=()
         # Persistent step log for the whole agent turn (Claude-Code-style cumulative pane).
         # Lines separated by \x1e (RS); each line = "<emoji>|<name>|<key_arg>|<duration_s>"
         local _steps_log=""
@@ -870,6 +876,55 @@ print(json.dumps(h, separators=(',',':')))
                 else
                     _tc_repeat_count=0
                     _last_tc_fingerprint="$_tc_fp"
+                fi
+
+                # Idempotent-tool overuse guard (hermes-style, AMA-adapted).
+                # The fingerprint check above only catches identical-batch
+                # repeats. This catches DIFFERENT-arg cascades of the same
+                # read-only tool (read_code A, then B, then C across N turns)
+                # — the koompi-biz-skill 174s / 12-call exploration pattern.
+                # Metric: turns each tool appeared in. Parallel batch in one
+                # turn counts as 1; sequential cascade counts as N. Soft nudge
+                # at 3, strong nudge at 5. No hard-stop — agent keeps agency.
+                if [[ "${AMA_IDEMPOTENT_GUARD_DISABLED:-0}" != "1" ]]; then
+                    local _ro_seen_this_turn=","
+                    while IFS= read -r _ro_name; do
+                        [[ -z "$_ro_name" ]] && continue
+                        case "$_ro_name" in
+                            read_code|list_files|search_files|repo_map|fetch_url|web_search|session_search|memory_recall) ;;
+                            *) continue ;;
+                        esac
+                        # Count each tool at most once per turn — parallel batches don't get punished.
+                        [[ "$_ro_seen_this_turn" == *",$_ro_name,"* ]] && continue
+                        _ro_seen_this_turn+="$_ro_name,"
+                        _ro_turn_counts[$_ro_name]=$((${_ro_turn_counts[$_ro_name]:-0} + 1))
+                        local _ron=${_ro_turn_counts[$_ro_name]}
+                        local _ro_nudge=""
+                        if [[ $_ron -eq 3 ]]; then
+                            _ro_nudge=$'\n[SYSTEM: You\'ve now called `'"$_ro_name"$'` across 3 separate turns this run. If you have more queued, BATCH them in one response (the harness runs them in parallel). If you have enough context, ANSWER NOW. Sequential per-turn calls cost ~10s of round-trip each — batching is ~10s total.]'
+                        elif [[ $_ron -ge 5 ]]; then
+                            _ro_nudge=$'\n[SYSTEM: '"$_ron"$' turns of sequential `'"$_ro_name"$'` calls — this is the cascade pattern. STOP exploring. Either (a) answer from what you already have, (b) call `clarify` to ask the user what they actually want, or (c) batch any remaining reads in ONE final response. Do NOT make another isolated `'"$_ro_name"$'` call.]'
+                        fi
+                        if [[ -n "$_ro_nudge" ]]; then
+                            HISTORY=$(NUDGE_TEXT="$_ro_nudge" python3 -c "
+import json, os, sys
+h = json.loads(open(sys.argv[1]).read())
+nudge = os.environ['NUDGE_TEXT']
+for i in range(len(h)-1, -1, -1):
+    if h[i].get('role') == 'tool':
+        h[i]['content'] = str(h[i].get('content','')) + nudge
+        break
+print(json.dumps(h, separators=(',',':')))
+" <(printf '%s' "$HISTORY") 2>/dev/null || printf '%s' "$HISTORY")
+                        fi
+                    done < <(python3 -c "
+import json, sys
+try:
+    for tc in json.loads(open(sys.argv[1]).read()):
+        n = tc.get('function',{}).get('name','') or tc.get('name','')
+        if n: print(n)
+except Exception: pass
+" <(printf '%s' "$tool_calls") 2>/dev/null)
                 fi
 
                 # Cumulative step-log pane (Claude-Code-style) — replaces the prior
