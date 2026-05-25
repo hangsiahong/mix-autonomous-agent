@@ -369,7 +369,7 @@ except Exception:
         # The patterns are intentionally simple — false positives just mean
         # the agent has to answer in 2 turns instead of MAX_TURNS, which is
         # fine for genuinely simple queries that happen to use these words.
-        local _status_query=0
+        local _status_query=0 _survey_query=0
         if [[ "$input" =~ ^[Hh]ow\ (many|much)\  ]] || \
            [[ "$input" =~ ^[Ll]ist\  ]] || \
            [[ "$input" =~ ^[Ss]how\ (me\ )? ]] || \
@@ -380,6 +380,27 @@ except Exception:
             _status_query=1
             MAX_TURNS=2
             context_prompt+="- **STATUS QUERY** (detected from input pattern): answer in **1 tool call** and reply. Do NOT verify with bash/ls/cat after the authoritative tool returns. Trust the result. MAX_TURNS clamped to 2 — second turn must produce final answer.\n"
+        fi
+
+        # Survey-query circuit breaker. Questions like "what can X do?",
+        # "tell me about Y", "how does Z work" are answerable from
+        # already-loaded context (system prompt, active skill body, MEMORY.md,
+        # USER.md, recaps) without exploring the codebase. The koompi-biz-skill
+        # incident (174s / 12 tool calls for "what can we do with it") showed
+        # the agent treats capability questions as research projects by
+        # default. Same enforcement as status-query: prompt nudge + clamp.
+        # Status takes precedence — survey only fires when status didn't.
+        if [[ "$_status_query" -eq 0 ]]; then
+            if [[ "$input" =~ ^[Ww]hat\ (can|does)\ .+\ do ]] || \
+               [[ "$input" =~ ^[Tt]ell\ me\ (about|what) ]] || \
+               [[ "$input" =~ ^[Ww]hat\ (are|is)\ (the\ |your\ )?(capabilit|feature|tool|skill|abilit) ]] || \
+               [[ "$input" =~ ^[Hh]ow\ does\ .+\ work ]] || \
+               [[ "$input" =~ ^[Ww]hat.{0,3}s\ this\ (skill|tool|repo|project|file|script|module) ]] || \
+               [[ "$input" =~ ^[Ww]hat\ (can|could)\ (you|we|i)\ do\ (with|using)\  ]]; then
+                _survey_query=1
+                MAX_TURNS=2
+                context_prompt+="- **SURVEY QUERY** (detected): the answer lives in your already-loaded context — system prompt, active skill body, ## My Notes, ## About the User, recent recaps. Answer in **0 tool calls** when possible (1 if you need a single authoritative lookup). Do NOT list_files, search_files, grep, or read_code to 'enumerate capabilities' — that content is already in front of you. Only investigate the codebase if the user explicitly says 'go read', 'check the code', 'investigate', etc. MAX_TURNS clamped to 2.\n"
+            fi
         fi
 
         # Heavy-query router: questions that need real reasoning depth (opinion,
@@ -393,7 +414,7 @@ except Exception:
         #   3. else, no-op (user stays on whatever they configured)
         # Status-query and heavy-query are mutually exclusive in practice; if
         # both somehow fire, status takes precedence (already set above).
-        if [[ "$_status_query" -eq 0 && "${AMA_HEAVY_ROUTER_DISABLED:-0}" != "1" ]]; then
+        if [[ "$_status_query" -eq 0 && "$_survey_query" -eq 0 && "${AMA_HEAVY_ROUTER_DISABLED:-0}" != "1" ]]; then
             local _heavy_query=0
             if [[ "$input" =~ [Ww]hat\ (do|would)\ you\ think ]] || \
                [[ "$input" =~ [Yy]our\ (thoughts?|opinion|take|view|verdict|assessment) ]] || \
