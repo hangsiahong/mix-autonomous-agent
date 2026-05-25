@@ -246,8 +246,11 @@ def cmd_body(name):
 
 
 def cmd_active_note(name):
-    """One-line note for the system prompt when a skill is bound.
-    Replaces the full skill index (which is unnecessary noise once routed)."""
+    """Activation banner for the system prompt when a skill is bound.
+    Replaces the full skill index (which is unnecessary noise once routed)
+    AND tells the agent the body is already loaded — preventing the common
+    failure where the agent list_files / re-reads prompt.md to "discover"
+    capabilities it already has in context."""
     brain, core = _skill_paths(name)
     if not (brain or core):
         return
@@ -256,6 +259,15 @@ def cmd_active_note(name):
     print(f"## Active Skill: {name}")
     if desc:
         print(desc)
+    print(
+        f'[The full "{name}" skill body is loaded in this system prompt below. '
+        "Treat it as authoritative and current — do NOT list_files the skill "
+        "directory, grep for keywords, or re-read prompt.md to answer "
+        '"what can it do" / capability-survey questions. Summarize directly '
+        "from the body you already have. Only read sub-files (e.g. "
+        "skills/<area>/<topic>.md) when EXECUTING a specific task that the "
+        "skill body's router explicitly points to.]"
+    )
     print('To switch skill: skill_manager(action=bind, name="<other>"). To unbind: skill_manager(action=unbind).')
 
 
