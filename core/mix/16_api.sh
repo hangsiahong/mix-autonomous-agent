@@ -385,6 +385,18 @@ print(json.dumps(a + b, separators=(',', ':')))" <(printf '%s' "$skill_tools") <
     if [[ -n "$skill_prompt" ]]; then
         system_prompt="${system_prompt}\n\n## ACTIVE SKILL: ${skill}\n${skill_prompt}"
     fi
+
+    # Provider-specific system-prompt suffix (extension point for per-model
+    # behavior nudges). e.g. mimo_system_prompt_suffix tells mimo to call
+    # tools instead of narrating intent — its default tool_choice=auto
+    # discipline is weak and it tends to reply "I'll write it now" and stop
+    # without ever emitting the tool_call delta. Other providers can hook
+    # in too by defining `${PROVIDER}_system_prompt_suffix` in their .sh.
+    if [ "$PROVIDER" != "default" ] && type "${PROVIDER}_system_prompt_suffix" >/dev/null 2>&1; then
+        local _prov_suffix
+        _prov_suffix=$(${PROVIDER}_system_prompt_suffix 2>/dev/null) || true
+        [[ -n "$_prov_suffix" ]] && system_prompt="${system_prompt}\n\n${_prov_suffix}"
+    fi
     # If skill_tools contains "_enabled_toolsets", pull in additional toolsets from all_tools
     if [[ "$skill_tools" != "[]" ]]; then
         local _extra_ts
