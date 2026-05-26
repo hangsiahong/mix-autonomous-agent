@@ -22,6 +22,7 @@
 #   • Per-file syntax check (.sh/.py/.json) gates each write.
 
 set -u
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_lib/err_trap.sh"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 

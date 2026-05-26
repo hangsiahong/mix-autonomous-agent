@@ -57,9 +57,18 @@ for k, v in d.items():
     export TOOL_THREAD_ID="$thread_id"
     export TOOL_SESSION_ID="${AMA_SESSION_ID:-${chat_id}${thread_id:+_${thread_id}}}"
     
-    local output
-    output=$(bash "$script" 2>&1)
-    local status=$?
+    local output status
+    # Prefer in-shell function dispatch when a tools/_fn/<name>.fn.sh defined
+    # tool_<name>; $() still forks but skips the bash exec + script load.
+    # Falls through to subprocess for python tools, custom tools, and any
+    # bash tool that hasn't been converted yet.
+    if declare -F "tool_${name}" >/dev/null 2>&1; then
+        output=$("tool_${name}" 2>&1)
+        status=$?
+    else
+        output=$(bash "$script" 2>&1)
+        status=$?
+    fi
     
     # Unset
     eval "$(echo "$args" | python3 -c "

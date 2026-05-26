@@ -27,6 +27,37 @@ compress_history() {
         return
     fi
 
+    # Anti-thrash guard (hermes-style): if the last two auto-compressions
+    # each saved <10% of tokens, summarization has hit diminishing returns.
+    # Likely cause: history is dominated by recent verbatim content
+    # (KEEP_LAST_N) that the summarizer can't touch. Skip auto-compress and
+    # surface the limit to the user instead of looping into another expensive
+    # API call that won't help.
+    local _ct_state="brain/state/compression_history_${session_id}.json"
+    if [[ -f "$_ct_state" ]]; then
+        local _thrash; _thrash=$(python3 -c "
+import json, sys
+try:
+    d = json.loads(open(sys.argv[1]).read())
+    ratios = d.get('ratios', [])
+    if len(ratios) >= 2 and ratios[-1] < 0.10 and ratios[-2] < 0.10:
+        print('1')
+    else:
+        print('0')
+except Exception:
+    print('0')
+" "$_ct_state" 2>/dev/null)
+        if [[ "$_thrash" == "1" ]]; then
+            echo "AMA: Compression skipped — last 2 compressions each saved <10%. Surfacing to user."
+            if [[ -n "$chat_id" && -n "$msg_id" ]]; then
+                tg_send "$chat_id" "🪨 <i>Context is dense — recent compressions barely shrunk it. Consider <code>/new</code> for a fresh session, or trim manually with <code>/undo</code>.</i>" "$thread_id" "HTML" 2>/dev/null || true
+                tg_edit "$chat_id" "$msg_id" "⏳ Thinking..." "" 2>/dev/null || true
+            fi
+            return
+        fi
+    fi
+    local _ct_tokens_before="$rough_tokens"
+
     echo "AMA: Compressing context for session $session_id ($count msgs)..."
 
     # Notify user in Telegram that compression is happening
@@ -164,7 +195,7 @@ $middle_msgs"
     printf '[]' > brain/tools.json
 
     # Write summary_prompt to a tempfile to handle large content and special chars safely
-    local _sp_tmp; _sp_tmp=$(mktemp)
+    local _sp_tmp; _sp_tmp=$(_ama_mktemp)
     printf '%s' "$summary_prompt" > "$_sp_tmp"
     local _new_hist
     _new_hist=$(python3 - "$_sp_tmp" <<'PYEOF' 2>/dev/null
@@ -281,6 +312,31 @@ print(json.dumps(fp + [sm] + lp, separators=(',', ':')))
 
     echo "AMA: Context compressed successfully."
     save_history "$session_id"
+
+    # Record savings ratio so the anti-thrash guard above can detect when
+    # compression has hit diminishing returns. State is per-session JSON
+    # with a capped ring of the last 5 ratios.
+    local _ct_tokens_after
+    _ct_tokens_after=$(printf '%s' "$HISTORY" | python3 tools/token_counter.py check "${MODEL:-}" 2>/dev/null | head -1)
+    _ct_tokens_after=${_ct_tokens_after:-0}
+    BEFORE="$_ct_tokens_before" AFTER="$_ct_tokens_after" STATE="$_ct_state" python3 -c '
+import os, json, sys
+before = max(int(os.environ.get("BEFORE","0") or 0), 1)
+after  = int(os.environ.get("AFTER","0") or 0)
+ratio  = max(0.0, (before - after) / before)
+path   = os.environ["STATE"]
+try:
+    d = json.loads(open(path).read())
+except Exception:
+    d = {}
+ratios = d.get("ratios", [])
+ratios.append(round(ratio, 4))
+ratios = ratios[-5:]
+d["ratios"] = ratios
+tmp = path + ".tmp"
+open(tmp, "w").write(json.dumps(d))
+os.replace(tmp, path)
+' 2>/dev/null || true
 
     # Record compression lineage in SQLite (hermes parent_session_id pattern)
     # Create a new session ID for the post-compression context, link to old one

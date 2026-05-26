@@ -516,9 +516,9 @@ for msg in reversed(h):
 
   # Write large blobs to tempfiles to avoid ARG_MAX / env-size limits.
   local _hist_file _sys_file _mem_file
-  _hist_file=$(mktemp)
-  _sys_file=$(mktemp)
-  _mem_file=$(mktemp)
+  _hist_file=$(_ama_mktemp)
+  _sys_file=$(_ama_mktemp)
+  _mem_file=$(_ama_mktemp)
   printf '%s' "$_hist_for_api" > "$_hist_file"
   printf '%s' "$system_prompt" > "$_sys_file"
   printf '%s' "$_mem_prefetch" > "$_mem_file"
@@ -699,7 +699,7 @@ for k,v in json.loads(open(sys.argv[1]).read()).items():
         done <<< "$_extra_pairs"
       fi
 
-      local tmp; tmp=$(mktemp)
+      local tmp; tmp=$(_ama_mktemp)
       local code
       local curl_err=0
       code=$(curl "${_curl_args[@]}" -o "$tmp" -d "$payload" 2>/dev/null) || curl_err=$?
@@ -729,6 +729,14 @@ print(d.get('action','retry_after_delay'))
       local reason retryable should_compress action
       IFS=$'\n' read -r reason retryable should_compress action <<< "$_cls_parsed"
 
+      # Parse a provider-supplied Retry-After hint from the response body
+      # so we don't lock out the pool entry for the hardcoded 60s when the
+      # provider told us 5s — or, worse, retry into a 5-minute cooldown.
+      # Defaults to 60 if nothing is parseable.
+      local _ra_secs
+      _ra_secs=$(printf '%s' "$body" | python3 tools/retry_after.py 2>/dev/null)
+      _ra_secs=${_ra_secs:-60}
+
       # Dispatch on the classified action — see core/mix/34_error_classifier.sh
       # header comment for the full matrix.
       case "$action" in
@@ -736,14 +744,18 @@ print(d.get('action','retry_after_delay'))
               # Mark current pool entry limited so pool_apply picks a different one
               # next iteration. Also record provider/model rate-limit so we don't
               # keep hammering it across separate run_agent invocations.
-              pool_mark_limited "${_POOL_IDX:-}" 120
-              mark_rate_limited "$PROVIDER" "$MODEL" 60
+              # Pool gets a longer hold (2× provider hint, min 120s) to keep
+              # rotation favouring fresher entries.
+              local _pool_secs=$(( _ra_secs * 2 ))
+              (( _pool_secs < 120 )) && _pool_secs=120
+              pool_mark_limited "${_POOL_IDX:-}" "$_pool_secs"
+              mark_rate_limited "$PROVIDER" "$MODEL" "$_ra_secs"
               ;;
           retry_after_delay)
               # rate_limit / server_error / timeout
               if [[ "$reason" == "rate_limit" ]]; then
-                  mark_rate_limited "$PROVIDER" "$MODEL" 60
-                  pool_mark_limited "${_POOL_IDX:-}" 60
+                  mark_rate_limited "$PROVIDER" "$MODEL" "$_ra_secs"
+                  pool_mark_limited "${_POOL_IDX:-}" "$_ra_secs"
               fi
               ;;
           switch_model)

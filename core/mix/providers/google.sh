@@ -432,8 +432,8 @@ google_call_api() {
   # This script handles multi-modal array content and tool calls.
   # Write large blobs to tempfiles to avoid ARG_MAX / env-size limits.
   local _g_hist_file _g_sys_file
-  _g_hist_file=$(mktemp)
-  _g_sys_file=$(mktemp)
+  _g_hist_file=$(_ama_mktemp)
+  _g_sys_file=$(_ama_mktemp)
   printf '%s' "${HISTORY:-[]}" > "$_g_hist_file"
   printf '%s' "$system_prompt" > "$_g_sys_file"
 
@@ -680,9 +680,9 @@ google_call_api_stream() {
 
   local payload
   local _gs_hist_file _gs_sys_file _gs_extra_file
-  _gs_hist_file=$(mktemp)
-  _gs_sys_file=$(mktemp)
-  _gs_extra_file=$(mktemp)
+  _gs_hist_file=$(_ama_mktemp)
+  _gs_sys_file=$(_ama_mktemp)
+  _gs_extra_file=$(_ama_mktemp)
   printf '%s' "${_extra_payload:-{}}" > "$_gs_extra_file"
   printf '%s' "${HISTORY:-[]}" > "$_gs_hist_file"
   printf '%s' "$system_prompt" > "$_gs_sys_file"
@@ -979,8 +979,8 @@ google_cloudcode_call_api_stream() {
   local _project
   _project=$(python3 "$_GOOGLE_OAUTH_TOOL" project 2>/dev/null)
 
-  local tmp_out; tmp_out=$(mktemp)
-  local tmp_err; tmp_err=$(mktemp)
+  local tmp_out; tmp_out=$(_ama_mktemp)
+  local tmp_err; tmp_err=$(_ama_mktemp)
 
   TG_TOKEN="$TG_TOKEN" \
   CHAT_ID="$chat_id" \

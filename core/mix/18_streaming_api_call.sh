@@ -47,8 +47,8 @@ call_api_stream() {
         fi
 
         # We need to capture the output but also let it stream to TG
-        local tmp_out=$(mktemp)
-        local tmp_err=$(mktemp)
+        local tmp_out=$(_ama_mktemp)
+        local tmp_err=$(_ama_mktemp)
 
         # Use python to handle the stream and Telegram updates
         TG_TOKEN="$TG_TOKEN" \
@@ -392,10 +392,16 @@ EOF
 
              if [[ "$attempt" -lt "$max_attempts" ]]; then
                  local _is_rate_limit=false
-                 if [[ "$err_out" == *"API HTTP 429"* || "$err_out" == *"API HTTP 503"* || "$err_out" == *"RESOURCE_EXHAUSTED"* ]]; then
+                 if [[ "$err_out" == *"API HTTP 429"* || "$err_out" == *"API HTTP 503"* || "$err_out" == *"RESOURCE_EXHAUSTED"* || "$err_out" == *"API Error 429"* || "$err_out" == *"API Error 503"* ]]; then
                      _is_rate_limit=true
-                     pool_mark_limited "${_POOL_IDX:-}" 60
-                     [[ "${_AMA_NO_RATE_MARK:-0}" != "1" ]] && mark_rate_limited "$PROVIDER" "$MODEL" 60
+                     # Parse provider's actual Retry-After hint (Vertex retryDelay,
+                     # HTTP Retry-After header, Anthropic reset ts, etc.) instead of
+                     # the hardcoded 60s. Defaults to 60 when no hint is present.
+                     local _ra_secs
+                     _ra_secs=$(printf '%s' "$err_out" | python3 tools/retry_after.py 2>/dev/null)
+                     _ra_secs=${_ra_secs:-60}
+                     pool_mark_limited "${_POOL_IDX:-}" "$_ra_secs"
+                     [[ "${_AMA_NO_RATE_MARK:-0}" != "1" ]] && mark_rate_limited "$PROVIDER" "$MODEL" "$_ra_secs"
                  fi
                  if [[ "$(pool_is_enabled)" != "true" && -n "$FALLBACK_MODEL" && "$MODEL" != "$FALLBACK_MODEL" ]]; then
                      echo "AMA: Switching to fallback model $FALLBACK_MODEL" >&2

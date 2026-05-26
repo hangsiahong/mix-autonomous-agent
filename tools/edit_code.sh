@@ -19,6 +19,7 @@
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${ROOT}/tools/_lib/err_trap.sh"
 
 if [[ -z "${TOOL_path:-}" ]]; then
     echo "Error: 'path' is required."

@@ -81,7 +81,7 @@ PYEOF
     fi
 
     # Compose the recap prompt: the actual session content + the format spec.
-    local _prompt_tmp; _prompt_tmp=$(mktemp)
+    local _prompt_tmp; _prompt_tmp=$(_ama_mktemp)
     {
         echo "Below is a session transcript. Generate a recap of THIS session — do not invent content."
         echo
@@ -174,7 +174,7 @@ if len(lines) > 120:
     # 3. Extract individual "Key Facts Learned" bullets → discrete LanceDB entries
     #    Each fact gets its own embedding so "does user prefer X?" finds it precisely
     if [[ -f "tools/memory_helper.py" ]]; then
-        local _recap_tmp; _recap_tmp=$(mktemp)
+        local _recap_tmp; _recap_tmp=$(_ama_mktemp)
         printf '%s' "$recap_text" > "$_recap_tmp"
         python3 - "$_recap_tmp" "$session_id" <<'PYEOF' 2>/dev/null || true
 import re, json, subprocess, sys

@@ -15,6 +15,18 @@ source "${MIX_DIR}/01_config.sh"
 source "${MIX_DIR}/../access_control.sh"
 source "${MIX_DIR}/11_history.sh"
 source "${MIX_DIR}/13_tool_execution.sh"
+
+# Tool function-dispatch path. Each tools/_fn/<name>.fn.sh defines a
+# `tool_<name>()` function; run_tool prefers those over `bash tools/<name>.sh`
+# to skip the subprocess exec cost. Pure-bash tools opt in by adding their
+# .fn.sh; everything else continues to dispatch as a subprocess.
+_AMA_FN_DIR="${MIX_DIR}/../../tools/_fn"
+if [[ -d "$_AMA_FN_DIR" ]]; then
+    for _fn_file in "$_AMA_FN_DIR"/*.fn.sh; do
+        [[ -f "$_fn_file" ]] && source "$_fn_file"
+    done
+    unset _fn_file
+fi
 source "${MIX_DIR}/14_tool_distill.sh"
 source "${MIX_DIR}/16_api.sh"
 source "${MIX_DIR}/17_response_parser.sh"

@@ -20,6 +20,8 @@
 
 set -u
 
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_lib/err_trap.sh"
+
 cmd="${TOOL_command:-}"
 runtime="${TOOL_timeout:-30}"
 

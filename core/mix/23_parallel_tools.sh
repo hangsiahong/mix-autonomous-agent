@@ -100,50 +100,62 @@ for tc in calls:
 
         local tc_file="${b_dir}/${tc_id}.tc.json"
         local out_file="${b_dir}/${tc_id}.out"
-        local status_file="${b_dir}/${tc_id}.status"
 
-        echo "RUNNING" > "$status_file"
-        
-        # We need process_tc to NOT update Telegram directly in parallel mode
-        # or it will race. But for now, let's allow it and see.
-        # Actually, let's use a suppressed version of process_tc or env var.
-        
+        # Status is tracked in-shell via pid_to_tc / tc_done (event-driven via
+        # wait -n -p); no need to fan-out via status files anymore.
         local tc_content=$(cat "$tc_file")
-        # Run the tool (silencing the tg_edit calls inside process_tc if we can)
         export AMA_PARALLEL=true
         local output
         output=$(process_tc "$c_id" "$m_id" "$tc_content" "$t_id")
-        
         echo "$output" > "$out_file"
-        echo "DONE" > "$status_file"
     }
 
-    # Launch workers
+    # Launch workers, recording pid → tc_id so we can identify finishers.
+    local -A pid_to_tc=()
+    local -A tc_done=()
     while IFS='|' read -r tc_id name; do
         run_parallel_worker "$tc_id" "$name" "$batch_dir" "$chat_id" "$msg_id" "$thread_id" &
+        pid_to_tc[$!]="$tc_id"
     done <<< "$launched_info"
 
-    # 3. Wait and update UI
-    local all_done=false
-    while [[ "$all_done" == false ]]; do
-        sleep 1
-        all_done=true
+    # 3. Event-driven collection: wait -n returns the moment any worker exits;
+    #    -p captures its pid so we know which tc to mark done and can repaint
+    #    the UI immediately instead of after a fixed sleep tick.
+    while (( ${#pid_to_tc[@]} > 0 )); do
+        local _finished_pid=""
+        wait -n -p _finished_pid 2>/dev/null || true
+
+        # Defensive fallback: if -p didn't yield a tracked pid (race, signal,
+        # or stray background job), scan for dead workers we still track.
+        if [[ -z "$_finished_pid" || -z "${pid_to_tc[$_finished_pid]:-}" ]]; then
+            _finished_pid=""
+            for pid in "${!pid_to_tc[@]}"; do
+                if ! kill -0 "$pid" 2>/dev/null; then
+                    _finished_pid="$pid"
+                    break
+                fi
+            done
+        fi
+        if [[ -z "$_finished_pid" ]]; then
+            # Should not reach: workers are all still alive yet wait -n
+            # claimed something finished. Brief yield to avoid a spin.
+            sleep 0.2
+            continue
+        fi
+
+        local _tc="${pid_to_tc[$_finished_pid]}"
+        tc_done[$_tc]=1
+        unset 'pid_to_tc[$_finished_pid]'
+
+        # Repaint UI with one more tool marked ✅.
         local status_summary=""
-        
         while IFS='|' read -r tc_id name; do
-            local status_file="${batch_dir}/${tc_id}.status"
-            local status=$(cat "$status_file" 2>/dev/null || echo "PENDING")
-            if [[ "$status" == "RUNNING" ]]; then
-                status_summary+="⚒ <code>${name}</code>...&#10;"
-                all_done=false
-            elif [[ "$status" == "DONE" ]]; then
+            if [[ -n "${tc_done[$tc_id]:-}" ]]; then
                 status_summary+="✅ <code>${name}</code>&#10;"
             else
-                all_done=false
+                status_summary+="⚒ <code>${name}</code>...&#10;"
             fi
         done <<< "$launched_info"
-
-        # Update Telegram with the aggregate status
         local _prefix="${_AMA_REASONING_HTML:+${_AMA_REASONING_HTML}&#10;&#10;}"
         tg_edit "$chat_id" "$msg_id" "${_prefix}${status_summary}" "HTML" > /dev/null 2>&1
     done

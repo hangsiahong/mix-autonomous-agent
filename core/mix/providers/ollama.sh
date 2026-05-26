@@ -54,7 +54,7 @@ b['stream'] = False
 print(json.dumps(b))
 " <(printf '%s' "$payload") 2>/dev/null) || true
 
-  local tmp; tmp=$(mktemp)
+  local tmp; tmp=$(_ama_mktemp)
   local http_code
   http_code=$(curl -s -w "%{http_code}" \
     -H "Content-Type: application/json" \
@@ -161,7 +161,7 @@ print(json.dumps(b))
   local attempt=1
   local max_attempts=3
   while [ "$attempt" -le "$max_attempts" ]; do
-    local tmp; tmp=$(mktemp)
+    local tmp; tmp=$(_ama_mktemp)
     local http_code
     http_code=$(curl -s -w "%{http_code}" \
       -H "Content-Type: application/json" \

@@ -1000,14 +1000,27 @@ print(f'Session: {total_calls} API calls\n{total_in:,} input + {total_out:,} out
                 ;;
 
             /steer)
-                # Inject guidance mid-run (hermes pattern: appended to next tool result)
+                # Inject guidance mid-run (hermes pattern). Now signal-driven:
+                # the worker has a SIGUSR1 trap that drains the steer file at
+                # the next safe checkpoint (top of loop OR post-tool batch),
+                # so it lands even for no-tool-call answers — not only after
+                # a tool batch like before.
                 if [[ -z "$args" ]]; then
-                    tg_send "$chat_id" "Usage: <code>/steer &lt;guidance text&gt;</code>\nThe note will be injected after the agent's next tool call." "$thread_id" "HTML"
+                    tg_send "$chat_id" "Usage: <code>/steer &lt;guidance text&gt;</code>\nThe note will be injected at the agent's next checkpoint." "$thread_id" "HTML"
                 else
                     mkdir -p "${DIR}/brain/state"
                     local _steer_file="${DIR}/brain/state/steer_${session_id}"
                     printf '%s\n' "$args" >> "$_steer_file"
-                    tg_send "$chat_id" "💬 Steer queued. It will be injected after the next tool call." "$thread_id"
+                    # pid_file format: agent_pid|msg_id|chat_id|thread_id|user_id|worker_bashpid
+                    local _pid_file="${DIR}/brain/state/run_${session_id}.pid"
+                    if [[ -f "$_pid_file" ]]; then
+                        local _worker_pid
+                        _worker_pid=$(awk -F'|' '{print $6}' "$_pid_file" 2>/dev/null)
+                        # Direct PID (not -PID) so we don't kill python children;
+                        # default SIGUSR1 action on them is "terminate".
+                        [[ -n "$_worker_pid" ]] && kill -USR1 "$_worker_pid" 2>/dev/null || true
+                    fi
+                    tg_send "$chat_id" "💬 Steer queued — will be injected at the agent's next checkpoint." "$thread_id"
                 fi
                 ;;
 

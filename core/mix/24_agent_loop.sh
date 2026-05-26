@@ -103,6 +103,15 @@ run_agent() {
         trap 'save_history "$session_id" 2>/dev/null || true; pkill -TERM -P $BASHPID 2>/dev/null; rm -f "$stop_btn_file" "$pid_file"; exit 0' INT TERM
         trap 'save_history "$session_id" 2>/dev/null || true; pkill -TERM -P $BASHPID 2>/dev/null; rm -f "$stop_btn_file" "$pid_file"' EXIT
 
+        # SIGUSR1: in-band /steer notify. The router writes steer_file then
+        # signals this worker; the flag lets us drain steer BEFORE the next
+        # API call (not just after the next tool batch), which is the win
+        # for no-tool-call answers where today the steer waits for the
+        # render. Bash defers traps until the foreground command returns,
+        # so a signal mid-curl queues and fires the moment curl exits.
+        _steer_signaled=0
+        trap '_steer_signaled=1' SIGUSR1
+
         # Stop flag handling (before sending Stop button — avoids flash on immediate exit):
         # - Queued + stop_flag + interrupt_input: Interrupt clicked — B takes over directly
         # - Queued + stop_flag only: genuine /stop — exit
@@ -648,6 +657,37 @@ except: print(); print(); print()" "$_override_file" 2>/dev/null)
         # dedicated render branch (similar to _user_stopped) so the user sees
         # "💸 Budget reached" instead of "Max turns reached".
         local _budget_exhausted=false
+
+        # Drain pending /steer into the last tool result. Called BEFORE each
+        # API call (so signaled steer lands ASAP, even for no-tool answers)
+        # AND after each tool batch (to inject post-tool guidance).
+        _drain_steer() {
+            # Fast path: nothing pending, signal not raised — skip both stat
+            # and the python invocation.
+            if (( _steer_signaled == 0 )) && [[ ! -f "$steer_file" ]]; then
+                return
+            fi
+            _steer_signaled=0
+            [[ ! -f "$steer_file" ]] && return
+            local _st; _st=$(cat "$steer_file" 2>/dev/null)
+            rm -f "$steer_file"
+            [[ -z "$_st" ]] && return
+            HISTORY=$(python3 -c "
+import json, sys
+h = json.loads(open(sys.argv[1]).read())
+steer = open(sys.argv[2]).read().strip()
+for i in range(len(h)-1, -1, -1):
+    if h[i].get('role') == 'tool':
+        h[i]['content'] = str(h[i].get('content','')) + '\n\nUser guidance: ' + steer
+        break
+else:
+    # No tool message to attach to — append a synthetic user-guidance
+    # message so the model sees it on the next API call regardless.
+    h.append({'role':'user','content':'[User guidance mid-turn]: ' + steer})
+print(json.dumps(h, separators=(',',':')))
+" <(printf '%s' "$HISTORY") <(printf '%s' "$_st") 2>/dev/null || printf '%s' "$HISTORY")
+        }
+
         while [ "$turn" -lt "$MAX_TURNS" ]; do
             # Cooperative stop check (top of every turn). The hard-kill path
             # (kill_tree_hard in router.sh) is the primary mechanism — this
@@ -658,6 +698,11 @@ except: print(); print(); print()" "$_override_file" 2>/dev/null)
                 _user_stopped=true
                 break
             fi
+
+            # Drain any signaled / file-present steer BEFORE the next API call
+            # so it lands even when the prior turn made no tool calls.
+            _drain_steer
+
             turn=$((turn + 1))
             [[ "$turn" -gt 1 ]] && tg_send_action "$chat_id" "typing" "$thread_id"
             export _AMA_REASONING_HTML="${_AMA_REASONING_HTML:-}"
@@ -855,39 +900,43 @@ print(json.dumps(h, separators=(',',':')))
 " <(printf '%s' "$HISTORY") <(printf '%s' "$_fm_footer") 2>/dev/null || printf '%s' "$HISTORY")
                 fi
 
-                # Drain pending /steer into last tool result (hermes pattern)
-                if [[ -f "$steer_file" ]]; then
-                    local _steer_text; _steer_text=$(cat "$steer_file" 2>/dev/null)
-                    rm -f "$steer_file"
-                    if [[ -n "$_steer_text" ]]; then
-                        # Append steer as "User guidance" to the last tool result in history
-                        HISTORY=$(python3 -c "
-import json, sys
-h = json.loads(open(sys.argv[1]).read())
-steer = open(sys.argv[2]).read().strip()
-# Find last tool message and append guidance
-for i in range(len(h)-1, -1, -1):
-    if h[i].get('role') == 'tool':
-        c = h[i].get('content', '')
-        h[i]['content'] = str(c) + '\n\nUser guidance: ' + steer
-        break
-print(json.dumps(h, separators=(',',':')))
-" <(printf '%s' "$HISTORY") <(printf '%s' "$_steer_text") 2>/dev/null || printf '%s' "$HISTORY")
-                    fi
-                fi
+                # Drain pending /steer into last tool result (hermes pattern).
+                # Now routed through _drain_steer so the SIGUSR1 flag clears
+                # consistently across both checkpoints.
+                _drain_steer
 
                 # Circuit breaker: identical tool-call batch repeats.
-                # Two-stage: nudge at 3rd identical call (give the model one
-                # turn to recover), hard-stop at 4th. Previously hard-stopped
-                # at 3rd, which killed transient stuck patterns the model
-                # would have recovered from on its own with a hint.
+                # Two-stage with mutating-tool tightening (hermes-style):
+                #   • all-read batch: nudge at 3rd repeat, hard-stop at 4th.
+                #   • mutating batch (bash/edit_code/patch/write_file/ast_edit):
+                #     nudge at 2nd repeat, hard-stop at 3rd. Same wrong write
+                #     hitting the disk twice is already one too many; we don't
+                #     extend the same grace we give to harmless re-reads.
                 local _tc_fp; _tc_fp=$(printf '%s' "$tool_calls" | md5sum 2>/dev/null | cut -c1-8)
+                local _has_mut; _has_mut=$(printf '%s' "$tool_calls" | python3 -c "
+import json, sys
+try:
+    calls = json.loads(sys.stdin.read())
+    muts = {'bash','edit_code','patch','write_file','ast_edit'}
+    print('1' if any((c.get('function',{}).get('name') or c.get('name','')) in muts for c in calls) else '0')
+except Exception:
+    print('0')
+" 2>/dev/null)
+                local _nudge_at=2 _stop_at=3   # all-read defaults (3rd nudge, 4th stop)
+                if [[ "$_has_mut" == "1" ]]; then
+                    _nudge_at=1; _stop_at=2     # mutating: 2nd nudge, 3rd stop
+                fi
                 if [[ "$_tc_fp" == "$_last_tc_fingerprint" && -n "$_tc_fp" ]]; then
                     _tc_repeat_count=$((_tc_repeat_count + 1))
-                    if [[ $_tc_repeat_count -eq 2 ]]; then
-                        # 3rd identical call — nudge into the last tool result.
-                        # The next API call sees it and (usually) changes course.
-                        local _fp_nudge=$'\n[SYSTEM: You just made the EXACT same tool call as the previous turn (same tool, same args). The result has not changed. STOP retrying with identical args. Either (a) try a DIFFERENT approach — different tool, different args, different angle, (b) answer from what you already have, or (c) call `clarify` to ask the user. One more identical call will hard-stop this turn.]'
+                    if [[ $_tc_repeat_count -eq $_nudge_at ]]; then
+                        # Nudge — inject into the last tool result so next API
+                        # call sees it. Wording adapts to mutating vs read.
+                        local _fp_nudge
+                        if [[ "$_has_mut" == "1" ]]; then
+                            _fp_nudge=$'\n[SYSTEM: You repeated the EXACT same MUTATING tool call (write/edit/patch/bash) with identical args. Either the previous call already succeeded (in which case stop), or it failed for a reason that won\'t fix by retrying. STOP. Try a different approach, read what\'s actually there, or call `clarify`. One more identical mutating call will hard-stop this turn.]'
+                        else
+                            _fp_nudge=$'\n[SYSTEM: You just made the EXACT same tool call as the previous turn (same tool, same args). The result has not changed. STOP retrying with identical args. Either (a) try a DIFFERENT approach — different tool, different args, different angle, (b) answer from what you already have, or (c) call `clarify` to ask the user. One more identical call will hard-stop this turn.]'
+                        fi
                         HISTORY=$(NUDGE_TEXT="$_fp_nudge" python3 -c "
 import json, os, sys
 h = json.loads(open(sys.argv[1]).read())
@@ -898,11 +947,15 @@ for i in range(len(h)-1, -1, -1):
         break
 print(json.dumps(h, separators=(',',':')))
 " <(printf '%s' "$HISTORY") 2>/dev/null || printf '%s' "$HISTORY")
-                    elif [[ $_tc_repeat_count -ge 3 ]]; then
-                        # 4th identical call — ignored the nudge. Hard-stop.
-                        tg_edit "$chat_id" "$msg_id" \
-                            "⚠️ <i>Stuck loop detected — same tool call repeated 4× in a row, including after a recovery nudge. Stopping early to save tokens. Use /retry if needed.</i>" \
-                            "HTML" > /dev/null 2>&1 || true
+                    elif [[ $_tc_repeat_count -ge $_stop_at ]]; then
+                        # Stop limit reached — model ignored the nudge.
+                        local _stop_msg
+                        if [[ "$_has_mut" == "1" ]]; then
+                            _stop_msg="⚠️ <i>Stuck loop — same mutating tool call repeated 3× including after a recovery nudge. Stopping early. Use /retry if you really meant it.</i>"
+                        else
+                            _stop_msg="⚠️ <i>Stuck loop detected — same tool call repeated 4× in a row, including after a recovery nudge. Stopping early to save tokens. Use /retry if needed.</i>"
+                        fi
+                        tg_edit "$chat_id" "$msg_id" "$_stop_msg" "HTML" > /dev/null 2>&1 || true
                         loop_completed=false
                         break
                     fi
