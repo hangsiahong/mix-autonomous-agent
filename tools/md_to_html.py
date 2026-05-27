@@ -85,18 +85,42 @@ _THINK_RE = re.compile(
     r"&lt;(think|thinking|reasoning|thought)&gt;(.*?)(&lt;/\1&gt;|$)",
     re.DOTALL | re.IGNORECASE,
 )
+# Pre-pass version that matches the RAW <think>...</think> in markdown
+# before escaping. We truncate at this stage so the cut cannot land in
+# the middle of a markdown construct that later becomes a paired HTML
+# tag — otherwise `**bold spanning the cut**` would render as <b>...
+# without a matching </b> and Telegram would reject the message.
+_RAW_THINK_RE = re.compile(
+    r"<(think|thinking|reasoning|thought)>(.*?)</\1>",
+    re.DOTALL | re.IGNORECASE,
+)
 
 
 def _esc(s: str) -> str:
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def _truncate_raw_think_blocks(text: str) -> str:
+    """Truncate <think> content over 1000 chars to first 500 + marker + last 500.
+
+    Operates on raw markdown before escaping/markdown→HTML conversion so
+    that markdown pairs (**bold**, *italic*, etc.) are never cut mid-pair.
+    """
+    def repl(m: "re.Match[str]") -> str:
+        tag = m.group(1)
+        content = m.group(2)
+        if len(content) <= 1000:
+            return m.group(0)
+        truncated = content[:500] + "\n\n... [thinking truncated] ...\n\n" + content[-500:]
+        return f"<{tag}>{truncated}</{tag}>"
+    return _RAW_THINK_RE.sub(repl, text)
+
+
 def _format_think(match: "re.Match[str]") -> str:
     content = match.group(2)
-    if len(content) > 1000:
-        content = content[:500] + "\n\n<i>... [thinking truncated] ...</i>\n\n" + content[-500:]
-    # Don't wrap in <i> — content may already contain <code>/<pre> from the code-block pass,
-    # and Telegram rejects those nested inside <i>.
+    # Truncation already done by _truncate_raw_think_blocks before HTML
+    # conversion. Don't wrap in <i> — content may contain <code>/<pre>
+    # from the code-block pass, and Telegram rejects those nested in <i>.
     return f"<blockquote><b>🧠 Thinking</b>\n{content.strip()}</blockquote>\n"
 
 
@@ -104,7 +128,11 @@ def md_to_html(text: str, max_chars: int = DEFAULT_MAX_CHARS) -> str:
     """Render Markdown → Telegram-compatible HTML, with safe escaping."""
     if not text:
         return ""
-    # Pre-pass: auto-wrap raw markdown tables (lines starting with `|`) in
+    # Pre-pass 1: truncate long <think> blocks in raw markdown so the cut
+    # can never land in the middle of a **bold** / *italic* / [link] pair
+    # that the markdown→HTML pass would have rendered to a paired HTML tag.
+    text = _truncate_raw_think_blocks(text)
+    # Pre-pass 2: auto-wrap raw markdown tables (lines starting with `|`) in
     # ``` fences so they render as monospace <pre> instead of broken pipes.
     # Idempotent — lines already inside a fence are untouched.
     text = _auto_wrap_tables(text)
