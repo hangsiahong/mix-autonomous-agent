@@ -628,6 +628,7 @@ except: print(); print(); print()" "$_override_file" 2>/dev/null)
         local total_tool_calls=0
         local all_tool_names=""
         local loop_completed=false
+        local _loop_stop_reason=""   # max_turns | stuck_loop | budget — used by final render
         local total_input_tokens=0
         local total_output_tokens=0
         local _thought_snippet=""  # persists across turns — shows last known reasoning
@@ -912,7 +913,22 @@ print(json.dumps(h, separators=(',',':')))
                 #     nudge at 2nd repeat, hard-stop at 3rd. Same wrong write
                 #     hitting the disk twice is already one too many; we don't
                 #     extend the same grace we give to harmless re-reads.
-                local _tc_fp; _tc_fp=$(printf '%s' "$tool_calls" | md5sum 2>/dev/null | cut -c1-8)
+                # Fingerprint: hash only (name, arguments) per call, NOT id.
+                # Each tool_call gets a fresh random id every turn, so hashing
+                # the whole JSON treated every repeat as new and never tripped
+                # the breaker — letting weak tool-callers (mimo) emit 20+
+                # identical empty-args calls in a row. (#fingerprint-id-bug)
+                local _tc_fp; _tc_fp=$(printf '%s' "$tool_calls" | python3 -c "
+import json, sys, hashlib
+try:
+    calls = json.loads(sys.stdin.read())
+    sig = [(c.get('function',{}).get('name') or c.get('name','') or '',
+            (c.get('function',{}).get('arguments') or '').strip())
+           for c in calls]
+    print(hashlib.md5(json.dumps(sig, separators=(',',':'), sort_keys=False).encode()).hexdigest()[:8])
+except Exception:
+    print('')
+" 2>/dev/null)
                 local _has_mut; _has_mut=$(printf '%s' "$tool_calls" | python3 -c "
 import json, sys
 try:
@@ -957,6 +973,7 @@ print(json.dumps(h, separators=(',',':')))
                         fi
                         tg_edit "$chat_id" "$msg_id" "$_stop_msg" "HTML" > /dev/null 2>&1 || true
                         loop_completed=false
+                        _loop_stop_reason="stuck_loop"
                         break
                     fi
                 else
@@ -1365,7 +1382,13 @@ print('\n'.join(out))
             local _stuck_body; _stuck_body="$(md_to_tg_html "${text:-}")"
             local _stuck_full="${_stuck_body}"
             [[ -n "$_stuck_pane" ]] && _stuck_full="${_stuck_pane}"$'\n\n'"${_stuck_full}"
-            _stuck_full="${_stuck_full}"$'\n\n'"⚠️ <i>Max turns reached. Use /retry to continue or /new for fresh session.</i>"
+            local _stop_footer
+            case "$_loop_stop_reason" in
+                stuck_loop) _stop_footer="⚠️ <i>Stuck loop — same broken tool call repeated 3× (this is usually a sign the model cannot produce valid arguments for that tool). Use /retry to try again or /new for a fresh session.</i>" ;;
+                budget)     _stop_footer="💸 <i>Token budget reached. Use /retry to continue or /new for a fresh session.</i>" ;;
+                *)          _stop_footer="⚠️ <i>Max turns reached. Use /retry to continue or /new for fresh session.</i>" ;;
+            esac
+            _stuck_full="${_stuck_full}"$'\n\n'"$_stop_footer"
             tg_edit_safe "$chat_id" "$msg_id" "$_stuck_full" "HTML" "$thread_id" || true
             [[ -n "$user_msg_id" && "$user_msg_id" != "0" ]] && tg_react "$chat_id" "$user_msg_id" "👎"
         fi

@@ -262,7 +262,12 @@ while _stream_attempt < MAX_STREAM_ATTEMPTS:
                     if idx not in tool_calls:
                         tool_calls[idx] = {"id": "", "type": "function", "function": {"name": "", "arguments": ""}, "thought_signature": ""}
 
-                    if "id" in tc:
+                    # JSON null deltas: mimo via kconsole emits "arguments": null
+                    # (and sometimes "id"/"name": null) in interim chunks. Python
+                    # parses null as None; `str += None` raises TypeError which
+                    # silently crashed the stream parser mid-accumulation,
+                    # leaving args empty. Coerce None to "" before appending.
+                    if "id" in tc and tc["id"] is not None:
                         tool_calls[idx]["id"] += tc["id"]
 
                     # Capture thought_signature for Google thinking models (Vertex OpenAI-compat)
@@ -272,10 +277,12 @@ while _stream_attempt < MAX_STREAM_ATTEMPTS:
                     if _ts:
                         tool_calls[idx]["thought_signature"] += _ts
 
-                    if "function" in tc:
+                    if "function" in tc and tc["function"]:
                         f = tc["function"]
-                        if "name" in f: tool_calls[idx]["function"]["name"] += f["name"]
-                        if "arguments" in f: tool_calls[idx]["function"]["arguments"] += f["arguments"]
+                        _fn_name = f.get("name") or ""
+                        _fn_args = f.get("arguments") or ""
+                        if _fn_name: tool_calls[idx]["function"]["name"] += _fn_name
+                        if _fn_args: tool_calls[idx]["function"]["arguments"] += _fn_args
 
             if time.time() - last_update > 2.0:
                 if tool_calls:
@@ -329,9 +336,9 @@ if _stream_success and not content.strip() and not tool_calls:
                 for i, tc in enumerate(ntc):
                     fn = tc.get("function") or {}
                     tool_calls[i] = {
-                        "id": tc.get("id", ""),
-                        "type": tc.get("type", "function"),
-                        "function": {"name": fn.get("name",""), "arguments": fn.get("arguments","")},
+                        "id": tc.get("id") or "",
+                        "type": tc.get("type") or "function",
+                        "function": {"name": fn.get("name") or "", "arguments": fn.get("arguments") or ""},
                         "thought_signature": "",
                     }
                 if nd.get("usage"):
@@ -361,14 +368,53 @@ elif clean_final.strip():
     update_tg(clean_final)
 
 # Output for bash parsing (TC: list of tool calls)
+# Repair malformed `arguments` JSON before emitting — weak tool-calling
+# models (xiaomi/mimo, GLM, Kimi, llama.cpp) emit empty / truncated /
+# Python-None / control-char-laced arguments that the upstream rejects
+# with HTTP 400 "Bad request from upstream" on the next turn. The repair
+# function returns "{}" for unrepairable cases so the session survives
+# (the tool itself will then return "Error: 'X' is required." which the
+# model can act on).
+try:
+    sys.path.insert(0, "tools")
+    from repair_tool_args import repair_args as _repair_args
+except Exception:
+    def _repair_args(s, _name="?"):
+        return "{}" if not isinstance(s, str) or not s.strip() else s
 tc_list = []
 for k, v in sorted(tool_calls.items()):
     if not v.get("id"):
         v["id"] = f"call_{int(time.time() * 1000)}"
-    tc = {"id": v["id"], "type": v.get("type", "function"), "function": v["function"]}
+    fn = v.get("function") or {}
+    fn["arguments"] = _repair_args(fn.get("arguments"), fn.get("name", "?"))
+    tc = {"id": v["id"], "type": v.get("type", "function"), "function": fn}
     if v.get("thought_signature"):
         tc["thought_signature"] = v["thought_signature"]
     tc_list.append(tc)
+
+# Text-form tool-call fallback for weak tool-callers (xiaomi/mimo, Qwen,
+# Gemma, GLM). These models often botch the OpenAI tool_calls.arguments
+# JSON field but emit clean Claude-style XML in content instead:
+#   <tool_call><function=write_file><parameter name="path">x</parameter>
+#   ...</function></tool_call>
+# When NO structured tool_calls came through but content contains such
+# blocks, parse them out, splice them into tc_list, and strip the XML
+# from content. This rescues mimo: it produces valid args in text form
+# even when it produces "{}" in the structured field.
+if not tc_list:
+    try:
+        from extract_text_tool_calls import extract as _extract_text_tcs
+        from extract_text_tool_calls import strip as _strip_text_tcs
+        _text_calls = _extract_text_tcs(content)
+        if _text_calls:
+            sys.stderr.write(f"DBG18: text-form tool-call fallback extracted {len(_text_calls)} call(s)\n")
+            tc_list.extend(_text_calls)
+            stripped = _strip_text_tcs(content)
+            if stripped != content:
+                content = stripped
+                clean_final = re.sub(r"<(think|thinking|reasoning|thought|memory-context)>.*?(</\1>|$)", "", content, flags=re.DOTALL | re.IGNORECASE)
+    except Exception as _e:
+        sys.stderr.write(f"DBG18: text-form extractor unavailable: {_e}\n")
 
 if _think_text.strip():
     _ts = " ".join(_think_text.split())[:300]

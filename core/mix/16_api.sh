@@ -550,6 +550,28 @@ except:
     ex = {}
 stream = os.environ.get("STREAM_MODE", "false").lower() == "true"
 
+# Defense-in-depth: repair malformed tool_call arguments anywhere in
+# history. Weak tool-callers (xiaomi/mimo, GLM, Kimi, llama.cpp) emit
+# empty / truncated / Python-None / control-char-laced arguments that
+# poison the next turn — kconsole/openrouter/etc. reject with HTTP 400
+# "Bad request from upstream" and the session gets stuck retrying. The
+# repair port mirrors hermes-agent _repair_tool_call_arguments and falls
+# back to "{}" for unrepairable cases so the tool itself can return a
+# helpful "X is required" message instead of a opaque API 400.
+try:
+    sys.path.insert(0, "tools")
+    from repair_tool_args import repair_history_tool_calls as _repair_hist
+    _repair_hist(h)
+except Exception as _e:
+    sys.stderr.write(f"DBG16: repair_history_tool_calls unavailable: {_e}\n")
+    for _msg in h:
+        if isinstance(_msg, dict) and _msg.get("role") == "assistant":
+            for _tc in (_msg.get("tool_calls") or []):
+                _fn = _tc.get("function") or {}
+                if not (_fn.get("arguments") or "").strip():
+                    _fn["arguments"] = "{}"
+                _tc["function"] = _fn
+
 # Memory auto-prefetch injection (hermes build_memory_context_block pattern):
 # inject into last user message only — preserves system prompt prefix cache
 mem_raw = ""
