@@ -722,15 +722,39 @@ for k,v in json.loads(open(sys.argv[1]).read()).items():
       fi
 
       local tmp; tmp=$(_ama_mktemp)
+      local _curl_stderr; _curl_stderr=$(_ama_mktemp)
+      # Payload via tmpfile (-d @file) instead of argv (-d "$payload").
+      # Reflection / multi-turn sessions easily produce 100k+ char payloads
+      # (system prompt + skill body + history + tools). When that lands on
+      # argv via -d, execve() returns E2BIG and curl never starts —
+      # surfacing as bash exit 126 "Argument list too long". The tmpfile
+      # route streams from disk so payload size is bounded only by tmpfs.
+      local _payload_file; _payload_file=$(_ama_mktemp)
+      printf '%s' "$payload" > "$_payload_file"
       local code
       local curl_err=0
-      code=$(curl "${_curl_args[@]}" -o "$tmp" -d "$payload" 2>/dev/null) || curl_err=$?
+      code=$(curl "${_curl_args[@]}" -o "$tmp" -d "@$_payload_file" 2>"$_curl_stderr") || curl_err=$?
+      rm -f "$_payload_file"
       local body; body=$(cat "$tmp" 2>/dev/null || true); rm -f "$tmp"
 
       if [ "$curl_err" -ne 0 ]; then
+        # Instrumented: dump curl's stderr + a hint at what bash exit 126/127
+        # usually means so unusual failures aren't opaque. Stderr is short
+        # (~few lines max from curl), safe to inline. Goes to bot stderr,
+        # not the user-visible reply.
+        local _err_dump; _err_dump=$(head -c 400 "$_curl_stderr" 2>/dev/null | tr '\n' ' ')
+        local _err_hint=""
+        case "$curl_err" in
+            126) _err_hint=" [exit 126 = command found but cannot execute — perms/exec issue]" ;;
+            127) _err_hint=" [exit 127 = command not found OR argv too long]" ;;
+            13[0-9]) _err_hint=" [exit $curl_err = killed by signal $((curl_err - 128))]" ;;
+        esac
+        echo "AMA: curl exit=$curl_err${_err_hint} stderr=${_err_dump:-<empty>}" >&2
+        rm -f "$_curl_stderr"
         echo "FAIL:curl_error_$curl_err"
         return 1
       fi
+      rm -f "$_curl_stderr"
 
       if [ "$code" == "200" ]; then
           printf '%s' "$body"

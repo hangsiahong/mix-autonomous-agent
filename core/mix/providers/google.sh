@@ -554,8 +554,13 @@ print(json.dumps(body))
     _curl_args+=(-H "Authorization: Bearer $api_key")
   fi
 
+  # Same E2BIG fix as 16_api.sh: route payload via tmpfile so big Vertex
+  # bodies (long history + tools) don't hit argv limits.
+  local _payload_file; _payload_file=$(_ama_mktemp)
+  printf '%s' "$payload" > "$_payload_file"
   local resp
-  resp=$(curl "${_curl_args[@]}" -d "$payload")
+  resp=$(curl "${_curl_args[@]}" -d "@$_payload_file")
+  rm -f "$_payload_file"
 
   if [[ "$resp" == "FAIL:"* ]]; then
     echo "$resp"
